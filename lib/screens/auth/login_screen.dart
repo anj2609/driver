@@ -54,7 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "Welcome Back 👋",
+                        "Welcome Back",
                         style: PoppinsSemiBold.copyWith(
                           fontSize: Dimensions.spacingSize20,
                           color: ColorResources.blackcolor11,

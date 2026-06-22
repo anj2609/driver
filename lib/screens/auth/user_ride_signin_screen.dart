@@ -62,7 +62,7 @@ class _DriverSignInpScreenState extends State<DriverSignInpScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "Join My Ride Today ✨",
+                        "Join My Ride Today",
                         style: PoppinsSemiBold.copyWith(
                           fontSize: Dimensions.spacingSize20,
                           color: ColorResources.blackcolor11,

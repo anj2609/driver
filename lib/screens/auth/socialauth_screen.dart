@@ -138,15 +138,11 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   @override
   void initState() {
     super.initState();
-
     Get.find<AuthController>().driverdocument(context: context);
-   
+    Get.find<AuthController>().vehicleType(context: context);
     getstatusdata();
     getsocilaData();
-
     currentStep = getStepFromStatus();
-
-    print('testingg ==||| ${userProfileStatuss}');
   }
 
   Future<void> getstatusdata() async {
@@ -171,6 +167,9 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   int getStepFromStatus() {
     switch (userProfileStatuss?.toString()) {
       case "2":
+        isPersonalSaved = false;
+        return 0;
+
       case "3":
         isPersonalSaved = true;
         return 0;
@@ -208,26 +207,15 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Form(
                   key: _formKey,
-                  child: 
-                  currentStep == 0
-    ? ((userProfileStatuss?.toString() == "3" || isPersonalSaved)
-        ? _buildDriverDocumentStep() 
-        : _buildPersonalDetails())   
-    : currentStep == 1
-        ? vehicleTypeGrid()          
-        : currentStep == 2
-            ? _buildVehicleDocumentsStep() 
-            : _buildPreviewStep()  
-                  // currentStep == 0
-                  //     ? (((userProfileStatuss?.toString() == "3") ||
-                  //               isPersonalSaved)
-                  //           ? _buildDriverDocumentStep()
-                  //           : _buildPersonalDetails())
-                  //     : currentStep == 1
-                  //     ? vehicleTypeGrid()
-                  //     : currentStep == 2
-                  //     ? _buildVehicleDocumentsStep()
-                  //     : _buildPreviewStep(),
+                  child: currentStep == 0
+                      ? (isPersonalSaved
+                          ? _buildDriverDocumentStep()
+                          : _buildPersonalDetails())
+                      : currentStep == 1
+                      ? vehicleTypeGrid()
+                      : currentStep == 2
+                      ? _buildVehicleDocumentsStep()
+                      : _buildPreviewStep(),
                 ),
               ),
             ),
@@ -239,11 +227,9 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   }
 
   Widget buildBottomButtons() {
-    if (userProfileStatuss == "2" || userProfileStatuss == "3") {
-      return SizedBox();
-      //_buildSaveButton();
+    if (currentStep == 0 && isPersonalSaved) {
+      return const SizedBox();
     }
-
     return _buildNextButton();
   }
 
@@ -881,14 +867,9 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   Widget _buildNextButton() {
     return Padding(
       padding: const EdgeInsets.all(16),
-      child:
-          // profileStatuss == "2" ||
-          //     profileStatuss == "3" ||
-          isPersonalSaved == true
-          ? SizedBox()
-          : CustomPrimaryButton(
-              text: "Save & Continue",
-              onTap: () async {
+      child: CustomPrimaryButton(
+          text: currentStep == 3 ? "Submit" : "Save & Continue",
+          onTap: () async {
                 if (currentStep == 0) {
                   if (!_formKey.currentState!.validate()) return;
 
@@ -1954,11 +1935,8 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                       Get.find<AuthController>().vehicleType(context: context);
                       setState(() {
                         userProfileStatuss = "4";
-                        // isPersonalSaved = false;
+                        isPersonalSaved = false;
                         currentStep = 1;
-                        // isDriverDocSaved = true;
-                        // isDriverDocSaved = true;
-                        currentStep++;
                       });
                     }
                   },

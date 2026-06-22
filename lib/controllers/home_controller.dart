@@ -199,10 +199,10 @@ class HomeController extends GetxController {
           stopListeningBookings();
         }
       } else {
-        Get.snackbar("", "Status change failed");
+        Get.snackbar("Error", "Could not update availability status. Please try again.");
       }
     } catch (e) {
-      Get.snackbar("", "Toggle failed");
+      Get.snackbar("Error", "Failed to change availability. Please check your connection.");
     }
 
     isLoading = false;
@@ -478,8 +478,7 @@ class HomeController extends GetxController {
         stopListeningBookings();
          AnimatedTopToast.show(
         context: context,
-        message:
-            response.body['message'] ,
+        message: response.body['message'] ?? "Trip accepted successfully.",
         backgroundColor: ColorResources.blueeebutton,
         icon: Icons.check_circle_rounded,
       );
@@ -493,23 +492,21 @@ class HomeController extends GetxController {
         return response;
       } else if (response.body != null && response.body['code'] == '401') {
         hasActiveRide = true;
- AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "You already have an active ride.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       } else {
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "Failed to accept trip. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       }
@@ -776,13 +773,12 @@ class HomeController extends GetxController {
         //   colorText: Colors.white,
         //   snackPosition: SnackPosition.TOP,
         // );
-         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ,
-        backgroundColor: ColorResources.blueeebutton,
-        icon: Icons.check_circle_rounded,
-      );
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "Ride cancelled successfully.",
+          backgroundColor: ColorResources.blueeebutton,
+          icon: Icons.check_circle_rounded,
+        );
 
         update();
         return response;
@@ -790,22 +786,20 @@ class HomeController extends GetxController {
         hasActiveRide = true;
 
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "You already have an active ride.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       } else {
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "Failed to cancel ride. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       }
@@ -831,13 +825,12 @@ class HomeController extends GetxController {
           response.body['status'] == '200') {
        /// EasyLoading.dismiss();
 
-         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.blueeebutton,
-        icon: Icons.check_circle_rounded,
-      );
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "Ride completed successfully.",
+          backgroundColor: ColorResources.blueeebutton,
+          icon: Icons.check_circle_rounded,
+        );
         Get.offAllNamed(RouteHelper.getHomeScreen());
 
         update();
@@ -845,23 +838,21 @@ class HomeController extends GetxController {
       } else if (response.body != null && response.body['code'] == '401') {
         hasActiveRide = true;
 
-       AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "You already have an active ride.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       } else {
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "Something went wrong. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       }
@@ -895,12 +886,11 @@ class HomeController extends GetxController {
 
       // EasyLoading.dismiss();
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'],
-        backgroundColor: ColorResources.appColor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "OTP verified. Starting your ride.",
+          backgroundColor: ColorResources.appColor,
+          icon: Icons.check_circle_rounded,
+        );
 
         print('testing data for Accept Data  ${trips!} ${acceptData!}');
         // saveRideData(trips: trips, acceptData: acceptData);
@@ -915,22 +905,20 @@ class HomeController extends GetxController {
         hasActiveRide = true;
 
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "Something went wrong. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       } else {
         AnimatedTopToast.show(
-        context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
-      );
+          context: context,
+          message: response.body['message'] ?? "Something went wrong. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
 
         return response;
       }

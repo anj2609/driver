@@ -112,7 +112,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
               const SizedBox(height: 10),
 
               Text(
-                "Enter OTP Code 🔐",
+                "Enter OTP Code",
                 style: PoppinsSemiBold.copyWith(
                   color: ColorResources.blackcolor11,
                 ),
@@ -402,7 +402,7 @@ class NextScreen extends StatelessWidget {
     return const Scaffold(
       body: Center(
         child: Text(
-          "OTP Verified ✅",
+          "OTP Verified",
           style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
         ),
       ),

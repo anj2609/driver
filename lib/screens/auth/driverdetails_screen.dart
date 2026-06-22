@@ -202,8 +202,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
     _driverNewDocument();
     Get.find<AuthController>().driverdocument(context: context);
     Get.find<AuthController>().vehicalDocument(context: context);
+    Get.find<AuthController>().vehicleType(context: context);
     getstatusdata();
-    currentStep = getStepFromStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         fullNameFocus.requestFocus();
@@ -226,7 +226,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     isProfileCompleted =
         (driverprofileStatus?.toString() == "3") || isPersonalSaved;
 
-    setState(() {});
+    setState(() {
+      currentStep = getStepFromStatus();
+    });
   }
 
   void _driverNewDocument() {
@@ -271,10 +273,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 child: Form(
                   key: _formKey,
                   child: currentStep == 0
-                      ? (((driverprofileStatus?.toString() == "3") ||
-                                isPersonalSaved)
-                            ? _buildDriverDocumentStep()
-                            : _buildPersonalDetails())
+                      ? (isPersonalSaved
+                          ? _buildDriverDocumentStep()
+                          : _buildPersonalDetails())
                       : currentStep == 1
                       ? vehicleTypeGrid()
                       : currentStep == 2
@@ -289,25 +290,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
             //   child: buildBottomButtons(),
             // ),
             currentStep == 0
-                ? Column(
-                    children: [
-                      if (!((driverprofileStatus?.toString() == "3") ||
-                          isPersonalSaved))
-                        _buildSaveButton(),
-
-                      if (((driverprofileStatus?.toString() == "3") ||
-                              isPersonalSaved) &&
-                          !isDriverDocSaved)
-                        SizedBox(),
-
-                      // _buildSaveButton(),
-                      if (isDriverDocSaved) ...[
-                        _buildSaveButton(),
-                        const SizedBox(height: 10),
-                        _buildNextButton(),
-                      ],
-                    ],
-                  )
+                ? isPersonalSaved
+                    ? const SizedBox()
+                    : _buildSaveButton()
                 : _buildNextButton(),
             // currentStep == 0
             //     ? Column(
@@ -899,7 +884,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: CustomPrimaryButton(
-        text: "Save & Continue",
+        text: currentStep == 3 ? "Submit" : "Save & Continue",
         onTap: () async {
           if (currentStep == 0) {
             if (!_formKey.currentState!.validate()) return;

@@ -144,10 +144,10 @@ class ProfileController extends GetxController implements GetxService {
           }
           update();
         } else {
-          Get.snackbar("Error", body['message'] ?? "Something went wrong");
+          Get.snackbar("Error", "Unable to load profile. Please try again.");
         }
       } else {
-        Get.snackbar("Error", "Server Error: ${response.statusCode}");
+        Get.snackbar("Error", "Server error. Please try again later.");
       }
     } catch (e) {
       // /Get.snackbar("Error", e.toString());
@@ -215,7 +215,7 @@ class ProfileController extends GetxController implements GetxService {
       await EasyLoading.dismiss();
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -274,7 +274,7 @@ class ProfileController extends GetxController implements GetxService {
       await EasyLoading.dismiss();
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -445,7 +445,7 @@ class ProfileController extends GetxController implements GetxService {
 
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -492,7 +492,7 @@ class ProfileController extends GetxController implements GetxService {
 
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -539,7 +539,7 @@ class ProfileController extends GetxController implements GetxService {
 
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -617,7 +617,7 @@ class ProfileController extends GetxController implements GetxService {
       await EasyLoading.dismiss();
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -673,7 +673,7 @@ class ProfileController extends GetxController implements GetxService {
       await EasyLoading.dismiss();
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -725,7 +725,7 @@ class ProfileController extends GetxController implements GetxService {
       await EasyLoading.dismiss();
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,
@@ -902,7 +902,7 @@ class ProfileController extends GetxController implements GetxService {
     } else {
       EasyLoading.dismiss();
 
-      Get.snackbar("Error", body["message"]);
+      Get.snackbar("Error", body["message"] ?? "Unable to generate QR code. Please try again.");
     }
 
     isQrLoading = false;
@@ -928,7 +928,7 @@ class ProfileController extends GetxController implements GetxService {
       await EasyLoading.dismiss();
       Get.snackbar(
         'Error',
-        "Something went wrong: $e",
+        "Something went wrong. Please try again.",
         backgroundColor: ColorResources.whiteColor,
         colorText: ColorResources.textColorRed,
         snackPosition: SnackPosition.TOP,

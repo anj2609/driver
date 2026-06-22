@@ -369,7 +369,7 @@ class AuthController extends GetxController implements GetxService {
       authRepo.saveUserprofileid(ApiConstants.userIdSocial);
       AnimatedTopToast.show(
         context: context,
-        message: response.body?['message'],
+        message: "Login successful. Welcome to My Ride!",
         backgroundColor: ColorResources.blueeebutton,
         icon: Icons.check_circle_rounded,
       );
@@ -494,15 +494,15 @@ class AuthController extends GetxController implements GetxService {
       update();
       AnimatedTopToast.show(
         context: context,
-        message: response.body?['message'] ?? "Documents Under Review",
+        message: "Your profile is under review. We will notify you once approved.",
         backgroundColor: Colors.orange,
-        icon: Icons.error_rounded,
+        icon: Icons.info_rounded,
       );
     } else {
        isDocLoading = false;
       AnimatedTopToast.show(
         context: context,
-        message: response.body?['message'],
+        message: "Unable to sign in. Please try again.",
         backgroundColor: Colors.orange,
         icon: Icons.error_rounded,
       );
@@ -532,8 +532,7 @@ class AuthController extends GetxController implements GetxService {
     if (response.body != null && response.body["code"] == "200") {
       AnimatedTopToast.show(
         context: context,
-        message:
-            "${response.body['message']}  ${response.body['data']['otp']} 🎉",
+        message: "OTP sent to your mobile number. Please check your messages.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
@@ -550,14 +549,14 @@ class AuthController extends GetxController implements GetxService {
     } else if (response.statusCode == 500) {
       AnimatedTopToast.show(
         context: context,
-        message: response.body?['message'] ?? "Something went wrong 😢",
+        message: "Server error. Please try again later.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body?['message'] ?? "Something went wrong 😢",
+        message: response.body?['message'] ?? "Failed to send OTP. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -583,13 +582,12 @@ class AuthController extends GetxController implements GetxService {
       if (Get.isDialogOpen ?? false) Get.back();
       AnimatedTopToast.show(
         context: context,
-        message:
-            "${registerResponse.body['message']}  ${registerResponse.body['data']['otp']} 🎉",
+        message: "OTP sent to your mobile number. Please check your messages.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
       await Future.delayed(const Duration(milliseconds: 500));
-      RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserRegister);
+      Get.toNamed(RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserRegister));
       return;
     }
 
@@ -605,19 +603,16 @@ class AuthController extends GetxController implements GetxService {
       if (Get.isDialogOpen ?? false) Get.back();
       AnimatedTopToast.show(
         context: context,
-        message:
-            "Welcome back! ${loginResponse.body['message']}  ${loginResponse.body['data']['otp']} 🎉",
+        message: "Welcome back! OTP sent to your registered number.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
       await Future.delayed(const Duration(milliseconds: 500));
-      RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserLogin);
+      Get.toNamed(RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserLogin));
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: loginResponse.body?['message'] ??
-            registerResponse.body?['message'] ??
-            "Something went wrong",
+        message: "Failed to send OTP. Please check your number and try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -643,7 +638,7 @@ class AuthController extends GetxController implements GetxService {
 
       AnimatedTopToast.show(
         context: context,
-        message: "${response.body['message']}",
+        message: "Address saved successfully.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
@@ -657,14 +652,14 @@ class AuthController extends GetxController implements GetxService {
     } else if (response.statusCode == 500) {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'],
+        message: "Server error. Please try again later.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: "Something went wrong 😢",
+        message: response.body['message'] ?? "Failed to save address. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -739,15 +734,14 @@ class AuthController extends GetxController implements GetxService {
     if (response.body["code"] == "200") {
       AnimatedTopToast.show(
         context: context,
-        message:
-            "${response.body['message']}  ${response.body['data']['otp']} 🎉",
+        message: "OTP resent to your mobile number. Please check your messages.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'],
+        message: response.body['message'] ?? "Failed to resend OTP. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -770,7 +764,7 @@ class AuthController extends GetxController implements GetxService {
       logOut();
       AnimatedTopToast.show(
         context: context,
-        message: "${response.body['message']}",
+        message: "You have been logged out successfully.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
@@ -779,7 +773,7 @@ class AuthController extends GetxController implements GetxService {
     } else if (response.statusCode == 500) {
       AnimatedTopToast.show(
         context: context,
-        message: "${response.body['message']}",
+        message: "Server error. Please try again later.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -787,7 +781,7 @@ class AuthController extends GetxController implements GetxService {
       // await EasyLoading.dismiss();
       AnimatedTopToast.show(
         context: context,
-        message: "Something went wrong 😢",
+        message: "Could not log out. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -830,7 +824,7 @@ class AuthController extends GetxController implements GetxService {
 
   AnimatedTopToast.show(
     context: context,
-    message: body?['message'] ?? "Login Success",
+    message: "OTP verified. Welcome to My Ride!",
     backgroundColor: Colors.green,
     icon: Icons.check_circle_rounded,
   );
@@ -905,16 +899,15 @@ else if (code == "401") {
 
   AnimatedTopToast.show(
     context: context,
-    message: body?['message'] ??
-        "Documents Under Review",
+    message: "Your profile is under review. We will notify you once approved.",
     backgroundColor: Colors.orange,
-    icon: Icons.check_circle_rounded,
+    icon: Icons.info_rounded,
   );
 }
 else {
   AnimatedTopToast.show(
     context: context,
-    message: body?['message'] ?? "Invalid OTP",
+    message: body?['message'] ?? "Invalid or expired OTP. Please try again.",
     backgroundColor: Colors.red,
     icon: Icons.error_rounded,
   );
@@ -1053,7 +1046,7 @@ return response;
     if (response.body["code"] == "200") {
       AnimatedTopToast.show(
         context: context,
-        message: "${response.body['message']} ",
+        message: "Personal information saved successfully.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
@@ -1064,7 +1057,7 @@ return response;
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Something went wrong",
+        message: response.body['message'] ?? "Failed to save personal information. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -1106,14 +1099,14 @@ return response;
       if (response.body["code"] == "200") {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'],
+          message: "Documents uploaded successfully.",
           backgroundColor: Colors.green,
           icon: Icons.check_circle_rounded,
         );
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong",
+          message: response.body['message'] ?? "Failed to upload documents. Please check your information and try again.",
           backgroundColor: Colors.red,
           icon: Icons.error_rounded,
         );
@@ -1125,7 +1118,7 @@ return response;
       // await EasyLoading.dismiss();
       AnimatedTopToast.show(
         context: context,
-        message: "Something went wrong",
+        message: "Failed to upload documents. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -1175,14 +1168,14 @@ return response;
       if (response.body["code"] == "200") {
         AnimatedTopToast.show(
           context: context,
-          message: "${response.body['message']}",
+          message: "Vehicle documents saved successfully.",
           backgroundColor: Colors.green,
           icon: Icons.check_circle_rounded,
         );
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: "${response.body['message']}",
+          message: response.body['message'] ?? "Failed to upload vehicle documents. Please try again.",
           backgroundColor: Colors.red,
           icon: Icons.error_rounded,
         );
@@ -1193,7 +1186,7 @@ return response;
     } catch (e) {
       AnimatedTopToast.show(
         context: context,
-        message: "Something went wrong",
+        message: "Failed to upload vehicle documents. Please try again.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -1232,14 +1225,14 @@ return response;
       if (response.body != null && response.body["code"] == "200") {
         AnimatedTopToast.show(
           context: context,
-          message: "${response.body['message']}",
+          message: "Documents updated successfully.",
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: "${response.body['message']}",
+          message: response.body['message'] ?? "Failed to update documents. Please try again.",
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1250,8 +1243,8 @@ return response;
     } catch (e) {
       AnimatedTopToast.show(
         context: context,
-        message: "Upload failed",
-        backgroundColor: ColorResources.blueeebutton,
+        message: "Failed to upload documents. Please try again.",
+        backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
 
@@ -1288,14 +1281,14 @@ return response;
       if (response.body["code"] == "200") {
         AnimatedTopToast.show(
           context: context,
-          message: "${response.body['message']}",
+          message: "Vehicle documents updated successfully.",
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong",
+          message: response.body['message'] ?? "Failed to update vehicle documents. Please try again.",
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1307,7 +1300,7 @@ return response;
       //// await EasyLoading.dismiss();
       AnimatedTopToast.show(
         context: context,
-        message: "Upload failed",
+        message: "Failed to upload vehicle documents. Please try again.",
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
@@ -1409,11 +1402,10 @@ return response;
     if (response.body["code"] == "200") {
       // await EasyLoading.dismiss();
       vehicleStoreId = response.body['data']['id'].toString();
-      // print('suchi |||||| Store tesing $vehicleStoreId');
 
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'],
+        message: "Vehicle information saved successfully.",
         backgroundColor: ColorResources.blueeebutton,
         icon: Icons.check_circle_rounded,
       );
@@ -1421,15 +1413,15 @@ return response;
     } else if (response.body['data'] == "401") {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'],
+        message: "Unauthorized. Please log in again.",
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'],
-        backgroundColor: ColorResources.blueeebutton,
+        message: response.body['message'] ?? "Failed to save vehicle information. Please try again.",
+        backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
       // await EasyLoading.dismiss();
@@ -1507,9 +1499,9 @@ return response;
     } else if (response.statusCode == 422) {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'],
-        backgroundColor: ColorResources.blueeebutton,
-        icon: Icons.check_circle_rounded,
+        message: response.body['message'] ?? "Invalid verification code. Please try again.",
+        backgroundColor: Colors.red,
+        icon: Icons.error_rounded,
       );
     } else {
       // EasyLoading.dismiss();
