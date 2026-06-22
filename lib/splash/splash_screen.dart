@@ -47,7 +47,7 @@ class _SplashScreenState extends State<SplashScreen>
     String? token = prefs.getString("token");
     String? userId = prefs.getString(ApiConstants.profileid);
 
-    String? verificationStatus = prefs.getString("verification_status");
+    String? verificationStatus = prefs.getString(ApiConstants.verificationStatus);
 
     int workStatus = prefs.getInt("work_status") ?? 0;
 

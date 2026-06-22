@@ -1741,8 +1741,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _buildDriverDocumentStep() {
     return GetBuilder<AuthController>(
       builder: (controller) {
+        if (controller.isDriverDocsFetching) {
+          return const Center(child: PremiumBlurLoader());
+        }
         if (controller.driverDocumentList.isEmpty) {
-          return Center(child: PremiumBlurLoader());
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+                const SizedBox(height: 12),
+                const Text(
+                  "Could not load document types.\nPlease go back and try again.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () =>
+                      Get.find<AuthController>().driverdocument(context: context),
+                  child: const Text("Retry"),
+                ),
+              ],
+            ),
+          );
         }
 
         return SingleChildScrollView(
@@ -1954,8 +1976,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _buildVehicleDocumentsStep() {
     return GetBuilder<AuthController>(
       builder: (controller) {
+        if (controller.isVehicleDocsFetching) {
+          return const Center(child: PremiumBlurLoader());
+        }
         if (controller.vehicleDocumentList.isEmpty) {
-          return Center(child: PremiumBlurLoader());
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+                const SizedBox(height: 12),
+                const Text(
+                  "Could not load document types.\nPlease go back and try again.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () =>
+                      Get.find<AuthController>().vehicalDocument(context: context),
+                  child: const Text("Retry"),
+                ),
+              ],
+            ),
+          );
         }
 
         return SingleChildScrollView(

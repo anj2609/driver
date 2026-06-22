@@ -34,11 +34,20 @@ class EditVehicleDocumentsModel {
       name: json['document_name'],
       number: json['document_number'],
       expriydate: json['expiry_date'],
-
-      ///expiry_date
       status: json['status'],
       remark: json['remark'],
       file: json['file'],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'document_id': documentId,
+        'document_name': name,
+        'document_number': numberControllers.text,
+        'expiry_date': expiryControllers.text,
+        'status': status,
+        'remark': remark,
+        'file': file,
+      };
 }

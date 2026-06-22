@@ -36,7 +36,8 @@ class _AddBankDetailsScreenState extends State<AddBankDetailsScreen> {
       backgroundColor: const Color(0xffF5F6FA),
       appBar: AppBar(title: const Text("Bank Details"), centerTitle: true),
 
-      body: GetBuilder<ProfileController>(
+      body: SafeArea(
+        child: GetBuilder<ProfileController>(
         builder: (controller) {
           final isLoading = controller.isBankInfoLoading;
           final bankData = controller.bankDetailsData?.data;
@@ -206,6 +207,7 @@ class _AddBankDetailsScreenState extends State<AddBankDetailsScreen> {
             ),
           );
         },
+        ),
       ),
     );
   }

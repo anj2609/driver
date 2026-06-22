@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -55,15 +56,22 @@ class AuthController extends GetxController implements GetxService {
   bool isDocLoading = true;
   bool isDriverbuttonHide = true;
   bool isVehicleButtonHide = true;
+  bool isUpdatingDriverDocs = false;
+  bool isUpdatingVehicleDocs = false;
+  bool isDriverDocsFetching = false;
+  bool isVehicleDocsFetching = false;
   // final GoogleSignIn _googleSignIn = GoogleSignIn();
   final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email']);
-  // final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+
+  static const String _keyDriverDocsCache = 'cached_driver_docs_json';
+  static const String _keyVehicleDocsCache = 'cached_vehicle_docs_json';
 
   @override
   Future<void> onInit() async {
     super.onInit();
     initDeviceData();
     listenTokenRefresh();
+    _loadDocsFromCache();
 
     ///  Get.find<AuthController>().vehicleType(context: context);
 
@@ -350,6 +358,8 @@ class AuthController extends GetxController implements GetxService {
     isDocLoading = true;
     update();
 
+    try {
+
     final prefs = await SharedPreferences.getInstance();
 
     Response response = await authRepo.socialSignup(
@@ -373,12 +383,9 @@ class AuthController extends GetxController implements GetxService {
         backgroundColor: ColorResources.blueeebutton,
         icon: Icons.check_circle_rounded,
       );
-      isDocLoading = false;
-
       update();
     } else if (response.body['code'] == '401') {
       print("FULL RESPONSE => ${response.body}");
-            isDocLoading = false;
 
 
       int isComplete =
@@ -490,6 +497,8 @@ class AuthController extends GetxController implements GetxService {
         }
       }
 
+      _saveDocsToCache();
+
       isDocLoading = false;
       update();
       AnimatedTopToast.show(
@@ -499,7 +508,6 @@ class AuthController extends GetxController implements GetxService {
         icon: Icons.info_rounded,
       );
     } else {
-       isDocLoading = false;
       AnimatedTopToast.show(
         context: context,
         message: "Unable to sign in. Please try again.",
@@ -508,10 +516,15 @@ class AuthController extends GetxController implements GetxService {
       );
       print("ERROR RESPONSE => ${response.body}");
     }
-     isDocLoading = false;
 
-    update();
     return response;
+
+    } catch (e) {
+      rethrow;
+    } finally {
+      isDocLoading = false;
+      update();
+    }
   }
 
   Future<Response> sendOtp({
@@ -669,52 +682,52 @@ class AuthController extends GetxController implements GetxService {
   }
 
   Future<Response> driverdocument({required BuildContext context}) async {
+    isDriverDocsFetching = true;
     update();
-
-    Response response = await authRepo.driverdocument();
-
-    if (response.statusCode == 200 && response.body['code'] == '200') {
-      driverDocumentModel = DriverDocumentModel.fromJson(response.body);
-
-      driverDocumentList = driverDocumentModel?.data ?? [];
-
-      update();
+    try {
+      Response response = await authRepo.driverdocument();
+      if (response.statusCode == 200 && response.body['code'] == '200') {
+        driverDocumentModel = DriverDocumentModel.fromJson(response.body);
+        driverDocumentList = driverDocumentModel?.data ?? [];
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "Something went wrong",
+          backgroundColor: Colors.red,
+          icon: Icons.error_rounded,
+        );
+      }
       return response;
-    } else {
-      AnimatedTopToast.show(
-        context: context,
-        message: response.body['message'] ?? "Something went wrong",
-        backgroundColor: Colors.red,
-        icon: Icons.error_rounded,
-      );
-
+    } catch (e) {
+      rethrow;
+    } finally {
+      isDriverDocsFetching = false;
       update();
-      return response;
     }
   }
 
   Future<Response> vehicalDocument({required BuildContext context}) async {
+    isVehicleDocsFetching = true;
     update();
-
-    Response response = await authRepo.vehicalDocument();
-    print('testing  demo vehicle list ${vehicleDocumentModel?.data}');
-
-    if (response.statusCode == 200 && response.body['code'] == '200') {
-      vehicleDocumentModel = VehicleDocumentModel.fromJson(response.body);
-
-      vehicleDocumentList = vehicleDocumentModel?.data ?? [];
-
-      update();
+    try {
+      Response response = await authRepo.vehicalDocument();
+      if (response.statusCode == 200 && response.body['code'] == '200') {
+        vehicleDocumentModel = VehicleDocumentModel.fromJson(response.body);
+        vehicleDocumentList = vehicleDocumentModel?.data ?? [];
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "Something went wrong",
+          backgroundColor: Colors.red,
+          icon: Icons.error_rounded,
+        );
+      }
       return response;
-    } else {
-      AnimatedTopToast.show(
-        context: context,
-        message: response.body['message'] ?? "Something went wrong",
-        backgroundColor: Colors.red,
-        icon: Icons.error_rounded,
-      );
+    } catch (e) {
+      rethrow;
+    } finally {
+      isVehicleDocsFetching = false;
       update();
-      return response;
     }
   }
 
@@ -799,6 +812,8 @@ class AuthController extends GetxController implements GetxService {
   }) async {
     isDocLoading = true;
     update();
+
+    try {
 
     Response response = await authRepo.verifyOtpApi(
       phone: mobileNumber,
@@ -897,6 +912,8 @@ else if (code == "401") {
     }
   }
 
+  _saveDocsToCache();
+
   AnimatedTopToast.show(
     context: context,
     message: "Your profile is under review. We will notify you once approved.",
@@ -913,10 +930,14 @@ else {
   );
 }
 
-isDocLoading = false;
-update();
+    return response;
 
-return response;
+    } catch (e) {
+      rethrow;
+    } finally {
+      isDocLoading = false;
+      update();
+    }
 //     if (code == "200") {
 //       String? tokenDriver = body?["data"]?["token"]?.toString();
 //       String? userIdDriver = body?["data"]?["user"]?["id"]?.toString();
@@ -1201,17 +1222,15 @@ return response;
     required BuildContext context,
     required List<EditVehicleDocumentsModel> documents,
   }) async {
+    isUpdatingDriverDocs = true;
     update();
 
     try {
       List<DriverDocumentUploadModel> documentLists = documents.map((doc) {
         return DriverDocumentUploadModel(
           documentId: doc.documentId?.toString() ?? "",
-
           documentNumber: doc.numberControllers.text.trim(),
-
           expiryDate: doc.expiryControllers.text.trim(),
-
           documentImage: doc.imageFiles,
         );
       }).toList();
@@ -1220,36 +1239,42 @@ return response;
         documentList: documentLists,
       );
 
-      // EasyLoading.dismiss();
-
       if (response.body != null && response.body["code"] == "200") {
+        for (var doc in editDriverDocumentList) {
+          if (doc.status == "rejected") {
+            doc.status = "pending";
+            doc.remark = null;
+            doc.imageFiles = null;
+          }
+        }
+        _saveDocsToCache();
         AnimatedTopToast.show(
           context: context,
-          message: "Documents updated successfully.",
+          message: "Driver documents submitted for review. We will notify you once approved.",
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to update documents. Please try again.",
+          message: response.body['message'] ?? "Failed to update documents. Please check your information and try again.",
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
       }
 
-      update();
       return response;
     } catch (e) {
       AnimatedTopToast.show(
         context: context,
-        message: "Failed to upload documents. Please try again.",
+        message: "Could not submit documents. Please check your connection and try again.",
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
-
-      update();
       rethrow;
+    } finally {
+      isUpdatingDriverDocs = false;
+      update();
     }
   }
   ///// ================== VEHICLE UPDATE API ==============
@@ -1258,6 +1283,7 @@ return response;
     required BuildContext context,
     required List<EditVehicleDocumentsModel> documents,
   }) async {
+    isUpdatingVehicleDocs = true;
     update();
 
     try {
@@ -1270,104 +1296,98 @@ return response;
           vehicleId: doc.id.toString(),
         );
       }).toList();
-      print('testinggg |||||| store id ${vehicleStoreId}');
 
       Response response = await authRepo.vehicleDocUploaded(
         documentList: documentLists,
       );
 
-      ///await EasyLoading.dismiss();
-
       if (response.body["code"] == "200") {
+        for (var doc in editVehicleDocumentList) {
+          if (doc.status == "rejected") {
+            doc.status = "pending";
+            doc.remark = null;
+            doc.imageFiles = null;
+          }
+        }
+        _saveDocsToCache();
         AnimatedTopToast.show(
           context: context,
-          message: "Vehicle documents updated successfully.",
+          message: "Vehicle documents submitted for review. We will notify you once approved.",
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to update vehicle documents. Please try again.",
+          message: response.body['message'] ?? "Failed to update vehicle documents. Please check your information and try again.",
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
       }
 
-      update();
       return response;
     } catch (e) {
-      //// await EasyLoading.dismiss();
       AnimatedTopToast.show(
         context: context,
-        message: "Failed to upload vehicle documents. Please try again.",
+        message: "Could not submit vehicle documents. Please check your connection and try again.",
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
-
-      update();
       rethrow;
+    } finally {
+      isUpdatingVehicleDocs = false;
+      update();
     }
   }
 
   Future<Response> vehicledoc({required BuildContext context}) async {
     isLoading = true;
     update();
-
-    Response response = await authRepo.vehicalDocument();
-
-    if (response.statusCode == 200 && response.body['code'] == '200') {
-      vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
-      vehicleTypeList = vehicleTypeModel?.data ?? [];
-
-      isLoading = false;
-      update();
-    } else {
-      AnimatedTopToast.show(
-        context: context,
-        message: response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
-      );
-
+    try {
+      Response response = await authRepo.vehicalDocument();
+      if (response.statusCode == 200 && response.body['code'] == '200') {
+        vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
+        vehicleTypeList = vehicleTypeModel?.data ?? [];
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "Something went wrong",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
+      return response;
+    } catch (e) {
+      rethrow;
+    } finally {
       isLoading = false;
       update();
     }
-
-    return response;
   }
 
   Future<Response> vehicleType({required BuildContext context}) async {
     isLoading = true;
     update();
-
-    Response response = await authRepo.vehicalType();
-
-    /// EasyLoading.dismiss();
-
-    print("testing respo ${response.body}");
-
-    if (response.statusCode == 200 && response.body['code'] == '200') {
-      vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
-      vehicleTypeList = vehicleTypeModel?.data ?? [];
-
-      /// // vehicleTypeModel vehicleTypeList
-
-      isLoading = false;
-      update();
-    } else {
-      AnimatedTopToast.show(
-        context: context,
-        message: response.body['message'] ?? "Something went wrong",
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
-      );
-
+    try {
+      Response response = await authRepo.vehicalType();
+      if (response.statusCode == 200 && response.body['code'] == '200') {
+        vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
+        vehicleTypeList = vehicleTypeModel?.data ?? [];
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body['message'] ?? "Something went wrong",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
+      return response;
+    } catch (e) {
+      rethrow;
+    } finally {
       isLoading = false;
       update();
     }
-
-    return response;
   }
 
   /////========================== post Vehicale data =====================/////////////
@@ -1522,6 +1542,75 @@ return response;
   void logOut() {
     _googleSignIn.signOut();
     authRepo.removeUserToken();
+    _clearProfileCache();
+  }
+
+  void _clearProfileCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('cached_profile_name');
+    await prefs.remove('cached_profile_email');
+    await prefs.remove('cached_profile_phone');
+    await prefs.remove('cached_profile_image');
+    await prefs.remove('cached_profile_gender');
+    await prefs.remove('cached_profile_dob');
+    await prefs.remove(ApiConstants.verificationStatus);
+    await prefs.remove(_keyDriverDocsCache);
+    await prefs.remove(_keyVehicleDocsCache);
+  }
+
+  Future<void> _saveDocsToCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    final driverJson = jsonEncode(editDriverDocumentList.map((d) => d.toJson()).toList());
+    final vehicleJson = jsonEncode(editVehicleDocumentList.map((d) => d.toJson()).toList());
+    await prefs.setString(_keyDriverDocsCache, driverJson);
+    await prefs.setString(_keyVehicleDocsCache, vehicleJson);
+  }
+
+  Future<void> reloadDocsFromCache() => _loadDocsFromCache();
+
+  Future<void> _loadDocsFromCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    final driverJson = prefs.getString(_keyDriverDocsCache);
+    final vehicleJson = prefs.getString(_keyVehicleDocsCache);
+
+    if (driverJson != null && editDriverDocumentList.isEmpty) {
+      try {
+        final rawList = jsonDecode(driverJson) as List;
+        editDriverDocumentList.clear();
+        for (var item in rawList) {
+          var doc = EditVehicleDocumentsModel.fromJson(item);
+          doc.numberControllers.text = doc.number ?? "";
+          if ((doc.expriydate ?? "").isNotEmpty) {
+            try {
+              doc.expiryControllers.text =
+                  DateFormat('yyyy-MM-dd').format(DateTime.parse(doc.expriydate!));
+            } catch (_) {}
+          }
+          editDriverDocumentList.add(doc);
+        }
+      } catch (_) {}
+    }
+
+    if (vehicleJson != null && editVehicleDocumentList.isEmpty) {
+      try {
+        final rawList = jsonDecode(vehicleJson) as List;
+        editVehicleDocumentList.clear();
+        for (var item in rawList) {
+          var doc = EditVehicleDocumentsModel.fromJson(item);
+          doc.numberControllers.text = doc.number ?? "";
+          if ((doc.expriydate ?? "").isNotEmpty) {
+            try {
+              doc.expiryControllers.text =
+                  DateFormat('yyyy-MM-dd').format(DateTime.parse(doc.expriydate!));
+            } catch (_) {}
+          }
+          editVehicleDocumentList.add(doc);
+        }
+      } catch (_) {}
+    }
+
+    isDocLoading = false;
+    update();
   }
 
   void changeStep(int step) {

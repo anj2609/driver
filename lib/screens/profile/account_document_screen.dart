@@ -18,7 +18,8 @@ class AccountDocumentsScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: const Color(0xffF2F2F2),
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
 
           /// ===== HEADER =====
@@ -129,6 +130,7 @@ class AccountDocumentsScreen extends StatelessWidget {
             ),
           )
         ],
+        ),
       ),
     );
   }

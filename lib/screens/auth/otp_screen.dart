@@ -37,6 +37,10 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     super.initState();
     listenForCode();
     startTimer();
+    // Clear any cached SMS autofill value so the field is always fresh on open
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _otpController.clear();
+    });
   }
 
   void startTimer() {
@@ -172,6 +176,11 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         String? verificationStatus = body["verification_status"]
                             ?.toString();
 
+                        // Clear field on any non-success response so user re-enters
+                        if (code != "200" && code != "401") {
+                          _otpController.clear();
+                        }
+
                         final prefs = await SharedPreferences.getInstance();
 
                         await prefs.setString(
@@ -235,10 +244,8 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         }
                       }
                     } catch (e) {
-                      if (Get.isDialogOpen ?? false) {
-                        Get.back();
-                      }
-                      Get.snackbar("Error", e.toString());
+                      if (Get.isDialogOpen ?? false) Get.back();
+                      _otpController.clear();
                     } finally {
                       if (mounted) setState(() => _isVerifying = false);
                     }

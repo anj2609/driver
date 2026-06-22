@@ -86,10 +86,24 @@ class _MyAppState extends State<MyApp> {
     const NotificationDetails platformChannelSpecifics = NotificationDetails(
       android: androidPlatformChannelSpecifics,
     );
+
+    String? title = message.notification?.title;
+    String? body = message.notification?.body;
+
+    // Never expose OTP values in notification tray
+    final hasOtpInData = message.data.containsKey('otp');
+    final bodyHasOtp = body != null &&
+        RegExp(r'\b\d{4,8}\b').hasMatch(body) &&
+        body.toLowerCase().contains('otp');
+    if (hasOtpInData || bodyHasOtp) {
+      title = 'My Ride Verification';
+      body = 'Tap to open the app and enter your verification code.';
+    }
+
     await flutterLocalNotificationsPlugin.show(
       id: message.notification.hashCode,
-      title: message.notification?.title,
-      body: message.notification?.body,
+      title: title,
+      body: body,
       notificationDetails: platformChannelSpecifics,
     );
   }

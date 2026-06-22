@@ -422,7 +422,9 @@ class RouteHelper {
 
     GetPage(
       name: editVehicleDocumentScreen,
-      page: () => EditVehicleDocumentScreen(status: Get.arguments['status']),
+      page: () => EditVehicleDocumentScreen(
+            status: (Get.arguments is Map) ? Get.arguments['status'] : null,
+          ),
       transitionDuration: Duration(
         milliseconds: ApiConstants.screenTransitionTime,
       ),

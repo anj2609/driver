@@ -342,7 +342,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
           ),
 
           Positioned(
-            bottom: 120,
+            bottom: MediaQuery.of(context).padding.bottom + 120,
             left: 0,
             right: 0,
             child: GetBuilder<HomeController>(
@@ -364,9 +364,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
             child: GetBuilder<HomeController>(
               builder: (controller) {
                 return Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 18,
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    18,
+                    20,
+                    18 + MediaQuery.of(context).padding.bottom,
                   ),
                   decoration: const BoxDecoration(
                     color: Color(0xFFF5F5F5),
@@ -410,14 +412,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                               ),
                             ],
                           ),
-
-                          /// const Icon(Icons.more_vert),
                         ],
                       ),
 
                       const SizedBox(height: 12),
 
-                      /// Bottom Line
                       Container(
                         height: 4,
                         width: 80,

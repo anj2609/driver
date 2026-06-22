@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:myridedriverapp/model/aboutus_model.dart';
 import 'package:myridedriverapp/model/arningactivitylist_model.dart';
 import 'package:myridedriverapp/model/bankdetals_model.dart';
@@ -79,10 +80,50 @@ class ProfileController extends GetxController implements GetxService {
 
   ///BankDetailModel
 
+  static const String _keyName = 'cached_profile_name';
+  static const String _keyEmail = 'cached_profile_email';
+  static const String _keyPhone = 'cached_profile_phone';
+  static const String _keyImage = 'cached_profile_image';
+  static const String _keyGender = 'cached_profile_gender';
+  static const String _keyDob = 'cached_profile_dob';
+
   @override
   void onInit() {
     super.onInit();
+    _loadCachedProfile();
     fetchProfile();
+  }
+
+  Future<void> _loadCachedProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedName = prefs.getString(_keyName) ?? "";
+    final cachedEmail = prefs.getString(_keyEmail) ?? "";
+    final cachedPhone = prefs.getString(_keyPhone) ?? "";
+    final cachedImage = prefs.getString(_keyImage) ?? "";
+    final cachedGender = prefs.getString(_keyGender) ?? "";
+    final cachedDob = prefs.getString(_keyDob) ?? "";
+
+    if (cachedName.isNotEmpty) {
+      nameController.text = cachedName;
+      emailController.text = cachedEmail;
+      phoneController.text = cachedPhone;
+      genderController.text = cachedGender;
+      dobController.text = cachedDob;
+      profileimagee = cachedImage;
+      userName = cachedName;
+      emailAddress = cachedEmail;
+      update();
+    }
+  }
+
+  Future<void> _saveProfileToCache(ProfileData userData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyName, userData.name ?? "");
+    await prefs.setString(_keyEmail, userData.email ?? "");
+    await prefs.setString(_keyPhone, userData.phone ?? "");
+    await prefs.setString(_keyImage, userData.profileImage ?? "");
+    await prefs.setString(_keyGender, userData.gender ?? "");
+    await prefs.setString(_keyDob, userData.dateOfBirth ?? "");
   }
 
   Future<void> pickStartDate(BuildContext context) async {
@@ -136,11 +177,7 @@ class ProfileController extends GetxController implements GetxService {
             dobController.text = userData.dateOfBirth ?? "";
             userName = userData.name ?? "";
             emailAddress = userData.email ?? "";
-
-            log("Full API data: ${body['data']}");
-            log("Phone from API: ${userData.phone}");
-            log("Name: ${profileimagee}");
-            log("Email: ${userData.email}");
+            _saveProfileToCache(userData);
           }
           update();
         } else {
