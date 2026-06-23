@@ -55,6 +55,13 @@ class AuthRepo extends GetxService {
     });
   }
 
+  Future<Response> fetchDriverDocumentStatus(String userId) async {
+    return apiClient.postData(
+      ApiConstants.driverDocumentStatus,
+      {'user_id': userId},
+    );
+  }
+
   Future<Response> driverdocument() async {
     return apiClient.getApi(
       ApiConstants.driverDocument + ApiConstants.driverLogin,

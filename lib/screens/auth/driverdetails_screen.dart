@@ -1373,12 +1373,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   Widget _buildYearDropdown() {
-    final int currentYear = DateTime.now().year;
-    final List<String> years = List.generate(
-      currentYear - 1989,
-      (i) => (currentYear - i).toString(),
-    );
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 15),
       child: Column(
@@ -1389,26 +1383,41 @@ class _DetailsScreenState extends State<DetailsScreen> {
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
-          DropdownButtonFormField<String>(
-            value: _selectedManufactureYear,
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white,
-              hintText: "Select year",
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
+          GestureDetector(
+            onTap: () async {
+              final now = DateTime.now();
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _selectedManufactureYear != null
+                    ? DateTime(int.parse(_selectedManufactureYear!))
+                    : now,
+                firstDate: DateTime(1990),
+                lastDate: now,
+                initialDatePickerMode: DatePickerMode.year,
+                helpText: "SELECT MANUFACTURE YEAR",
+              );
+              if (picked != null) {
+                setState(() {
+                  _selectedManufactureYear = picked.year.toString();
+                  yearController.text = picked.year.toString();
+                });
+              }
+            },
+            child: AbsorbPointer(
+              child: TextFormField(
+                controller: yearController,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.white,
+                  hintText: "Select year",
+                  suffixIcon: const Icon(Icons.calendar_today),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
               ),
             ),
-            items: years
-                .map((y) => DropdownMenuItem(value: y, child: Text(y)))
-                .toList(),
-            onChanged: (value) {
-              setState(() {
-                _selectedManufactureYear = value;
-                yearController.text = value ?? "";
-              });
-            },
           ),
         ],
       ),
@@ -1446,7 +1455,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     DateTime? picked = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
-      firstDate: DateTime(2000),
+      firstDate: DateTime.now(),
       lastDate: DateTime(2100),
     );
 

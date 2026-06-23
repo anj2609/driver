@@ -22,6 +22,7 @@ import 'package:myridedriverapp/model/vehicleupload_model.dart';
 import 'package:myridedriverapp/repository/auth_repo.dart';
 import 'package:myridedriverapp/screens/auth/socialauth_screen.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
+import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -51,6 +52,7 @@ class AuthController extends GetxController implements GetxService {
   String? selectedBrandId;
   String? selectedBrandName;
   String? vehicleStoreId;
+  String? _lastKnownVehicleId;
   bool isDocLoading = true;
   bool isDriverbuttonHide = true;
   bool isVehicleButtonHide = true;
@@ -166,7 +168,7 @@ class AuthController extends GetxController implements GetxService {
     DateTime? pickedDate = await showDatePicker(
       context: Get.context!,
       initialDate: DateTime.now(),
-      firstDate: DateTime(2000),
+      firstDate: DateTime.now(),
       lastDate: DateTime(2100),
     );
 
@@ -229,7 +231,7 @@ class AuthController extends GetxController implements GetxService {
     DateTime? pickedDate = await showDatePicker(
       context: Get.context!,
       initialDate: DateTime.now(),
-      firstDate: DateTime(2000),
+      firstDate: DateTime.now(),
       lastDate: DateTime(2100),
     );
     if (pickedDate != null) {
@@ -499,18 +501,16 @@ class AuthController extends GetxController implements GetxService {
         }
       }
 
-      // Restore any locally-stored doc images from the initial submission
-      await _restoreLocalDocImages();
-      _saveDocsToCache();
+      // Only persist docs and show toast for users who have submitted all docs
+      if (isComplete == 1) {
+          _saveDocsToCache();
 
-      isDocLoading = false;
-      update();
-      AnimatedTopToast.show(
-        context: context,
-        message: "Your profile is under review. We will notify you once approved.",
-        backgroundColor: Colors.orange,
-        icon: Icons.info_rounded,
-      );
+        isDocLoading = false;
+        update();
+      } else {
+        isDocLoading = false;
+        update();
+      }
     } else {
       AnimatedTopToast.show(
         context: context,
@@ -921,16 +921,7 @@ else if (code == "401") {
     }
   }
 
-  // Restore any locally-stored doc images from the initial submission
-  await _restoreLocalDocImages();
   _saveDocsToCache();
-
-  AnimatedTopToast.show(
-    context: context,
-    message: "Your profile is under review. We will notify you once approved.",
-    backgroundColor: Colors.orange,
-    icon: Icons.info_rounded,
-  );
 }
 else {
   AnimatedTopToast.show(
@@ -1147,16 +1138,7 @@ else {
           if (doc.expiryController.text.isNotEmpty) {
             edit.expiryControllers.text = doc.expiryController.text;
           }
-          if (doc.imageFile != null) {
-            final localPath = await _copyToAppDir(
-              doc.imageFile!,
-              'driver_doc_${doc.id}_$i.jpg',
-            );
-            if (localPath != null) {
-              edit.localImagePath = localPath;
-              edit.imageFiles = File(localPath);
-            }
-          }
+
           editDriverDocumentList.add(edit);
         }
         _saveDocsToCache();
@@ -1248,16 +1230,7 @@ else {
           if (doc.expiryControllers.text.isNotEmpty) {
             edit.expiryControllers.text = doc.expiryControllers.text;
           }
-          if (doc.imageFiles != null) {
-            final localPath = await _copyToAppDir(
-              doc.imageFiles!,
-              'vehicle_doc_${doc.id}_$i.jpg',
-            );
-            if (localPath != null) {
-              edit.localImagePath = localPath;
-              edit.imageFiles = File(localPath);
-            }
-          }
+
           editVehicleDocumentList.add(edit);
         }
 
@@ -1371,13 +1344,21 @@ else {
     update();
 
     try {
+      // Use the actual vehicle ID from the API (saved by fetchDocumentStatus),
+      // NOT doc.id which is the document record ID.
+      final vehicleIdForUpload = _lastKnownVehicleId
+          ?? vehicleStoreId
+          ?? '';
+      debugPrint('[UpdateVehicleDoc] vehicleId=$vehicleIdForUpload '
+          '(lastKnown=$_lastKnownVehicleId, storeId=$vehicleStoreId)');
+
       List<VehicleDocumentUploadModels> documentLists = documents.map((doc) {
         return VehicleDocumentUploadModels(
           documentId: doc.documentId.toString(),
           documentNumber: doc.numberControllers.text.trim(),
           expiryDate: doc.expiryControllers.text.trim(),
           documentImage: doc.imageFiles,
-          vehicleId: doc.id.toString(),
+          vehicleId: vehicleIdForUpload,
         );
       }).toList();
 
@@ -1701,116 +1682,291 @@ else {
     update();
   }
 
-  /// After repopulating lists from API, check if the locally-stored files
-  /// (copied during initial document submission) still exist on disk and
-  /// wire them back up so they display as File images instead of network images.
-  Future<void> _restoreLocalDocImages() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final docDir = Directory(p.join(dir.path, 'submitted_docs'));
-      if (!await docDir.exists()) return;
 
-      final allFiles = await docDir
-          .list()
-          .map((e) => File(e.path))
-          .toList();
 
-      for (final doc in editDriverDocumentList) {
-        if (doc.imageFiles != null) continue;
-        final match = allFiles.firstWhere(
-          (f) => p.basename(f.path).startsWith('driver_doc_${doc.documentId}_'),
-          orElse: () => File(''),
-        );
-        if (match.path.isNotEmpty && await match.exists()) {
-          doc.localImagePath = match.path;
-          doc.imageFiles = match;
-        }
-      }
-
-      for (final doc in editVehicleDocumentList) {
-        if (doc.imageFiles != null) continue;
-        final match = allFiles.firstWhere(
-          (f) => p.basename(f.path).startsWith('vehicle_doc_${doc.documentId}_'),
-          orElse: () => File(''),
-        );
-        if (match.path.isNotEmpty && await match.exists()) {
-          doc.localImagePath = match.path;
-          doc.imageFiles = match;
-        }
-      }
-    } catch (_) {}
-  }
-
-  /// Fetches the latest document status from the server without requiring
-  /// a re-login. Updates only the status/remark fields so that already-loaded
-  /// local image references are preserved.
+  /// POSTs to driver-document-status with user_id to get the latest doc status.
+  /// Called every 30 seconds by the timer, on pull-to-refresh, and on the
+  /// refresh AppBar button. Updates each doc's status/remark in real time and
+  /// auto-navigates to home when the driver is fully approved.
   Future<void> fetchDocumentStatus() async {
     try {
-      final response = await authRepo.apiClient.getDataApi(
-        ApiConstants.getUserProfileUrl,
-      );
-      if (response.statusCode != 200 || response.body == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      final userId = ApiConstants.userIdSocial.isNotEmpty
+          ? ApiConstants.userIdSocial
+          : (prefs.getString(ApiConstants.profileid) ?? '');
 
-      final body = response.body as Map<String, dynamic>;
+      debugPrint('[DocStatus] userId=$userId '
+          'userIdSocial=${ApiConstants.userIdSocial}');
+
+      if (userId.isEmpty) {
+        debugPrint('[DocStatus] userId is empty — aborting');
+        return;
+      }
+
+      final resp = await authRepo.fetchDriverDocumentStatus(userId);
+
+      debugPrint('[DocStatus] statusCode=${resp.statusCode} '
+          'body=${resp.body}');
+
+      if (resp.statusCode != 200 || resp.body == null) {
+        debugPrint('[DocStatus] bad response — aborting');
+        return;
+      }
+
+      // When all docs are approved, the server may return an empty body
+      // or a non-JSON string. Handle gracefully — treat as approved.
+      if (resp.body is! Map<String, dynamic>) {
+        debugPrint('[DocStatus] body is not a Map (${resp.body.runtimeType}) — treating as approved');
+        await _navigateToHomeAsApproved();
+        return;
+      }
+
+      final body = resp.body as Map<String, dynamic>;
       final data = body['data'];
 
-      final rawDriverDocs =
-          (data is Map<String, dynamic> ? data['driver_doc'] : null) ??
-          body['driver_doc'];
-      final rawVehicleDocs =
-          (data is Map<String, dynamic> ? data['vehicle_doc'] : null) ??
-          body['vehicle_doc'];
+      debugPrint('[DocStatus] keys=${body.keys.toList()} '
+          'dataType=${data.runtimeType}');
 
+      // Save the vehicle_id from the response for re-upload use.
+      // The API returns vehicle_id as an array like [48].
+      if (data is Map<String, dynamic>) {
+        final vid = data['vehicle_id'];
+        if (vid is List && vid.isNotEmpty) {
+          _lastKnownVehicleId = vid.first.toString();
+        } else if (vid != null) {
+          _lastKnownVehicleId = vid.toString();
+        }
+        debugPrint('[DocStatus] saved vehicleId=$_lastKnownVehicleId');
+      }
+
+      // Check overall approval status first (root-level verification_status).
+      // The body also has a domain "code" field (e.g. "401" meaning "pending")
+      // which is NOT a real HTTP failure — ignore it for auth purposes.
+      final String? overallStatus = _extractVerificationStatus(body, data);
+      debugPrint('[DocStatus] overallStatus=$overallStatus');
+      if (overallStatus != null &&
+          overallStatus != 'pending' &&
+          overallStatus != 'rejected' &&
+          overallStatus != 'under_review' &&
+          overallStatus.isNotEmpty) {
+        await _navigateToHomeAsApproved();
+        return;
+      }
+
+      // Parse driver doc arrays — try every common key name.
       bool updated = false;
-
-      if (rawDriverDocs is List && rawDriverDocs.isNotEmpty) {
-        _mergeDocStatus(editDriverDocumentList, rawDriverDocs.cast<Map<String, dynamic>>());
-        updated = true;
+      int totalChanged = 0;
+      for (final key in [
+        'pending_driver_docs',
+        'driver_doc',
+        'driver_documents',
+        'documents',
+      ]) {
+        final docs = _parseDocList(body, listKey: key);
+        if (docs != null && docs.isNotEmpty) {
+          debugPrint('[DocStatus] driver docs from key "$key": '
+              '${docs.map((d) => d['status']).toList()}');
+          totalChanged += _mergeDocStatus(editDriverDocumentList, docs);
+          updated = true;
+          break;
+        }
+      }
+      for (final key in [
+        'pending_vehicle_docs',
+        'vehicle_doc',
+        'vehicle_documents',
+      ]) {
+        final docs = _parseDocList(body, listKey: key);
+        if (docs != null && docs.isNotEmpty) {
+          debugPrint('[DocStatus] vehicle docs from key "$key": '
+              '${docs.map((d) => d['status']).toList()}');
+          totalChanged += _mergeDocStatus(editVehicleDocumentList, docs);
+          updated = true;
+          break;
+        }
       }
 
-      if (rawVehicleDocs is List && rawVehicleDocs.isNotEmpty) {
-        _mergeDocStatus(editVehicleDocumentList, rawVehicleDocs.cast<Map<String, dynamic>>());
-        updated = true;
+      // Flat list fallback — split by type discriminator or try both lists.
+      if (!updated) {
+        final flat = _parseDocList(body);
+        debugPrint('[DocStatus] flat list: ${flat?.length} items — '
+            '${flat?.map((d) => d['status']).toList()}');
+        if (flat != null && flat.isNotEmpty) {
+          final driverDocs = flat
+              .where((d) =>
+                  d['type']?.toString() == 'driver' ||
+                  d['doc_type']?.toString() == 'driver')
+              .toList();
+          final vehicleDocs = flat
+              .where((d) =>
+                  d['type']?.toString() == 'vehicle' ||
+                  d['type']?.toString() == 'vehical' ||
+                  d['doc_type']?.toString() == 'vehicle')
+              .toList();
+          if (driverDocs.isNotEmpty) {
+            totalChanged += _mergeDocStatus(editDriverDocumentList, driverDocs);
+            updated = true;
+          }
+          if (vehicleDocs.isNotEmpty) {
+            totalChanged += _mergeDocStatus(editVehicleDocumentList, vehicleDocs);
+            updated = true;
+          }
+          if (!updated) {
+            // No type discriminator — try merging against both lists.
+            totalChanged += _mergeDocStatus(editDriverDocumentList, flat);
+            totalChanged += _mergeDocStatus(editVehicleDocumentList, flat);
+            updated = flat.isNotEmpty;
+          }
+        }
       }
 
-      if (updated) {
-        _saveDocsToCache();
-        update();
+      debugPrint('[DocStatus] updated=$updated changed=$totalChanged '
+          'driverStatuses=${editDriverDocumentList.map((d) => d.status).toList()} '
+          'vehicleStatuses=${editVehicleDocumentList.map((d) => d.status).toList()}');
+
+      // When all docs are approved the backend may return empty pending lists
+      // but verification_status == "approved" at the root — already handled above.
+      // If parsing found nothing but the body has a code indicating approval, guard here too.
+      if (!updated) {
+        final bodyCode = body['code']?.toString();
+        if (bodyCode != null && bodyCode != '401' && bodyCode == '200') {
+          // Server returned success code with no pending docs — treat as approved.
+          await _navigateToHomeAsApproved();
+        }
+        return;
       }
-    } catch (_) {}
+
+      final allApproved =
+          editDriverDocumentList.isNotEmpty &&
+          editVehicleDocumentList.isNotEmpty &&
+          editDriverDocumentList.every((d) => d.status == 'approved') &&
+          editVehicleDocumentList.every((d) => d.status == 'approved');
+
+      if (allApproved) {
+        await _navigateToHomeAsApproved();
+        return;
+      }
+
+      _saveDocsToCache();
+      if (totalChanged > 0) {
+        // Notify the user that the admin has updated at least one document status.
+        Get.snackbar(
+          'Document Status Updated',
+          'One or more document statuses have changed. Please review.',
+          snackPosition: SnackPosition.TOP,
+          duration: const Duration(seconds: 3),
+          backgroundColor: const Color(0xFF323232),
+          colorText: const Color(0xFFFFFFFF),
+        );
+      }
+      update();
+    } catch (e, st) {
+      debugPrint('[DocStatus] ERROR: $e\n$st');
+    }
   }
 
-  /// Updates status and remark on existing docs in [list] from [freshDocs]
-  /// without touching localImagePath / imageFiles so images keep showing.
-  void _mergeDocStatus(
+  Future<void> _navigateToHomeAsApproved() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(ApiConstants.verificationStatus, 'approved');
+    Get.offAllNamed(RouteHelper.gethomescreen());
+  }
+
+  /// Extract overall verification status from a response body, trying common
+  /// field names at both the root level and inside `data`.
+  String? _extractVerificationStatus(
+    Map<String, dynamic> body,
+    dynamic data,
+  ) {
+    const fields = [
+      'verification_status',
+      'approval_status',
+      'document_status',
+      'account_status',
+    ];
+    for (final f in fields) {
+      final v = body[f]?.toString();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    if (data is Map<String, dynamic>) {
+      for (final f in fields) {
+        final v = data[f]?.toString();
+        if (v != null && v.isNotEmpty) return v;
+      }
+    }
+    return null;
+  }
+
+  /// Parse a list of doc maps from an API response body.
+  /// Searches: body[listKey], body['data'][listKey], body['data'] (if List).
+  List<Map<String, dynamic>>? _parseDocList(
+    Map<String, dynamic> body, {
+    String? listKey,
+  }) {
+    dynamic raw;
+    if (listKey != null) {
+      raw = body[listKey] ?? (body['data'] is Map ? body['data'][listKey] : null);
+    } else {
+      raw = body['data'];
+    }
+    if (raw is List && raw.isNotEmpty) {
+      return raw.whereType<Map<String, dynamic>>().toList();
+    }
+    return null;
+  }
+
+  /// Updates status and remark on existing docs in [list] from [freshDocs].
+  /// Returns how many docs had their status actually changed.
+  int _mergeDocStatus(
     List<EditVehicleDocumentsModel> list,
     List<Map<String, dynamic>> freshDocs,
   ) {
+    int changed = 0;
     for (final raw in freshDocs) {
-      final docId = raw['document_id'] as int?;
-      if (docId == null) continue;
-      final idx = list.indexWhere((d) => d.documentId == docId);
+      // Primary match: document_id or id as integer.
+      final docId = int.tryParse(
+        raw['document_id']?.toString() ?? raw['id']?.toString() ?? '',
+      );
+      int idx = docId != null
+          ? list.indexWhere((d) => d.documentId == docId)
+          : -1;
+
+      // Fallback: match by document name (case-insensitive).
+      if (idx < 0) {
+        final rawName =
+            (raw['document_name'] ?? raw['name'] ?? '').toString().toLowerCase().trim();
+        if (rawName.isNotEmpty) {
+          idx = list.indexWhere(
+            (d) => (d.name ?? '').toLowerCase().trim() == rawName,
+          );
+        }
+      }
+
       if (idx >= 0) {
-        list[idx].status = raw['status']?.toString();
-        list[idx].remark = raw['remark']?.toString();
-        // Use server file URL only when we don't already have a local file
+        final newStatus = raw['status']?.toString();
+        if (newStatus != null && newStatus != list[idx].status) {
+          list[idx].status = newStatus;
+          changed++;
+        }
+        list[idx].remark = raw['remark']?.toString() ?? list[idx].remark;
         if (list[idx].imageFiles == null && raw['file'] != null) {
           list[idx].file = raw['file'].toString();
         }
       }
     }
+    return changed;
   }
 
-  Future<String?> _copyToAppDir(File file, String filename) async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final destDir = Directory(p.join(dir.path, 'submitted_docs'));
-      await destDir.create(recursive: true);
-      final dest = await file.copy(p.join(destDir.path, filename));
-      return dest.path;
-    } catch (_) {
-      return null;
+  String _buildServerDocUrl(String? file) {
+    if (file == null || file.trim().isEmpty) return '';
+    if (file.startsWith('http://') || file.startsWith('https://')) return file;
+    final path = file.startsWith('/') ? file.substring(1) : file;
+    if (path.startsWith('storage/')) {
+      return '${ApiConstants.imageurl}$path';
     }
+    final base = ApiConstants.fileUrl.endsWith('/')
+        ? ApiConstants.fileUrl
+        : '${ApiConstants.fileUrl}/';
+    return '$base$path';
   }
 
   void changeStep(int step) {

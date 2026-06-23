@@ -21,18 +21,16 @@ class EditVehicleDocumentScreen extends StatefulWidget {
       _EditVehicleDocumentScreenState();
 }
 
-class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
+class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
+    with WidgetsBindingObserver {
   Timer? _statusTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final controller = Get.find<AuthController>();
     controller.reloadDocsFromCache();
-
-    // Fetch fresh status from the server immediately when the screen opens,
-    // then keep polling every 30 seconds so admin changes (approved/rejected)
-    // are reflected without requiring a re-login.
     controller.fetchDocumentStatus();
     _statusTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       controller.fetchDocumentStatus();
@@ -40,7 +38,15 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      Get.find<AuthController>().fetchDocumentStatus();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _statusTimer?.cancel();
     super.dispose();
   }
@@ -62,6 +68,15 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
           onTap: () => Get.offAllNamed(RouteHelper.getmyRideLoginScreen()),
           child: const Icon(Icons.arrow_back_ios_new),
         ),
+        actions: [
+          GetBuilder<AuthController>(
+            builder: (controller) => IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: "Refresh status",
+              onPressed: () => controller.fetchDocumentStatus(),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: GetBuilder<AuthController>(
@@ -246,15 +261,12 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
 
   Future<Map<String, String>> _authHeaders() async {
     final prefs = await SharedPreferences.getInstance();
-    // Prefer in-memory social tokens (set during the current session),
-    // then fall back to persisted tokens from SharedPreferences.
     final id = (ApiConstants.userIdSocial.isNotEmpty)
         ? ApiConstants.userIdSocial
         : (prefs.getString(ApiConstants.profileid) ?? '');
     final token = (ApiConstants.userTokenSocial.isNotEmpty)
         ? ApiConstants.userTokenSocial
         : (prefs.getString(ApiConstants.token) ?? '');
-    // Only send headers if we actually have values — empty headers cause 401
     final headers = <String, String>{};
     if (id.isNotEmpty) headers['id'] = id;
     if (token.isNotEmpty) headers['authorizationToken'] = token;

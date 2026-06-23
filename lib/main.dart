@@ -6,8 +6,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:myridedriverapp/config/utils/colors.dart';
+import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/helper/get_di.dart' as di;
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/app_constants.dart';
@@ -61,9 +63,19 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+
+    // App killed → user taps notification → app launches
+    FirebaseMessaging.instance.getInitialMessage().then((message) {
+      if (message != null) _handleFcmMessage(message);
+    });
+
+    // App in background → user taps notification
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleFcmMessage);
+
+    // App in foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
       _showNotification(message);
-
+      _handleFcmMessage(message);
       await FirebaseMessaging.instance
           .setForegroundNotificationPresentationOptions(
             alert: true,
@@ -71,8 +83,49 @@ class _MyAppState extends State<MyApp> {
             sound: true,
           );
     });
+
     FirebaseMessaging.instance.requestPermission();
     _initializeFlutterLocalNotifications();
+  }
+
+  /// Returns true when [message] indicates the driver's docs have been approved.
+  bool _isApprovalMessage(RemoteMessage message) {
+    final data = message.data;
+    // Check explicit data-payload fields (most reliable).
+    if (data['verification_status'] == 'approved' ||
+        data['doc_status'] == 'approved' ||
+        data['type'] == 'document_approved' ||
+        data['type'] == 'doc_approved' ||
+        data['type'] == 'approved') {
+      return true;
+    }
+    // Fallback: check notification title / body text.
+    final title = message.notification?.title?.toLowerCase() ?? '';
+    final body = message.notification?.body?.toLowerCase() ?? '';
+    if ((title.contains('approved') || body.contains('approved')) &&
+        (title.contains('document') ||
+            body.contains('document') ||
+            title.contains('profile') ||
+            body.contains('profile') ||
+            title.contains('account') ||
+            body.contains('account'))) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _handleFcmMessage(RemoteMessage message) async {
+    try {
+      if (!_isApprovalMessage(message)) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(ApiConstants.verificationStatus, 'approved');
+      final home = RouteHelper.gethomescreen();
+      if (Get.currentRoute != home) {
+        Get.offAllNamed(home);
+      }
+    } catch (e) {
+      debugPrint('[FCM] _handleFcmMessage error: $e');
+    }
   }
 
   void _showNotification(RemoteMessage message) async {

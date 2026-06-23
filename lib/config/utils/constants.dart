@@ -49,6 +49,7 @@ class ApiConstants {
   static const String driveraddress = 'driver-address';
   static const String driverDocument = 'document-list?type=';
   static const String driverUploadDocument = 'driver-document';
+  static const String driverDocumentStatus = 'driver-document-status';
   static const String vehicaltypelist = 'vehical-type-list';
   static const String vehicalInfo = 'vehical-info';
   static const String vehicleUploadDocument = 'vehical-document';
@@ -113,16 +114,16 @@ class ApiConstants {
   static String userTokenSocial = "";
   static const String isDocumentSaved = 'isDocumentsavedKey';
   static String socialtoken = "";
-  static String  gmailAddres ="";
-  static String  userName ="";
-   static String  profileImage ="";
- static String vehicleIdStore = "";
+  static String gmailAddres = "";
+  static String userName = "";
+  static String profileImage = "";
+  static String vehicleIdStore = "";
   static String verificationStatus = "verificationstatus";
- ///verification_status
+
+  ///verification_status
 
   static const String imageurl = 'https://myride.infinititechsolution.com/';
-  static const String fileUrl =
-      'https://myride.infinititechsolution.com/storage/';
+  static const String fileUrl = 'https://myride.infinititechsolution.com/';
   static const String apiKey = 'AIzaSyBNHiJLxFa2qcs079P5TaYrB770_CVMldU';
 }
 

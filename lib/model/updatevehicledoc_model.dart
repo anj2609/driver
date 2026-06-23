@@ -11,11 +11,12 @@ class EditVehicleDocumentsModel {
   String? status;
   String? remark;
   String? file;
-  String? localImagePath;
 
   TextEditingController numberControllers = TextEditingController();
   TextEditingController expiryControllers = TextEditingController();
   File? imageFiles;
+
+  bool? isRequired;
 
   EditVehicleDocumentsModel({
     this.id,
@@ -26,7 +27,7 @@ class EditVehicleDocumentsModel {
     this.status,
     this.remark,
     this.file,
-    this.localImagePath,
+    this.isRequired,
   });
 
   factory EditVehicleDocumentsModel.fromJson(Map<String, dynamic> json) {
@@ -39,15 +40,7 @@ class EditVehicleDocumentsModel {
       status: json['status'],
       remark: json['remark'],
       file: json['file'],
-      localImagePath: json['local_image_path'],
     );
-    // Restore local image file if the path still exists on disk
-    if (model.localImagePath != null && model.localImagePath!.isNotEmpty) {
-      final f = File(model.localImagePath!);
-      if (f.existsSync()) {
-        model.imageFiles = f;
-      }
-    }
     return model;
   }
 
@@ -60,6 +53,5 @@ class EditVehicleDocumentsModel {
         'status': status,
         'remark': remark,
         'file': file,
-        'local_image_path': localImagePath,
       };
 }

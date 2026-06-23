@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
-
-class OnlineToggleButton extends StatelessWidget {
+class OnlineToggleButton extends StatefulWidget {
   final bool isOnline;
   final VoidCallback onTap;
 
@@ -12,10 +12,26 @@ class OnlineToggleButton extends StatelessWidget {
   });
 
   @override
+  State<OnlineToggleButton> createState() => _OnlineToggleButtonState();
+}
+
+class _OnlineToggleButtonState extends State<OnlineToggleButton> {
+  bool _isCooldown = false;
+
+  void _handleTap() {
+    if (_isCooldown) return;
+    setState(() => _isCooldown = true);
+    widget.onTap();
+    Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _isCooldown = false);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Center(
       child: GestureDetector(
-        onTap: onTap,
+        onTap: _isCooldown ? null : _handleTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeInOut,
@@ -25,62 +41,63 @@ class OnlineToggleButton extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-
-              /// ✅ FIXED COLOR LOGIC
-              colors: isOnline
-                  ? [Colors.green, Colors.green] // ONLINE = GREEN
-                  : [Colors.red, Colors.red], // OFFLINE = RED
+              colors: widget.isOnline
+                  ? [Colors.green, Colors.green]
+                  : [Colors.red, Colors.red],
             ),
             borderRadius: BorderRadius.circular(40),
             boxShadow: [
               BoxShadow(
-                color: isOnline ? Colors.green : Colors.red,
+                color: (widget.isOnline ? Colors.green : Colors.red)
+                    .withValues(alpha: _isCooldown ? 0.2 : 0.5),
                 blurRadius: 15,
                 offset: const Offset(0, 6),
               ),
             ],
           ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              /// ✅ TEXT FIX
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (child, animation) =>
-                    FadeTransition(opacity: animation, child: child),
-                child: Text(
-                 isOnline ? "Go Online" : "Go Offline",
-                  key: ValueKey(isOnline),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5,
+          child: Opacity(
+            opacity: _isCooldown ? 0.6 : 1.0,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  transitionBuilder: (child, animation) =>
+                      FadeTransition(opacity: animation, child: child),
+                  child: Text(
+                    widget.isOnline ? "Online" : "Offline",
+                    key: ValueKey(widget.isOnline),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
-              ),
-
-              AnimatedAlign(
-                duration: const Duration(milliseconds: 400),
-                alignment: isOnline
-                    ? Alignment
-                          .centerRight // ✅ FIXED
-                    : Alignment.centerLeft,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 10),
-                  height: 40,
-                  width: 40,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isOnline ? Icons.power_settings_new : Icons.double_arrow,
-                    color: Colors.blue,
+                AnimatedAlign(
+                  duration: const Duration(milliseconds: 400),
+                  alignment: widget.isOnline
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 10),
+                    height: 40,
+                    width: 40,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      widget.isOnline
+                          ? Icons.power_settings_new
+                          : Icons.double_arrow,
+                      color: Colors.blue,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

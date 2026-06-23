@@ -48,11 +48,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     super.initState();
 
     _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (_currentIndex < onboardingData.length - 1) {
-        _currentIndex++;
-      } else {
-        _currentIndex = 0;
-      }
+      setState(() {
+        if (_currentIndex < onboardingData.length - 1) {
+          _currentIndex++;
+        } else {
+          _currentIndex = 0;
+        }
+      });
 
       _pageController.animateToPage(
         _currentIndex,
@@ -112,51 +114,47 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     });
                   },
                   itemBuilder: (context, index) {
-                    return AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 500),
-                      child: Column(
-                        key: ValueKey(index),
-                        children: [
-                          /// IMAGE
-                          SizedBox(
-                            height: height * 0.32,
-                            child: Lottie.asset(
-                              onboardingData[index]["image"]!,
-                              fit: BoxFit.contain,
-                            ),
+                    return Column(
+                      children: [
+                        /// IMAGE
+                        SizedBox(
+                          height: height * 0.32,
+                          child: Lottie.asset(
+                            onboardingData[index]["image"]!,
+                            fit: BoxFit.contain,
                           ),
+                        ),
 
-                          SizedBox(height: height * 0.05),
+                        SizedBox(height: height * 0.05),
 
-                          /// TITLE
-                          Text(
-                            onboardingData[index]["title"]!,
+                        /// TITLE
+                        Text(
+                          onboardingData[index]["title"]!,
+                          textAlign: TextAlign.center,
+                          style: PoppinsBold.copyWith(
+                            fontSize: width * 0.06,
+                            color: ColorResources.blackcolor,
+                          ),
+                        ),
+
+                        SizedBox(height: height * 0.02),
+
+                        /// SUBTITLE
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: width * 0.04,
+                          ),
+                          child: Text(
+                            onboardingData[index]["subtitle"]!,
                             textAlign: TextAlign.center,
-                            style: PoppinsBold.copyWith(
-                              fontSize: width * 0.06,
-                              color: ColorResources.blackcolor,
+                            style: PoppinsReguler.copyWith(
+                              fontSize: width * 0.038,
+                              color: ColorResources.TextColorForGrey,
+                              height: 1.5,
                             ),
                           ),
-
-                          SizedBox(height: height * 0.02),
-
-                          /// SUBTITLE
-                          Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: width * 0.04,
-                            ),
-                            child: Text(
-                              onboardingData[index]["subtitle"]!,
-                              textAlign: TextAlign.center,
-                              style: PoppinsReguler.copyWith(
-                                fontSize: width * 0.038,
-                                color: ColorResources.TextColorForGrey,
-                                height: 1.5,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     );
                   },
                 ),
