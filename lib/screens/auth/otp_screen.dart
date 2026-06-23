@@ -10,15 +10,14 @@ import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 import 'package:myridedriverapp/widgets/custom_popup.dart';
-import 'package:myridedriverapp/widgets/toaster_animation.dart';
 import 'package:pinput/pinput.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sms_autofill/sms_autofill.dart';
 
 class OtpScreen extends StatefulWidget {
-  String? type;
-  String? phoneNumber;
-  OtpScreen({super.key, this.type, this.phoneNumber});
+  final String? type;
+  final String? phoneNumber;
+  const OtpScreen({super.key, this.type, this.phoneNumber});
 
   @override
   State<OtpScreen> createState() => _OtpScreenState();
@@ -166,7 +165,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         Get.back();
                       }
 
-                      if (response != null && response.body != null) {
+                      if (response.body != null) {
                         Map<String, dynamic> body =
                             response.body is Map<String, dynamic>
                             ? response.body
@@ -183,18 +182,39 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
 
                         final prefs = await SharedPreferences.getInstance();
 
-                        await prefs.setString(
-                          ApiConstants.verificationStatus,
-                          verificationStatus ?? "",
-                        );
+                        if (verificationStatus != null &&
+                            verificationStatus.isNotEmpty) {
+                          // Persist the status returned by the API
+                          await prefs.setString(
+                            ApiConstants.verificationStatus,
+                            verificationStatus,
+                          );
+                        } else {
+                          // API returned no status — fall back to whatever was
+                          // previously saved (e.g. "pending" set after upload)
+                          verificationStatus = prefs.getString(
+                            ApiConstants.verificationStatus,
+                          );
+                        }
 
                         var data = body["data"];
                         String? profileStatus = data?["profile_status"]
                             ?.toString();
 
+                        // verificationStatus takes full priority:
+                        // once a profile is submitted for review (pending) or
+                        // rejected, always show the status popup — never re-enter
+                        // the registration flow regardless of profileStatus.
+                        if (verificationStatus == "rejected" ||
+                            verificationStatus == "pending") {
+                          Get.dialog(
+                            CustomPopup(status: verificationStatus!),
+                            barrierDismissible: false,
+                          );
+                          return;
+                        }
+
                         if (profileStatus == "1") {
-                         
-                          
                           Get.offAllNamed(
                             RouteHelper.getearnWithMyRideScreen(),
                           );
@@ -206,7 +226,9 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                             ApiConstants.isPersonalSavedStatus,
                             profileStatus.toString(),
                           );
-
+                          if (profileStatus == "3") {
+                            await prefs.setBool(ApiConstants.isPersonalSaved, true);
+                          }
                           Get.toNamed(
                             RouteHelper.getDriverDetails(),
                             arguments: {"step": 2},
@@ -215,6 +237,11 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         }
 
                         if (profileStatus == "4") {
+                          await prefs.setString(
+                            ApiConstants.isPersonalSavedStatus,
+                            "4",
+                          );
+                          await prefs.setBool(ApiConstants.isPersonalSaved, true);
                           Get.toNamed(
                             RouteHelper.getDriverDetails(),
                             arguments: {"step": 4},
@@ -223,18 +250,14 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         }
 
                         if (profileStatus == "5") {
+                          await prefs.setString(
+                            ApiConstants.isPersonalSavedStatus,
+                            "5",
+                          );
+                          await prefs.setBool(ApiConstants.isPersonalSaved, true);
                           Get.toNamed(
                             RouteHelper.getDriverDetails(),
                             arguments: {"step": 5},
-                          );
-                          return;
-                        }
-
-                        if (verificationStatus == "rejected" ||
-                            verificationStatus == "pending") {
-                          Get.dialog(
-                            CustomPopup(status: verificationStatus!, ),
-                            barrierDismissible: false,
                           );
                           return;
                         }

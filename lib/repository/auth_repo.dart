@@ -1,7 +1,5 @@
 import 'dart:developer';
 import 'dart:io';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:get/get.dart';
 import 'package:myridedriverapp/config/utils/apis/api_client.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';

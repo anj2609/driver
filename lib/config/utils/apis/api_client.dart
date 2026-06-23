@@ -1,11 +1,11 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
-import 'package:flutter/foundation.dart' as Foundation;
+import 'package:flutter/foundation.dart' as foundation;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:get/get_connect/http/src/request/request.dart';
-import 'package:http/http.dart' as Http;
+import 'package:http/http.dart' as http;
 import 'package:myridedriverapp/config/utils/apis/api_checker.dart';
 import 'package:myridedriverapp/config/utils/apis/image_compress.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
@@ -29,7 +29,7 @@ class ApiClient extends GetxService {
 
   ///Map<String, String>? _mainHeadersMain;
 
-  ApiClient({required this.sharedPreferences}) {}
+  ApiClient({required this.sharedPreferences});
 
   Map<String, String> get _mainHeadersMain {
     return {
@@ -55,13 +55,13 @@ class ApiClient extends GetxService {
     }
     {
       try {
-        if (Foundation.kDebugMode) {
-          print('====> GetX Call: $uri');
-          print('====> GetX Body: $body');
-          print('====> GetX Body: ${ApiConstants.baseUrl}');
+        if (foundation.kDebugMode) {
+          debugPrint('====> GetX Call: $uri');
+          debugPrint('====> GetX Body: $body');
+          debugPrint('====> GetX Body: ${ApiConstants.baseUrl}');
         }
-        print('====> GetX Basebodyy: $body');
-        Http.Response _response = await Http.post(
+        debugPrint('====> GetX Basebodyy: $body');
+        http.Response httpResp = await http.post(
           Uri.parse(ApiConstants.baseUrl + uri),
           body: jsonEncode(body),
           headers: {
@@ -70,15 +70,15 @@ class ApiClient extends GetxService {
           },
           //_mainHeaders,
         ).timeout(Duration(seconds: timeoutInSeconds));
-        print("++++++++++++>>>=====");
-        Response response = handleResponse(_response, uri);
+        debugPrint("++++++++++++>>>=====");
+        Response response = handleResponse(httpResp, uri);
 
-        if (Foundation.kDebugMode) {
-          print(
+        if (foundation.kDebugMode) {
+          debugPrint(
             '====> API Response: [${response.statusCode}] $uri\n${response.body}',
           );
         }
-        print('====>  respnosee : ${response.body}');
+        debugPrint('====>  respnosee : ${response.body}');
         return response;
       } catch (e) {
         return Response(statusCode: 1, statusText: noInternetMessage);
@@ -92,10 +92,10 @@ class ApiClient extends GetxService {
     }
 
     try {
-      if (Foundation.kDebugMode) {
-        print('====> GetX Base URL: $ApiConstants.baseUrl');
-        print('====> GetX Call: $uri');
-        print('====> GetX Body: ${jsonEncode(body)}');
+      if (foundation.kDebugMode) {
+        debugPrint('====> GetX Base URL: $ApiConstants.baseUrl');
+        debugPrint('====> GetX Call: $uri');
+        debugPrint('====> GetX Body: ${jsonEncode(body)}');
       }
       // Map<String, String> headerschat = {
       //   'id': '${sharedPreferences.getString(ApiConstants.profileid)}',
@@ -103,20 +103,20 @@ class ApiClient extends GetxService {
       //       "${sharedPreferences.getString(ApiConstants.token)}",
       // };
 
-      Http.Response _response = await Http.post(
+      http.Response httpResp = await http.post(
         Uri.parse(ApiConstants.baseUrl + uri),
         body: jsonEncode(body),
         headers: {..._mainHeadersMain, "Content-Type": "application/json"},
       ).timeout(Duration(seconds: timeoutInSeconds));
 
-      print("STATUS CODE: ${_response.statusCode}");
-      print("RESPONSE BODY: ${_response.body}");
+      debugPrint("STATUS CODE: ${httpResp.statusCode}");
+      debugPrint("RESPONSE BODY: ${httpResp.body}");
 
-      Response response = handleResponse(_response, uri);
+      Response response = handleResponse(httpResp, uri);
 
       return response;
     } catch (e) {
-      print("❌ ERROR: $e");
+      debugPrint("Ã¢ÂÅ’ ERROR: $e");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -127,13 +127,13 @@ class ApiClient extends GetxService {
     }
 
     try {
-      if (Foundation.kDebugMode) {
-        print('====> GetX Base URL: $ApiConstants.baseUrl');
-        print('====> GetX Call: $uri');
-        print('====> GetX Body: $body');
+      if (foundation.kDebugMode) {
+        debugPrint('====> GetX Base URL: $ApiConstants.baseUrl');
+        debugPrint('====> GetX Call: $uri');
+        debugPrint('====> GetX Body: $body');
       }
 
-      Http.Response _response = await Http.post(
+      http.Response httpResp = await http.post(
         Uri.parse(ApiConstants.baseUrl + uri),
         body: body,
 
@@ -141,21 +141,21 @@ class ApiClient extends GetxService {
         headers: _mainHeadersMain,
       ).timeout(Duration(seconds: timeoutInSeconds));
 
-      print("STATUS CODE: ${_response.statusCode}");
-      print("RESPONSE BODY: ${_response.body}");
-      print(" BODY: ${_mainHeadersMain}");
+      debugPrint("STATUS CODE: ${httpResp.statusCode}");
+      debugPrint("RESPONSE BODY: ${httpResp.body}");
+      debugPrint(" BODY: $_mainHeadersMain");
 
-      Response response = handleResponse(_response, uri);
+      Response response = handleResponse(httpResp, uri);
 
-      if (Foundation.kDebugMode) {
-        print(
+      if (foundation.kDebugMode) {
+        debugPrint(
           '====> API Response: [${response.statusCode}] $uri\n${response.body}',
         );
       }
 
       return response;
     } catch (e) {
-      print("❌ ERROR: $e");
+      debugPrint("Ã¢ÂÅ’ ERROR: $e");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -174,9 +174,9 @@ class ApiClient extends GetxService {
       //   "authorizationToken":
       //       "${sharedPreferences.getString(ApiConstants.token)}",
       // };
-      // print('testing body::: $headers');
+      // debugPrint('testing body::: $headers');
 
-      Http.Response httpResponse = await Http.post(
+      http.Response httpResponse = await http.post(
         Uri.parse(ApiConstants.baseUrl + uri),
         body: body,
 
@@ -184,15 +184,15 @@ class ApiClient extends GetxService {
         headers: _mainHeadersMain,
       ).timeout(Duration(seconds: timeoutInSeconds));
 
-      print("STATUS: ${httpResponse.statusCode}");
-      print("BODY: ${httpResponse.body}");
-      print("header: ${_mainHeadersMain}");
-      print("parms: ${body}");
+      debugPrint("STATUS: ${httpResponse.statusCode}");
+      debugPrint("BODY: ${httpResponse.body}");
+      debugPrint("header: $_mainHeadersMain");
+      debugPrint("parms: $body");
 
       return handleResponse(httpResponse, uri);
     } catch (e, s) {
-      print("ERROR: $e");
-      print("STACK: $s");
+      debugPrint("ERROR: $e");
+      debugPrint("STACK: $s");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -201,24 +201,24 @@ class ApiClient extends GetxService {
     if (await ApiChecker.isVpnActive()) {
       return Response(statusCode: -1, statusText: 'You are using VPN');
     }
-    print('complete ||| ${body}');
+    debugPrint('complete ||| $body');
     try {
-      Http.Response httpResponse = await Http.post(
+      http.Response httpResponse = await http.post(
         Uri.parse(ApiConstants.baseUrl + uri),
         body: body,
 
         ///jsonEncode(body),
         headers: _mainHeadersMain,
       ).timeout(Duration(seconds: timeoutInSeconds));
-      print("body: ${_mainHeadersMain}");
-      print("STATUS: ${httpResponse.statusCode}");
-      print("BODY: ${httpResponse.body}");
-      print('testing |||| $_mainHeadersMain');
+      debugPrint("body: $_mainHeadersMain");
+      debugPrint("STATUS: ${httpResponse.statusCode}");
+      debugPrint("BODY: ${httpResponse.body}");
+      debugPrint('testing |||| $_mainHeadersMain');
 
       return handleResponse(httpResponse, uri);
     } catch (e, s) {
-      print("ERROR: $e");
-      print("STACK: $s");
+      debugPrint("ERROR: $e");
+      debugPrint("STACK: $s");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -233,24 +233,21 @@ class ApiClient extends GetxService {
     }
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      String? profileId = prefs.getString(ApiConstants.profileid);
-      String? token = prefs.getString(ApiConstants.token);
 
       if (images != null && images.isNotEmpty) {
-        var request = Http.MultipartRequest(
+        var request = http.MultipartRequest(
           "POST",
           Uri.parse(ApiConstants.baseUrl + uri),
         );
 
-        /// 🔹 Text Fields
+        /// Ã°Å¸â€Â¹ Text Fields
         body.forEach((key, value) {
           request.fields[key] = value.toString();
         });
 
         for (int i = 0; i < images.length; i++) {
           request.files.add(
-            await Http.MultipartFile.fromPath("images[]", images[i].path),
+            await http.MultipartFile.fromPath("images[]", images[i].path),
           );
         }
 
@@ -269,12 +266,12 @@ class ApiClient extends GetxService {
         });
 
         var streamedResponse = await request.send();
-        var response = await Http.Response.fromStream(streamedResponse);
+        var response = await http.Response.fromStream(streamedResponse);
 
         return handleResponse(response, uri);
       }
 
-      Http.Response httpResponse = await Http.post(
+      http.Response httpResponse = await http.post(
         Uri.parse(ApiConstants.baseUrl + uri),
         body: jsonEncode(body),
         headers: {
@@ -294,8 +291,8 @@ class ApiClient extends GetxService {
 
       return handleResponse(httpResponse, uri);
     } catch (e, s) {
-      print("ERROR: $e");
-      print("STACK: $s");
+      debugPrint("ERROR: $e");
+      debugPrint("STACK: $s");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -318,9 +315,9 @@ class ApiClient extends GetxService {
             ? ApiConstants.userTokenSocial
             : (sharedPreferences.getString(ApiConstants.token) ?? ""),
       };
-      print(' testing  header ${headers}');
+      debugPrint(' testing  header $headers');
 
-      var request = Http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -339,21 +336,21 @@ class ApiClient extends GetxService {
 
         if (documentList[i].documentImage != null) {
           request.files.add(
-            await Http.MultipartFile.fromPath(
+            await http.MultipartFile.fromPath(
               "documents[$i][file]",
               documentList[i].documentImage!.path,
             ),
           );
 
-          print("Uploading file path: ${documentList[i].documentImage!.path}");
+          debugPrint("Uploading file path: ${documentList[i].documentImage!.path}");
         }
 
-        print("ID: ${request.fields["documents[$i][document_id]"]}");
+        debugPrint("ID: ${request.fields["documents[$i][document_id]"]}");
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
-      print('testing  |||||||||| $response');
+      var response = await http.Response.fromStream(streamedResponse);
+      debugPrint('testing  |||||||||| $response');
       return handleResponse(response, uri);
     } catch (e) {
       return Response(statusCode: 1, statusText: noInternetMessage);
@@ -384,7 +381,7 @@ class ApiClient extends GetxService {
             : (sharedPreferences.getString(ApiConstants.token) ?? ""),
       };
 
-      var request = Http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -394,18 +391,18 @@ class ApiClient extends GetxService {
       for (int i = 0; i < documentList.length; i++) {
         final doc = documentList[i];
 
-        request.fields["documents[$i][document_id]"] = doc.documentId ?? "";
+        request.fields["documents[$i][document_id]"] = doc.documentId;
 
         request.fields["documents[$i][document_number]"] =
-            doc.documentNumber ?? "";
+            doc.documentNumber;
 
-        if ((doc.expiryDate ?? "").isNotEmpty) {
-          request.fields["documents[$i][expiry_date]"] = doc.expiryDate!;
+        if (doc.expiryDate.isNotEmpty) {
+          request.fields["documents[$i][expiry_date]"] = doc.expiryDate;
         }
 
         if (doc.documentImage != null) {
           request.files.add(
-            await Http.MultipartFile.fromPath(
+            await http.MultipartFile.fromPath(
               "documents[$i][file]",
               doc.documentImage!.path,
             ),
@@ -413,21 +410,21 @@ class ApiClient extends GetxService {
         }
 
         /// debug logs
-        print("Doc[$i] ID: ${doc.documentId}");
-        print("Doc[$i] Number: ${doc.documentNumber}");
-        print("Doc[$i] Expiry: ${doc.expiryDate}");
-        print("Doc[$i] File: ${doc.documentImage?.path}");
+        debugPrint("Doc[$i] ID: ${doc.documentId}");
+        debugPrint("Doc[$i] Number: ${doc.documentNumber}");
+        debugPrint("Doc[$i] Expiry: ${doc.expiryDate}");
+        debugPrint("Doc[$i] File: ${doc.documentImage?.path}");
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
+      var response = await http.Response.fromStream(streamedResponse);
 
-      print('Response Status: ${response.statusCode}');
-      print('Response Body: ${response.body}');
+      debugPrint('Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
 
       return handleResponse(response, uri);
     } catch (e) {
-      print("API ERROR 👉 $e");
+      debugPrint("API ERROR Ã°Å¸â€˜â€° $e");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -453,7 +450,7 @@ class ApiClient extends GetxService {
       //   'User-Agent': 'Mozilla/5.0',
       // };
 
-      var request = Http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -461,7 +458,7 @@ class ApiClient extends GetxService {
       request.headers.addAll(_mainHeadersMain);
 
       for (int i = 0; i < vehicleDocumentList.length; i++) {
-        print(
+        debugPrint(
           'Suchi test Vehicle Id ${request.fields['vehicle_id'] = vehicleDocumentList[i].vehicleId.toString()}',
         );
         request.fields['vehicle_id'] = vehicleDocumentList[i].vehicleId
@@ -471,37 +468,37 @@ class ApiClient extends GetxService {
             .toString();
 
         request.fields["documents[$i][document_number]"] =
-            vehicleDocumentList[i].documentNumber ?? "";
+            vehicleDocumentList[i].documentNumber;
 
         request.fields["documents[$i][expiry_date]"] =
-            vehicleDocumentList[i].expiryDate ?? "";
+            vehicleDocumentList[i].expiryDate;
 
         /// File Upload
         if (vehicleDocumentList[i].documentImage != null) {
           request.files.add(
-            await Http.MultipartFile.fromPath(
+            await http.MultipartFile.fromPath(
               "documents[$i][file]",
               vehicleDocumentList[i].documentImage!.path,
             ),
           );
 
-          print(
+          debugPrint(
             "Uploading file path: ${vehicleDocumentList[i].documentImage!.path}",
           );
         }
 
-        print("ID: ${vehicleDocumentList[i].documentId}");
+        debugPrint("ID: ${vehicleDocumentList[i].documentId}");
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
+      var response = await http.Response.fromStream(streamedResponse);
 
-      print('Response Status: ${response.statusCode}');
-      print('Response Body: ${response.body}');
+      debugPrint('Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
 
       return handleResponse(response, uri);
     } catch (e) {
-      print("Error: $e");
+      debugPrint("Error: $e");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -527,7 +524,7 @@ class ApiClient extends GetxService {
       //   'User-Agent': 'Mozilla/5.0',
       // };
 
-      var request = Http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -542,37 +539,37 @@ class ApiClient extends GetxService {
             .toString();
 
         request.fields["documents[$i][document_number]"] =
-            vehicleDocumentList[i].documentNumber ?? "";
+            vehicleDocumentList[i].documentNumber;
 
         request.fields["documents[$i][expiry_date]"] =
-            vehicleDocumentList[i].expiryDate ?? "";
+            vehicleDocumentList[i].expiryDate;
 
         /// File Upload
         if (vehicleDocumentList[i].documentImage != null) {
           request.files.add(
-            await Http.MultipartFile.fromPath(
+            await http.MultipartFile.fromPath(
               "documents[$i][file]",
               vehicleDocumentList[i].documentImage!.path,
             ),
           );
 
-          print(
+          debugPrint(
             "Uploading file path: ${vehicleDocumentList[i].documentImage!.path}",
           );
         }
 
-        print("ID: ${vehicleDocumentList[i].documentId}");
+        debugPrint("ID: ${vehicleDocumentList[i].documentId}");
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
+      var response = await http.Response.fromStream(streamedResponse);
 
-      print('Response Status: ${response.statusCode}');
-      print('Response Body: ${response.body}');
+      debugPrint('Response Status: ${response.statusCode}');
+      debugPrint('Response Body: ${response.body}');
 
       return handleResponse(response, uri);
     } catch (e) {
-      print("Error: $e");
+      debugPrint("Error: $e");
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -590,7 +587,7 @@ class ApiClient extends GetxService {
     try {
       Map<String, String> headers = {'Accept': 'application/json'};
 
-      var request = Http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -601,12 +598,12 @@ class ApiClient extends GetxService {
 
       if (imageFile != null) {
         request.files.add(
-          await Http.MultipartFile.fromPath('profile_image', imageFile.path),
+          await http.MultipartFile.fromPath('profile_image', imageFile.path),
         );
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
+      var response = await http.Response.fromStream(streamedResponse);
 
       return handleResponse(response, uri);
     } catch (e) {
@@ -635,7 +632,7 @@ class ApiClient extends GetxService {
       //       'Bearer ${sharedPreferences.getString(ApiConstants.token)}',
       // };
 
-      var request = Http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -646,12 +643,12 @@ class ApiClient extends GetxService {
 
       if (imageFile != null) {
         request.files.add(
-          await Http.MultipartFile.fromPath('profile_image', imageFile.path),
+          await http.MultipartFile.fromPath('profile_image', imageFile.path),
         );
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
+      var response = await http.Response.fromStream(streamedResponse);
 
       return handleResponse(response, uri);
     } catch (e) {
@@ -669,11 +666,8 @@ class ApiClient extends GetxService {
     }
 
     try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      String? userId = prefs.getString(ApiConstants.profileid);
-      String? token = prefs.getString(ApiConstants.token);
-      print('testing mode $imageFile');
-      var request = Http.MultipartRequest(
+      debugPrint('testing mode $imageFile');
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
@@ -692,7 +686,7 @@ class ApiClient extends GetxService {
 
       if (imageFile != null) {
         if (imageFile is File && await imageFile.exists()) {
-          /// 🔥 FORMAT CHECK
+          /// Ã°Å¸â€Â¥ FORMAT CHECK
           if (!isValidImageFormat(imageFile)) {
             return Response(
               statusCode: 0,
@@ -700,11 +694,11 @@ class ApiClient extends GetxService {
             );
           }
 
-          /// 🔥 COMPRESS
+          /// Ã°Å¸â€Â¥ COMPRESS
           File finalFile = await compressImageUnder2MB(imageFile);
 
           int finalSize = await finalFile.length();
-          print("✅ FINAL SIZE: ${finalSize / 1024} KB");
+          debugPrint("Ã¢Å“â€¦ FINAL SIZE: ${finalSize / 1024} KB");
 
           if (finalSize > 2048 * 1024) {
             return Response(
@@ -714,7 +708,7 @@ class ApiClient extends GetxService {
           }
 
           request.files.add(
-            await Http.MultipartFile.fromPath('profile_image', finalFile.path),
+            await http.MultipartFile.fromPath('profile_image', finalFile.path),
           );
         } else if (imageFile is String) {
           request.fields['old_profile_image'] = imageFile;
@@ -722,11 +716,11 @@ class ApiClient extends GetxService {
       }
 
       var streamedResponse = await request.send();
-      var response = await Http.Response.fromStream(streamedResponse);
+      var response = await http.Response.fromStream(streamedResponse);
 
       return handleResponse(response, uri);
     } catch (e, st) {
-      print('Multipart error: $e\n$st');
+      debugPrint('Multipart error: $e\n$st');
       return Response(statusCode: 1, statusText: noInternetMessage);
     }
   }
@@ -737,26 +731,26 @@ class ApiClient extends GetxService {
     }
     {
       try {
-        if (Foundation.kDebugMode) {
-          print('====> GetX Base URL: $ApiConstants.baseUrl');
-          print('====> GetX Call: $uri');
-          print('====> GetX Body: $body');
+        if (foundation.kDebugMode) {
+          debugPrint('====> GetX Base URL: $ApiConstants.baseUrl');
+          debugPrint('====> GetX Call: $uri');
+          debugPrint('====> GetX Body: $body');
         }
-        print('====> GetX Basebodyy: $body');
-        Http.Response _response = await Http.post(
+        debugPrint('====> GetX Basebodyy: $body');
+        http.Response httpResp = await http.post(
           Uri.parse(ApiConstants.baseUrl + uri),
           body: body,
           headers: _mainHeadersMain,
         ).timeout(Duration(seconds: timeoutInSeconds));
-        print("++++++++++++>>>=====");
-        Response response = handleResponse(_response, uri);
+        debugPrint("++++++++++++>>>=====");
+        Response response = handleResponse(httpResp, uri);
 
-        if (Foundation.kDebugMode) {
-          print(
+        if (foundation.kDebugMode) {
+          debugPrint(
             '====> API Response: [${response.statusCode}] $uri\n${response.body}',
           );
         }
-        print('====>  respnosee : ${response.body}');
+        debugPrint('====>  respnosee : ${response.body}');
         return response;
       } catch (e) {
         return Response(statusCode: 1, statusText: noInternetMessage);
@@ -780,13 +774,13 @@ class ApiClient extends GetxService {
         //       '${sharedPreferences.getString(ApiConstants.token)}',
         // };
 
-        Http.Response _response = await Http.get(
+        http.Response httpResp = await http.get(
           Uri.parse(ApiConstants.baseUrl + uri),
           headers: _mainHeadersMain,
         ).timeout(Duration(seconds: timeoutInSeconds));
-        print(' Majannah headers $_mainHeadersMain');
-        debugPrint('====> API  Fund : - response data v${_response.body}');
-        return handleResponse(_response, uri);
+        debugPrint(' Majannah headers $_mainHeadersMain');
+        debugPrint('====> API  Fund : - response data v${httpResp.body}');
+        return handleResponse(httpResp, uri);
       } catch (e) {
         return Response(statusCode: 1, statusText: noInternetMessage);
       }
@@ -798,15 +792,15 @@ class ApiClient extends GetxService {
       return Response(statusCode: -1, statusText: 'you are using vpn');
     } else {
       try {
-        print('testing  modeee==== ${_mainHeadersMain}');
+        debugPrint('testing  modeee==== $_mainHeadersMain');
 
-        Http.Response _response = await Http.get(
+        http.Response httpResp = await http.get(
           Uri.parse(ApiConstants.baseUrl + uri),
           headers: _mainHeadersMain,
         ).timeout(Duration(seconds: timeoutInSeconds));
-        print(' Majannah headers $_mainHeadersMain');
-        debugPrint('====> API  Fund : - response data v${_response.body}');
-        return handleResponse(_response, uri);
+        debugPrint(' Majannah headers $_mainHeadersMain');
+        debugPrint('====> API  Fund : - response data v${httpResp.body}');
+        return handleResponse(httpResp, uri);
       } catch (e) {
         return Response(statusCode: 1, statusText: noInternetMessage);
       }
@@ -818,17 +812,17 @@ class ApiClient extends GetxService {
       return Response(statusCode: -1, statusText: 'you are using vpn');
     } else {
       try {
-        print('====> GetX Base URL: $ApiConstants.baseUrl');
-        print('====> GetX Call : $uri');
+        debugPrint('====> GetX Base URL: $ApiConstants.baseUrl');
+        debugPrint('====> GetX Call : $uri');
 
-        print(' url $uri');
-        Http.Response _response = await Http.get(
+        debugPrint(' url $uri');
+        http.Response httpResp = await http.get(
           Uri.parse(ApiConstants.baseUrl + uri),
           headers: {"Accept": 'application/json'},
         ).timeout(Duration(seconds: timeoutInSeconds));
 
-        debugPrint('====> API  Fund : - response data v${_response.body}');
-        return handleResponse(_response, uri);
+        debugPrint('====> API  Fund : - response data v${httpResp.body}');
+        return handleResponse(httpResp, uri);
       } catch (e) {
         return Response(statusCode: 1, statusText: noInternetMessage);
       }
@@ -841,27 +835,27 @@ class ApiClient extends GetxService {
     } else {
       try {
         debugPrint('====> API Call: $uri\nHeader: $_mainHeadersMain');
-        print(' Majannaha headers $_mainHeadersMain');
-        print(' url $uri');
-        Http.Response _response = await Http.get(
+        debugPrint(' Majannaha headers $_mainHeadersMain');
+        debugPrint(' url $uri');
+        http.Response httpResp = await http.get(
           Uri.parse(ApiConstants.baseUrl + uri),
           headers: _mainHeadersMain,
         ).timeout(Duration(seconds: timeoutInSeconds));
-        print(' Majannah headers $_mainHeadersMain');
-        debugPrint('====> API  Fund : - response data v${_response.body}');
-        return handleResponse(_response, uri);
+        debugPrint(' Majannah headers $_mainHeadersMain');
+        debugPrint('====> API  Fund : - response data v${httpResp.body}');
+        return handleResponse(httpResp, uri);
       } catch (e) {
         return Response(statusCode: 1, statusText: noInternetMessage);
       }
     }
   }
 
-  Response handleResponse(Http.Response response, String uri) {
+  Response handleResponse(http.Response response, String uri) {
     dynamic _body;
     try {
       _body = jsonDecode(response.body);
     } catch (e) {}
-    Response _response = Response(
+    Response httpResp = Response(
       // ignore: prefer_if_null_operators
       body: _body != null ? _body : response.body,
       bodyString: response.body.toString(),
@@ -874,27 +868,27 @@ class ApiClient extends GetxService {
       statusCode: response.statusCode,
       statusText: response.reasonPhrase,
     );
-    if (_response.statusCode != 200 &&
-        _response.body != null &&
-        _response.body is! String) {
-      // if (_response.body.toString().startsWith('{errors: [{code:')) {
-      //   ErrorResponse errorResponse = ErrorResponse.fromJson(_response.body);
-      //   _response = Response(
-      //       statusCode: _response.statusCode,
-      //       body: _response.body,
+    if (httpResp.statusCode != 200 &&
+        httpResp.body != null &&
+        httpResp.body is! String) {
+      // if (httpResp.body.toString().startsWith('{errors: [{code:')) {
+      //   ErrorResponse errorResponse = ErrorResponse.fromJson(httpResp.body);
+      //   httpResp = Response(
+      //       statusCode: httpResp.statusCode,
+      //       body: httpResp.body,
       //       statusText: errorResponse.errors[0].message);
-      // } else if (_response.body.toString().startsWith('{message')) {
-      //   _response = Response(
-      //       statusCode: _response.statusCode,
-      //       body: _response.body,
-      //       statusText: _response.body['message']);
+      // } else if (httpResp.body.toString().startsWith('{message')) {
+      //   httpResp = Response(
+      //       statusCode: httpResp.statusCode,
+      //       body: httpResp.body,
+      //       statusText: httpResp.body['message']);
       // }
-    } else if (_response.statusCode != 200 && _response.body == null) {
-      _response = Response(statusCode: 0, statusText: noInternetMessage);
+    } else if (httpResp.statusCode != 200 && httpResp.body == null) {
+      httpResp = Response(statusCode: 0, statusText: noInternetMessage);
     }
     debugPrint(
-      '====> API Response: [${_response.statusCode}] $uri\n${_response.body}',
+      '====> API Response: [${httpResp.statusCode}] $uri\n${httpResp.body}',
     );
-    return _response;
+    return httpResp;
   }
 }

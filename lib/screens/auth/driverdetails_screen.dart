@@ -17,7 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // String? driverprofileStatus;
 
 class DetailsScreen extends StatefulWidget {
-  DetailsScreen({Key? key}) : super(key: key);
+  const DetailsScreen({super.key});
 
   @override
   State<DetailsScreen> createState() => _DetailsScreenState();
@@ -226,9 +226,34 @@ class _DetailsScreenState extends State<DetailsScreen> {
     isProfileCompleted =
         (driverprofileStatus?.toString() == "3") || isPersonalSaved;
 
+    // Route arguments are the most up-to-date signal â€” prefer them over stale prefs
+    final args = Get.arguments;
+    if (args is Map && args.containsKey('step')) {
+      final argStep = int.tryParse(args['step'].toString());
+      if (argStep != null) {
+        // Map the raw API profile_status value to a UI step index
+        // 2/3 â†’ step 0 (personal or driver docs), 4 â†’ step 1, 5 â†’ step 2/3
+        final uiStep = _stepFromArg(argStep);
+        setState(() {
+          currentStep = uiStep;
+        });
+        return;
+      }
+    }
+
     setState(() {
       currentStep = getStepFromStatus();
     });
+  }
+
+  int _stepFromArg(int profileStatus) {
+    switch (profileStatus) {
+      case 2: return 0;   // personal details
+      case 3: return 0;   // driver docs (isPersonalSaved handles sub-view)
+      case 4: return 1;   // vehicle type
+      case 5: return 2;   // vehicle documents
+      default: return 0;
+    }
   }
 
   void _driverNewDocument() {
@@ -728,7 +753,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10),
         ],
       ),
       child: Column(
@@ -1070,47 +1095,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     //   ),
   }
 
-  //////============== date picker ==============///////////////////
 
-  Widget _buildDateField(String label, TextEditingController controller) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: TextFormField(
-        controller: controller,
-        readOnly: true,
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: Colors.white,
-          suffixIcon: const Icon(Icons.calendar_today),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Colors.blue),
-          ),
-        ),
-        onTap: () async {
-          DateTime? picked = await showDatePicker(
-            context: context,
-            initialDate: DateTime.now(),
-            firstDate: DateTime(2020),
-            lastDate: DateTime(2035),
-          );
-
-          if (picked != null) {
-            controller.text = "${picked.day}/${picked.month}/${picked.year}";
-          }
-        },
-      ),
-    );
-  }
 
   List<VehicleTypeModel2> vehicleTypes2 = [
     VehicleTypeModel2(id: 1, name: "Car", image: "assets/images/car1.png"),
@@ -1436,12 +1421,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
   final TextEditingController fitnessDateController = TextEditingController();
   final TextEditingController insuranceDateController = TextEditingController();
 
-  final ImagePicker _picker = ImagePicker();
 
   List<Map<String, dynamic>> documents = [];
 
   Future<void> pickDocument(String title) async {
-    final List<XFile>? pickedFiles = await _picker.pickMultiImage();
+    final List<XFile>? pickedFiles = await picker.pickMultiImage();
 
     if (pickedFiles != null && pickedFiles.isNotEmpty) {
       setState(() {
@@ -1506,132 +1490,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Widget _buildUploadSection() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          /// Header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Upload Documents Photo *",
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    "Upload atleast 1 Picture",
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-              ElevatedButton.icon(
-                onPressed: () => pickDocument("Vehicle Document"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey.shade200,
-                  foregroundColor: Colors.black,
-                  elevation: 0,
-                ),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text("Add"),
-              ),
-            ],
-          ),
 
-          const SizedBox(height: 15),
-
-          /// Document List
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: documents.length,
-            itemBuilder: (context, index) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xfff7f7f7),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      height: 50,
-                      width: 50,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        image: DecorationImage(
-                          image: FileImage(documents[index]["file"]),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Document Photo",
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            "Completed",
-                            style: TextStyle(fontSize: 12, color: Colors.blue),
-                          ),
-                        ],
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: () => removeDocument(index),
-                      child: const Icon(Icons.delete, color: Colors.red),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDateField2(String label, TextEditingController controller) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          TextField(
-            controller: controller,
-            readOnly: true,
-            onTap: () => selectDate(controller),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white,
-              suffixIcon: const Icon(Icons.calendar_today, size: 18),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildDropdown({
     required String? value,
@@ -1660,20 +1519,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  String? selectedBrand2;
-  String? selectedModel2;
-
-  List<String> brands = ["Toyota", "Honda", "Hyundai"];
-  Map<String, List<String>> models = {
-    "Toyota": ["Innova Sedan 2026", "Fortuner", "Etios"],
-    "Honda": ["City", "Amaze"],
-    "Hyundai": ["i20", "Creta"],
-  };
-
   List<File> uploadedimages = [];
 
   Future<void> pickImage2() async {
-    final List<XFile>? pickedFiles = await _picker.pickMultiImage();
+    final List<XFile>? pickedFiles = await picker.pickMultiImage();
 
     if (pickedFiles != null && pickedFiles.isNotEmpty) {
       if (uploadedimages.length + pickedFiles.length > 5) {
@@ -1697,45 +1546,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   List<DocumentModels> documentss = [];
   List<DocumentModels> driverDocument = [];
-
-  ///driverDocument
-
-  final ImagePicker _pickers = ImagePicker();
-
-  Future<void> _pickImage(int index) async {
-    final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
-
-    if (picked != null) {
-      setState(() {
-        documentss[index].imageFile = File(picked.path);
-      });
-    }
-  }
-
-  ///_driverimage driverDocument
-  Future<void> _driverimage(int index) async {
-    final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
-
-    if (picked != null) {
-      setState(() {
-        driverDocument[index].imageFile = File(picked.path);
-      });
-    }
-  }
-
-  Future<void> _pickDate(int index) async {
-    DateTime? date = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
-
-    if (date != null) {
-      documentss[index].expiryController.text =
-          "${date.year}-${date.month}-${date.day}";
-    }
-  }
 
   /////==================== Driver Document ================///////
   Widget _buildDriverDocumentStep() {
@@ -1778,7 +1588,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ),
               const SizedBox(height: 16),
 
-              /// 🔥 API Documents List
+              /// ðŸ”¥ API Documents List
               ListView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -1803,7 +1613,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -2037,7 +1847,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),

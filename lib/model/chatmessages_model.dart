@@ -11,7 +11,7 @@ class MessagesModel {
     if (json['data'] != null) {
       data = <ChatMessagesModel>[];
       json['data'].forEach((v) {
-        data!.add(new ChatMessagesModel.fromJson(v));
+        data!.add(ChatMessagesModel.fromJson(v));
       });
     }
   }
@@ -26,7 +26,7 @@ class ChatMessagesModel {
   int? isRead;
   int? status;
   String? createdAt;
-  Null? updatedAt;
+  dynamic updatedAt;
 
   ChatMessagesModel({
     this.id,

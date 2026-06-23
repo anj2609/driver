@@ -11,14 +11,14 @@ class EditVehicleDocumentModel {
     code = json['code'];
     message = json['message'];
     verificationStatus = json['verification_status'];
-    data = json['data'] != null ? new EditVehicleData.fromJson(json['data']) : null;
+    data = json['data'] != null ? EditVehicleData.fromJson(json['data']) : null;
   }
 
   Map<String, dynamic> toJson() {
-    final Map<String, dynamic> data = new Map<String, dynamic>();
-    data['code'] = this.code;
-    data['message'] = this.message;
-    data['verification_status'] = this.verificationStatus;
+    final Map<String, dynamic> data = <String, dynamic>{};
+    data['code'] = code;
+    data['message'] = message;
+    data['verification_status'] = verificationStatus;
     if (this.data != null) {
       data['data'] = this.data!.toJson();
     }
@@ -38,25 +38,25 @@ class EditVehicleData {
     if (json['driver_doc'] != null) {
       driverDoc = <DriverDoc>[];
       json['driver_doc'].forEach((v) {
-        driverDoc!.add(new DriverDoc.fromJson(v));
+        driverDoc!.add(DriverDoc.fromJson(v));
       });
     }
     if (json['vehicle_doc'] != null) {
       vehicleDoc = <VehicleDoc>[];
       json['vehicle_doc'].forEach((v) {
-        vehicleDoc!.add(new VehicleDoc.fromJson(v));
+        vehicleDoc!.add(VehicleDoc.fromJson(v));
       });
     }
   }
 
   Map<String, dynamic> toJson() {
-    final Map<String, dynamic> data = new Map<String, dynamic>();
-    data['vehicle_id'] = this.vehicleId;
-    if (this.driverDoc != null) {
-      data['driver_doc'] = this.driverDoc!.map((v) => v.toJson()).toList();
+    final Map<String, dynamic> data = <String, dynamic>{};
+    data['vehicle_id'] = vehicleId;
+    if (driverDoc != null) {
+      data['driver_doc'] = driverDoc!.map((v) => v.toJson()).toList();
     }
-    if (this.vehicleDoc != null) {
-      data['vehicle_doc'] = this.vehicleDoc!.map((v) => v.toJson()).toList();
+    if (vehicleDoc != null) {
+      data['vehicle_doc'] = vehicleDoc!.map((v) => v.toJson()).toList();
     }
     return data;
   }
@@ -68,7 +68,7 @@ class DriverDoc {
   String? documentName;
   String? documentNumber;
   String? status;
-  Null? remark;
+  dynamic remark;
   String? file;
 
   DriverDoc(
@@ -91,14 +91,14 @@ class DriverDoc {
   }
 
   Map<String, dynamic> toJson() {
-    final Map<String, dynamic> data = new Map<String, dynamic>();
-    data['id'] = this.id;
-    data['document_id'] = this.documentId;
-    data['document_name'] = this.documentName;
-    data['document_number'] = this.documentNumber;
-    data['status'] = this.status;
-    data['remark'] = this.remark;
-    data['file'] = this.file;
+    final Map<String, dynamic> data = <String, dynamic>{};
+    data['id'] = id;
+    data['document_id'] = documentId;
+    data['document_name'] = documentName;
+    data['document_number'] = documentNumber;
+    data['status'] = status;
+    data['remark'] = remark;
+    data['file'] = file;
     return data;
   }
 }

@@ -15,7 +15,7 @@ String? vehicleid;
 
 //profileStatuss
 class SocialDetailScreen extends StatefulWidget {
-  SocialDetailScreen({Key? key}) : super(key: key);
+  const SocialDetailScreen({super.key});
 
   @override
   State<SocialDetailScreen> createState() => _SocialDetailScreenState();
@@ -25,8 +25,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   final _formKey = GlobalKey<FormState>();
 
   int currentStep = 0;
-  int _docCounter = 1;
-  int _driverdocCounter = 1;
+
   final TextEditingController dobController = TextEditingController();
 
   final TextEditingController fullNameController = TextEditingController();
@@ -653,7 +652,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10),
         ],
       ),
       child: Column(
@@ -708,16 +707,15 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   }) {
     return TextFormField(
       controller: controller,
-      readOnly: true,
-      // validator: (value) {
-      //   if (value == null || value.isEmpty) {
-      //     return "$label is required";
-      //   }
-      //   return null;
-      // },
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return "$label is required";
+        }
+        return null;
+      },
       decoration: InputDecoration(
         labelText: label,
-        //filled: false,
+        filled: true,
         fillColor: Colors.white,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       ),
@@ -745,123 +743,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
     );
   }
 
-  /// ============ save button =============================////////////////
-  ///
-  ///
-  Widget _buildSaveButton() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: CustomPrimaryButton(
-        text: "Save",
-        onTap: () async {
-          if (currentStep == 0) {
-            if (!_formKey.currentState!.validate()) return;
-            final prefs = await SharedPreferences.getInstance();
 
-            // if (profileImage == null) {
-            //   ScaffoldMessenger.of(context).showSnackBar(
-            //     const SnackBar(content: Text("Profile photo required")),
-            //   );
-            //   return;
-            // }
-
-            if (selectedGender == null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Please select gender")),
-              );
-              return;
-            }
-
-            if (dobController.text.isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Date of birth required")),
-              );
-              return;
-            }
-
-            String dob = dobController.text.trim();
-
-            await Get.find<AuthController>().fillPersonalInfoApi(
-              name: fullNameController.text.trim(),
-              email: emailController.text.trim(),
-              gender: selectedGender.toString(),
-              dob: dob,
-              profileimage: profileImage,
-              context: context,
-            );
-            Get.find<AuthController>().driverdocument(context: context);
-            Get.find<AuthController>().vehicledoc(context: context);
-            setState(() {
-              isPersonalSaved = true;
-              prefs.setBool(ApiConstants.isPersonalSaved, isPersonalSaved);
-            });
-
-            return;
-          }
-
-          /////uploadDocumentDriver
-
-          if (currentStep == 1) {
-            if (selectedVehicleTypeId == null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Select Vehicle Type")),
-              );
-              return;
-            }
-          }
-
-          /// STEP 2 Save
-          if (currentStep == 2) {
-            final controller = Get.find<AuthController>();
-
-            for (var doc in controller.vehicleDocumentList) {
-              if (doc.isRequired == true && doc.imageFiles == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${doc.name} image required")),
-                );
-                return;
-              }
-
-              if (doc.numberControllers.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${doc.name} number required")),
-                );
-                return;
-              }
-
-              if (doc.isExpiry == true &&
-                  doc.expiryControllers.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${doc.name} expiry required")),
-                );
-                return;
-              }
-            }
-
-            Response response = await controller.uploadVehicleDocument(
-              context: context,
-              documents: controller.vehicleDocumentList,
-            );
-
-            if (response.body["code"] == "200") {
-              setState(() {
-                currentStep = 3;
-              });
-            }
-            // documents validation laga sakte ho yaha
-          }
-
-          /// Final Submit
-          if (currentStep == 3) {
-            Get.toNamed(RouteHelper.getsuccussfullLoader());
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Form Submitted Successfully")),
-            );
-          }
-        },
-      ),
-    );
-  }
 
   /// ---------------- NEXT BUTTON ----------------
   Widget _buildNextButton() {
@@ -1070,47 +952,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
     //   ),
   }
 
-  //////============== date picker ==============///////////////////
 
-  Widget _buildDateField(String label, TextEditingController controller) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: TextFormField(
-        controller: controller,
-        readOnly: true,
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: Colors.white,
-          suffixIcon: const Icon(Icons.calendar_today),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Colors.blue),
-          ),
-        ),
-        onTap: () async {
-          DateTime? picked = await showDatePicker(
-            context: context,
-            initialDate: DateTime.now(),
-            firstDate: DateTime(2020),
-            lastDate: DateTime(2035),
-          );
-
-          if (picked != null) {
-            controller.text = "${picked.day}/${picked.month}/${picked.year}";
-          }
-        },
-      ),
-    );
-  }
 
   List<VehicleTypeModel2> vehicleTypes2 = [
     VehicleTypeModel2(id: 1, name: "Car", image: "assets/images/car1.png"),
@@ -1506,132 +1348,9 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
     );
   }
 
-  Widget _buildUploadSection() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          /// Header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Upload Documents Photo *",
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    "Upload atleast 1 Picture",
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-              ElevatedButton.icon(
-                onPressed: () => pickDocument("Vehicle Document"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey.shade200,
-                  foregroundColor: Colors.black,
-                  elevation: 0,
-                ),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text("Add"),
-              ),
-            ],
-          ),
 
-          const SizedBox(height: 15),
 
-          /// Document List
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: documents.length,
-            itemBuilder: (context, index) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xfff7f7f7),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      height: 50,
-                      width: 50,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        image: DecorationImage(
-                          image: FileImage(documents[index]["file"]),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Document Photo",
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            "Completed",
-                            style: TextStyle(fontSize: 12, color: Colors.blue),
-                          ),
-                        ],
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: () => removeDocument(index),
-                      child: const Icon(Icons.delete, color: Colors.red),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildDateField2(String label, TextEditingController controller) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          TextField(
-            controller: controller,
-            readOnly: true,
-            onTap: () => selectDate(controller),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white,
-              suffixIcon: const Icon(Icons.calendar_today, size: 18),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildDropdown({
     required String? value,
@@ -1695,47 +1414,10 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
     });
   }
 
+
   List<DocumentModels> documentss = [];
   List<DocumentModels> driverDocument = [];
 
-  ///driverDocument
-
-  final ImagePicker _pickers = ImagePicker();
-
-  Future<void> _pickImage(int index) async {
-    final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
-
-    if (picked != null) {
-      setState(() {
-        documentss[index].imageFile = File(picked.path);
-      });
-    }
-  }
-
-  ///_driverimage driverDocument
-  Future<void> _driverimage(int index) async {
-    final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
-
-    if (picked != null) {
-      setState(() {
-        driverDocument[index].imageFile = File(picked.path);
-      });
-    }
-  }
-
-  Future<void> _pickDate(int index) async {
-    DateTime? date = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
-
-    if (date != null) {
-      documentss[index].expiryController.text =
-          "${date.year}-${date.month}-${date.day}";
-    }
-  }
 
   /////==================== Driver Document ================///////
   Widget _buildDriverDocumentStep() {
@@ -1781,7 +1463,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                         borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -1994,7 +1676,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                         borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),

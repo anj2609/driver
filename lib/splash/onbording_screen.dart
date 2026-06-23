@@ -8,6 +8,7 @@ import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -183,21 +184,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
               SizedBox(height: height * 0.04),
 
-              /// NEXT BUTTON
+              /// NEXT / GET STARTED BUTTON
               CustomPrimaryButton(
-                text: _currentIndex == onboardingData.length - 1
-                    ? "Get Started"
-                    : "Next",
-                onTap: () {
-                  if (_currentIndex < onboardingData.length - 1) {
-                    _pageController.nextPage(
-                      duration: const Duration(milliseconds: 500),
-                      curve: Curves.easeInOut,
-                    );
-                  } else {
-                    _timer?.cancel();
-                    Get.toNamed(RouteHelper.getmyRideLoginScreen());
-                  }
+                text: "Get Started",
+                onTap: () async {
+                  _timer?.cancel();
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool('has_seen_onboarding', true);
+                  Get.toNamed(RouteHelper.getmyRideLoginScreen());
                 },
               ),
 

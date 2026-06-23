@@ -11,7 +11,7 @@ class EarningActivityModel {
     if (json['data'] != null) {
       data = <EarningActivityDetailsList>[];
       json['data'].forEach((v) {
-        data!.add(new EarningActivityDetailsList.fromJson(v));
+        data!.add(EarningActivityDetailsList.fromJson(v));
       });
     }
   }
@@ -21,15 +21,15 @@ class EarningActivityDetailsList {
   int? id;
   String? baseFare;
   String? createdAt;
-  Null? estimatedTime;
-  Null? distanceKm;
+  dynamic estimatedTime;
+  dynamic distanceKm;
   double? pickupLat;
   double? pickupLng;
   String? pickupAddress;
   double? dropLat;
   double? dropLng;
   String? dropAddress;
-  Null? tip;
+  dynamic tip;
 
   EarningActivityDetailsList({
     this.id,

@@ -520,7 +520,6 @@ class HomeController extends GetxController {
 
   Future<Response> cancleRideReason() async {
     // isLoading = true;
-    SharedPreferences prefs = await SharedPreferences.getInstance();
 
     update();
 

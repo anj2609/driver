@@ -4,7 +4,6 @@ import 'package:get/get.dart';
 import 'package:myridedriverapp/config/route.dart';
 
 import 'package:myridedriverapp/config/utils/colors.dart';
-import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/auth_controller.dart';

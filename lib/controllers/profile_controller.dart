@@ -1,4 +1,3 @@
-import 'dart:developer';
 import 'dart:io';
 
 import 'package:fl_chart/fl_chart.dart';
@@ -6,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,7 +12,6 @@ import 'package:myridedriverapp/model/aboutus_model.dart';
 import 'package:myridedriverapp/model/arningactivitylist_model.dart';
 import 'package:myridedriverapp/model/bankdetals_model.dart';
 import 'package:myridedriverapp/model/earning_model.dart';
-import 'package:myridedriverapp/model/erningmain_model.dart';
 import 'package:myridedriverapp/model/notification_model.dart';
 import 'package:myridedriverapp/model/privacy_model.dart';
 import 'package:myridedriverapp/model/profileModel.dart';

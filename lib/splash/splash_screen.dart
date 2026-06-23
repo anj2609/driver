@@ -4,7 +4,7 @@ import 'package:myridedriverapp/config/route.dart';
 import 'package:get/get.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
-import 'package:myridedriverapp/widgets/custom_popup.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -55,9 +55,12 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (token != null && token.isNotEmpty) {
       if (verificationStatus == "rejected" || verificationStatus == "pending") {
-        Get.dialog(
-          CustomPopup(status: verificationStatus.toString()),
-          barrierDismissible: false,
+        // Navigate directly to the document status screen instead of showing
+        // a floating dialog. The dialog approach left no proper route underneath,
+        // causing crashes when "Check Status" was tapped.
+        Get.offAllNamed(
+          RouteHelper.getEditVehicleDocumentScreen(),
+          arguments: {"status": verificationStatus.toString()},
         );
 
         return;
@@ -77,7 +80,12 @@ class _SplashScreenState extends State<SplashScreen>
       // }
     }
 
-    Get.offAllNamed(RouteHelper.getOnboardingRoute());
+    final bool hasSeenOnboarding = prefs.getBool('has_seen_onboarding') ?? false;
+    if (hasSeenOnboarding) {
+      Get.offAllNamed(RouteHelper.getmyRideLoginScreen());
+    } else {
+      Get.offAllNamed(RouteHelper.getOnboardingRoute());
+    }
   }
 
   //   Future<void> _navigateAfterDelay() async {

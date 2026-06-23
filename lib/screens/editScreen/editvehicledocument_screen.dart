@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
@@ -7,6 +10,7 @@ import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/model/updatevehicledoc_model.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EditVehicleDocumentScreen extends StatefulWidget {
   final String? status;
@@ -18,24 +22,44 @@ class EditVehicleDocumentScreen extends StatefulWidget {
 }
 
 class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
+  Timer? _statusTimer;
+
   @override
   void initState() {
     super.initState();
     final controller = Get.find<AuthController>();
-    if (controller.editDriverDocumentList.isEmpty &&
-        controller.editVehicleDocumentList.isEmpty) {
-      controller.reloadDocsFromCache();
-    }
+    controller.reloadDocsFromCache();
+
+    // Fetch fresh status from the server immediately when the screen opens,
+    // then keep polling every 30 seconds so admin changes (approved/rejected)
+    // are reflected without requiring a re-login.
+    controller.fetchDocumentStatus();
+    _statusTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      controller.fetchDocumentStatus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _statusTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          Get.offAllNamed(RouteHelper.getmyRideLoginScreen());
+        }
+      },
+      child: Scaffold(
       backgroundColor: ColorResources.backgroundColor,
       appBar: AppBar(
         title: const Text("My Documents"),
         leading: GestureDetector(
-          onTap: () => Get.back(),
+          onTap: () => Get.offAllNamed(RouteHelper.getmyRideLoginScreen()),
           child: const Icon(Icons.arrow_back_ios_new),
         ),
       ),
@@ -64,7 +88,10 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
               );
             }
 
-            return SingleChildScrollView(
+            return RefreshIndicator(
+              onRefresh: () => controller.fetchDocumentStatus(),
+              child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: Column(
                 children: [
@@ -191,20 +218,100 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
                   SizedBox(height: Dimensions.smallSize),
                 ],
               ),
+              ),
             );
           },
         ),
       ),
+      ),
     );
   }
 
-  String _buildDocImageUrl(String file) {
+  String _buildDocImageUrl(String? file) {
+    if (file == null || file.trim().isEmpty) return '';
+    // Already a full URL — use as-is
     if (file.startsWith('http://') || file.startsWith('https://')) return file;
+    // Normalise: strip leading slash
+    String path = file.startsWith('/') ? file.substring(1) : file;
+    // API sometimes returns paths already prefixed with "storage/"
+    if (path.startsWith('storage/')) {
+      return '${ApiConstants.imageurl}$path';
+    }
+    // Otherwise prepend the full storage base URL
     final base = ApiConstants.fileUrl.endsWith('/')
         ? ApiConstants.fileUrl
         : '${ApiConstants.fileUrl}/';
-    final path = file.startsWith('/') ? file.substring(1) : file;
     return '$base$path';
+  }
+
+  Future<Map<String, String>> _authHeaders() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Prefer in-memory social tokens (set during the current session),
+    // then fall back to persisted tokens from SharedPreferences.
+    final id = (ApiConstants.userIdSocial.isNotEmpty)
+        ? ApiConstants.userIdSocial
+        : (prefs.getString(ApiConstants.profileid) ?? '');
+    final token = (ApiConstants.userTokenSocial.isNotEmpty)
+        ? ApiConstants.userTokenSocial
+        : (prefs.getString(ApiConstants.token) ?? '');
+    // Only send headers if we actually have values — empty headers cause 401
+    final headers = <String, String>{};
+    if (id.isNotEmpty) headers['id'] = id;
+    if (token.isNotEmpty) headers['authorizationToken'] = token;
+    return headers;
+  }
+
+  Widget _docNetworkImage(String url) {
+    if (url.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.image_not_supported, size: 35, color: Colors.grey),
+            SizedBox(height: 5),
+            Text("No image", style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+    return FutureBuilder<Map<String, String>>(
+      future: _authHeaders(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(strokeWidth: 2),
+          );
+        }
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          headers: snap.data!.isNotEmpty ? snap.data! : null,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return const Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Doc image failed: $url — $error');
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.image_not_supported,
+                      size: 35, color: Colors.grey),
+                  SizedBox(height: 5),
+                  Text(
+                    "Image unavailable",
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _documentCard(
@@ -284,34 +391,10 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen> {
                             fit: BoxFit.cover,
                           ),
                         )
-                      : doc.file != null
+                      : (doc.file != null && doc.file!.trim().isNotEmpty)
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(14),
-                          child: Image.network(
-                            _buildDocImageUrl(doc.file!),
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, progress) {
-                              if (progress == null) return child;
-                              return const Center(
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.image_not_supported,
-                                      size: 35, color: Colors.grey),
-                                  SizedBox(height: 5),
-                                  Text(
-                                    "Image unavailable",
-                                    style: TextStyle(color: Colors.grey),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
+                          child: _docNetworkImage(_buildDocImageUrl(doc.file)),
                         )
                       : const Center(
                           child: Column(

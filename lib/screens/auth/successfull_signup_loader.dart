@@ -6,6 +6,7 @@ import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 
+
 class RegistrationSuccessScreen extends StatefulWidget {
   const RegistrationSuccessScreen({Key? key}) : super(key: key);
 
@@ -37,8 +38,13 @@ class _RegistrationSuccessScreenState extends State<RegistrationSuccessScreen>
 
   Future<void> _navigateAfterDelay() async {
     await Future.delayed(const Duration(seconds: 4));
-    Get.offAllNamed(RouteHelper.getLoginRoute());
-    // Get.offAllNamed(RouteHelper.getDoverifyScreen());
+    // Navigate directly to the document status screen with "pending" status.
+    // Previously used Get.offAll() + Get.dialog() which left the route stack
+    // in an unstable state and caused crashes when "Check Status" was tapped.
+    Get.offAllNamed(
+      RouteHelper.getEditVehicleDocumentScreen(),
+      arguments: {"status": "pending"},
+    );
   }
 
   @override

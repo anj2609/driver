@@ -47,7 +47,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   }
 
   Future<void> getCurrentLocation() async {
-    LocationPermission permission = await Geolocator.requestPermission();
+    await Geolocator.requestPermission();
 
     Position position = await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.high,

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:myridedriverapp/config/utils/colors.dart';
-import 'package:myridedriverapp/config/utils/dimensions.dart';
+
 
 class OnlineToggleButton extends StatelessWidget {
   final bool isOnline;

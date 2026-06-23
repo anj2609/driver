@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -19,7 +18,7 @@ import 'package:myridedriverapp/widgets/custom_loader.dart';
 class StartDriverRideScreen extends StatefulWidget {
   // final NewBookingNearByModel? trips;
   // final AcceptRideModel? acceptData;
-  StartDriverRideScreen({
+  const StartDriverRideScreen({
     super.key,
 
     /// this.trips, this.acceptData
@@ -30,7 +29,7 @@ class StartDriverRideScreen extends StatefulWidget {
 }
 
 class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
-  final Completer<GoogleMapController> _controller = Completer();
+
 
   LatLng driverLocation = const LatLng(28.6139, 77.2090); // Default Delhi
   LatLng pickupLocation = const LatLng(28.6160, 77.2100);
@@ -191,7 +190,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              "${data.data!.pickupaddress ?? ''}",
+                              data.data!.pickupaddress ?? '',
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: PoppinsReguler.copyWith(
@@ -382,7 +381,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
                               child: CustomDisabledButton(
                                 text: "Online Payment",
                                 onTap: () {
-                                  print("Offline Payment");
+                                  debugPrint("Offline Payment");
                                 },
                               ),
                             ),
@@ -395,7 +394,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
                             child: CustomPrimaryButton(
                               text: 'Offline Payment',
                               onTap: () async {
-                                print(
+                                debugPrint(
                                   'testing booking id ${data.data!.bookingId}',
                                 );
 

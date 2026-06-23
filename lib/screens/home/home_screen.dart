@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
@@ -33,7 +31,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
   GoogleMapController? mapController;
   List<TripModel> tripList = [];
-  final AudioPlayer _audioPlayer = AudioPlayer();
   final HomeController controller = Get.put(
     HomeController(homeRepo: Get.find()),
   );
@@ -59,7 +56,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       try {
       await Get.find<HomeController>().driverBookingActives();
       } catch (e) {
-        print("TIMER ERROR => $e");
+        debugPrint("TIMER ERROR => $e");
       }
     });
   }
@@ -85,10 +82,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
         jsonDecode(acceptJson),
       );
 
-      print("Trip Id: ${tripData.id}");
-      print("Accept Ride Id: ${acceptData.data!.otp}");
+      debugPrint("Trip Id: ${tripData.id}");
+      debugPrint("Accept Ride Id: ${acceptData.data!.otp}");
     } else {
-      print("No ride data found");
+      debugPrint("No ride data found");
     }
 
     isPollingStarted = true;
@@ -231,10 +228,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       driverLatitude = position.latitude;
       driverLongitude = position.longitude;
       //driverLatitude driverLongitude
-      print("📍 Current: ${position.latitude}, ${position.longitude}");
-      print("📍suchi  Current: ${driverLatitude}, ${driverLongitude}");
+      debugPrint("📍 Current: ${position.latitude}, ${position.longitude}");
+      debugPrint("📍suchi  Current: $driverLatitude, $driverLongitude");
     } catch (e) {
-      print("❌ Error: $e");
+      debugPrint("❌ Error: $e");
     }
   }
 
@@ -242,7 +239,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
     if (!serviceEnabled) {
-      print("❌ Location services are OFF");
+      debugPrint("❌ Location services are OFF");
       await Geolocator.openLocationSettings();
       return;
     }
@@ -254,18 +251,18 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     }
 
     if (permission == LocationPermission.denied) {
-      print("❌ Permission denied");
+      debugPrint("❌ Permission denied");
       _showLocationDialog();
       return;
     }
 
     if (permission == LocationPermission.deniedForever) {
-      print("❌ Permission permanently denied");
+      debugPrint("❌ Permission permanently denied");
       await Geolocator.openAppSettings();
       return;
     }
 
-    print("✅ Permission granted");
+    debugPrint("✅ Permission granted");
 
     await initLocationFlow();
     startLocationStream();
@@ -437,7 +434,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
             builder: (controller) {
               if (controller.isLoading) {
                 return Container(
-                  color: Colors.black.withOpacity(0.6),
+                  color: Colors.black.withValues(alpha: 0.6),
                   child:  Center(
                     child: PremiumBlurLoader()
                     /// CircularProgressIndicator(color: Colors.white),
@@ -453,54 +450,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     );
   }
 
-  /// 🔹 Option Card Widget
-  Widget _buildOptionCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 40,
-            width: 40,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget circleButton(IconData icon) {
     return Container(

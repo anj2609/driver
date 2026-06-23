@@ -8,7 +8,7 @@ class VehicleModel {
   VehicleModel.fromJson(Map<String, dynamic> json) {
     code = json['code'];
     message = json['message'];
-    data = json['data'] != null ? new VehicleDetailsData.fromJson(json['data']) : null;
+    data = json['data'] != null ? VehicleDetailsData.fromJson(json['data']) : null;
   }
 
 
@@ -18,9 +18,9 @@ class VehicleDetailsData {
   String? vehicleNumber;
   String? brand;
   String? model;
-  Null? chassisNumber;
-  Null? engineNumber;
-  Null? manufactureYear;
+  dynamic chassisNumber;
+  dynamic engineNumber;
+  dynamic manufactureYear;
   List<String>? images;
 
   VehicleDetailsData(

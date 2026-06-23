@@ -7,13 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:get/get.dart';
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
-import 'package:myridedriverapp/config/utils/customdailog_screen.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/driverdocument_model.dart';
 import 'package:myridedriverapp/model/driveruploaddoc_model.dart';
@@ -394,12 +392,11 @@ class AuthController extends GetxController implements GetxService {
           ) ??
           0;
 
-      String profileStatus =
-          response.body['data']?['profile_status'].toString() ?? "0";
+      // profileStatus is used by userProfileStatuss below
 
       vehicleid = response.body['data']?['vehicle_id'].toString() ?? "0";
       userProfileStatuss = response.body['data']['profile_status'].toString();
-      var statuscode = prefs.setString(
+      await prefs.setString(
         ApiConstants.statusCode,
         response.body['code'].toString(),
       );
@@ -412,8 +409,7 @@ class AuthController extends GetxController implements GetxService {
         ApiConstants.userTokenSocial = response.body['data']['token']
             .toString();
         ApiConstants.userIdSocial = response.body['data']['id'].toString();
-        String verificationstatus = response.body['verification_status']
-            .toString();
+        // verification_status is stored for future use via prefs
 
         if (userProfileStatuss == "1") {
           print("Navigate => Earn With My Ride");
@@ -460,6 +456,12 @@ class AuthController extends GetxController implements GetxService {
 
      ///// Get.find<ProfileController>().fetchProfile();
 
+      // Persist token so auth headers survive app restart
+      if (ApiConstants.userTokenSocial.isNotEmpty) {
+        authRepo.saveUserToken(ApiConstants.userTokenSocial);
+        authRepo.saveUserprofileid(ApiConstants.userIdSocial);
+      }
+
       editDriverDocumentList.clear();
       editVehicleDocumentList.clear();
 
@@ -497,6 +499,8 @@ class AuthController extends GetxController implements GetxService {
         }
       }
 
+      // Restore any locally-stored doc images from the initial submission
+      await _restoreLocalDocImages();
       _saveDocsToCache();
 
       isDocLoading = false;
@@ -846,12 +850,17 @@ class AuthController extends GetxController implements GetxService {
 }
 else if (code == "401") {
 
-  // Save token if available
   ApiConstants.userTokenSocial =
       data?['token']?.toString() ?? "";
 
   ApiConstants.userIdSocial =
       data?['id']?.toString() ?? "";
+
+  // Persist token so auth headers survive app restart
+  if (ApiConstants.userTokenSocial.isNotEmpty) {
+    authRepo.saveUserToken(ApiConstants.userTokenSocial);
+    authRepo.saveUserprofileid(ApiConstants.userIdSocial);
+  }
 
   Get.find<ProfileController>().fetchProfile();
 
@@ -912,6 +921,8 @@ else if (code == "401") {
     }
   }
 
+  // Restore any locally-stored doc images from the initial submission
+  await _restoreLocalDocImages();
   _saveDocsToCache();
 
   AnimatedTopToast.show(
@@ -1118,6 +1129,38 @@ else {
       await EasyLoading.dismiss();
 
       if (response.body["code"] == "200") {
+        // Populate editDriverDocumentList so they appear immediately in My Documents
+        editDriverDocumentList.clear();
+        for (int i = 0; i < documents.length; i++) {
+          final doc = documents[i];
+          final edit = EditVehicleDocumentsModel(
+            id: doc.id,
+            documentId: doc.id,
+            name: doc.name,
+            number: doc.numberController.text,
+            expriydate: doc.expiryController.text.isNotEmpty
+                ? doc.expiryController.text
+                : null,
+            status: 'pending',
+          );
+          edit.numberControllers.text = doc.numberController.text;
+          if (doc.expiryController.text.isNotEmpty) {
+            edit.expiryControllers.text = doc.expiryController.text;
+          }
+          if (doc.imageFile != null) {
+            final localPath = await _copyToAppDir(
+              doc.imageFile!,
+              'driver_doc_${doc.id}_$i.jpg',
+            );
+            if (localPath != null) {
+              edit.localImagePath = localPath;
+              edit.imageFiles = File(localPath);
+            }
+          }
+          editDriverDocumentList.add(edit);
+        }
+        _saveDocsToCache();
+
         AnimatedTopToast.show(
           context: context,
           message: "Documents uploaded successfully.",
@@ -1187,6 +1230,46 @@ else {
       // await EasyLoading.dismiss();
 
       if (response.body["code"] == "200") {
+        // Populate editVehicleDocumentList so they appear immediately in My Documents
+        editVehicleDocumentList.clear();
+        for (int i = 0; i < documents.length; i++) {
+          final doc = documents[i];
+          final edit = EditVehicleDocumentsModel(
+            id: doc.id,
+            documentId: doc.id,
+            name: doc.name,
+            number: doc.numberControllers.text,
+            expriydate: doc.expiryControllers.text.isNotEmpty
+                ? doc.expiryControllers.text
+                : null,
+            status: 'pending',
+          );
+          edit.numberControllers.text = doc.numberControllers.text;
+          if (doc.expiryControllers.text.isNotEmpty) {
+            edit.expiryControllers.text = doc.expiryControllers.text;
+          }
+          if (doc.imageFiles != null) {
+            final localPath = await _copyToAppDir(
+              doc.imageFiles!,
+              'vehicle_doc_${doc.id}_$i.jpg',
+            );
+            if (localPath != null) {
+              edit.localImagePath = localPath;
+              edit.imageFiles = File(localPath);
+            }
+          }
+          editVehicleDocumentList.add(edit);
+        }
+
+        // All registration docs submitted — mark as pending and persist session
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(ApiConstants.verificationStatus, "pending");
+        // Persist in-memory registration token so session survives app restart
+        if (ApiConstants.userTokenSocial.isNotEmpty) {
+          await authRepo.saveUserToken(ApiConstants.userTokenSocial);
+          await authRepo.saveUserprofileid(ApiConstants.userIdSocial);
+        }
+        _saveDocsToCache();
         AnimatedTopToast.show(
           context: context,
           message: "Vehicle documents saved successfully.",
@@ -1244,7 +1327,8 @@ else {
           if (doc.status == "rejected") {
             doc.status = "pending";
             doc.remark = null;
-            doc.imageFiles = null;
+            // Keep imageFiles so the freshly-uploaded image stays visible
+            // under the "Under Review" overlay until the next app restart
           }
         }
         _saveDocsToCache();
@@ -1306,7 +1390,8 @@ else {
           if (doc.status == "rejected") {
             doc.status = "pending";
             doc.remark = null;
-            doc.imageFiles = null;
+            // Keep imageFiles so the freshly-uploaded image stays visible
+            // under the "Under Review" overlay until the next app restart
           }
         }
         _saveDocsToCache();
@@ -1556,6 +1641,9 @@ else {
     await prefs.remove(ApiConstants.verificationStatus);
     await prefs.remove(_keyDriverDocsCache);
     await prefs.remove(_keyVehicleDocsCache);
+    // Clear registration-step state so next login starts fresh
+    await prefs.remove(ApiConstants.isPersonalSavedStatus);
+    await prefs.remove(ApiConstants.isPersonalSaved);
   }
 
   Future<void> _saveDocsToCache() async {
@@ -1573,7 +1661,7 @@ else {
     final driverJson = prefs.getString(_keyDriverDocsCache);
     final vehicleJson = prefs.getString(_keyVehicleDocsCache);
 
-    if (driverJson != null && editDriverDocumentList.isEmpty) {
+    if (driverJson != null) {
       try {
         final rawList = jsonDecode(driverJson) as List;
         editDriverDocumentList.clear();
@@ -1591,7 +1679,7 @@ else {
       } catch (_) {}
     }
 
-    if (vehicleJson != null && editVehicleDocumentList.isEmpty) {
+    if (vehicleJson != null) {
       try {
         final rawList = jsonDecode(vehicleJson) as List;
         editVehicleDocumentList.clear();
@@ -1611,6 +1699,118 @@ else {
 
     isDocLoading = false;
     update();
+  }
+
+  /// After repopulating lists from API, check if the locally-stored files
+  /// (copied during initial document submission) still exist on disk and
+  /// wire them back up so they display as File images instead of network images.
+  Future<void> _restoreLocalDocImages() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final docDir = Directory(p.join(dir.path, 'submitted_docs'));
+      if (!await docDir.exists()) return;
+
+      final allFiles = await docDir
+          .list()
+          .map((e) => File(e.path))
+          .toList();
+
+      for (final doc in editDriverDocumentList) {
+        if (doc.imageFiles != null) continue;
+        final match = allFiles.firstWhere(
+          (f) => p.basename(f.path).startsWith('driver_doc_${doc.documentId}_'),
+          orElse: () => File(''),
+        );
+        if (match.path.isNotEmpty && await match.exists()) {
+          doc.localImagePath = match.path;
+          doc.imageFiles = match;
+        }
+      }
+
+      for (final doc in editVehicleDocumentList) {
+        if (doc.imageFiles != null) continue;
+        final match = allFiles.firstWhere(
+          (f) => p.basename(f.path).startsWith('vehicle_doc_${doc.documentId}_'),
+          orElse: () => File(''),
+        );
+        if (match.path.isNotEmpty && await match.exists()) {
+          doc.localImagePath = match.path;
+          doc.imageFiles = match;
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Fetches the latest document status from the server without requiring
+  /// a re-login. Updates only the status/remark fields so that already-loaded
+  /// local image references are preserved.
+  Future<void> fetchDocumentStatus() async {
+    try {
+      final response = await authRepo.apiClient.getDataApi(
+        ApiConstants.getUserProfileUrl,
+      );
+      if (response.statusCode != 200 || response.body == null) return;
+
+      final body = response.body as Map<String, dynamic>;
+      final data = body['data'];
+
+      final rawDriverDocs =
+          (data is Map<String, dynamic> ? data['driver_doc'] : null) ??
+          body['driver_doc'];
+      final rawVehicleDocs =
+          (data is Map<String, dynamic> ? data['vehicle_doc'] : null) ??
+          body['vehicle_doc'];
+
+      bool updated = false;
+
+      if (rawDriverDocs is List && rawDriverDocs.isNotEmpty) {
+        _mergeDocStatus(editDriverDocumentList, rawDriverDocs.cast<Map<String, dynamic>>());
+        updated = true;
+      }
+
+      if (rawVehicleDocs is List && rawVehicleDocs.isNotEmpty) {
+        _mergeDocStatus(editVehicleDocumentList, rawVehicleDocs.cast<Map<String, dynamic>>());
+        updated = true;
+      }
+
+      if (updated) {
+        _saveDocsToCache();
+        update();
+      }
+    } catch (_) {}
+  }
+
+  /// Updates status and remark on existing docs in [list] from [freshDocs]
+  /// without touching localImagePath / imageFiles so images keep showing.
+  void _mergeDocStatus(
+    List<EditVehicleDocumentsModel> list,
+    List<Map<String, dynamic>> freshDocs,
+  ) {
+    for (final raw in freshDocs) {
+      final docId = raw['document_id'] as int?;
+      if (docId == null) continue;
+      final idx = list.indexWhere((d) => d.documentId == docId);
+      if (idx >= 0) {
+        list[idx].status = raw['status']?.toString();
+        list[idx].remark = raw['remark']?.toString();
+        // Use server file URL only when we don't already have a local file
+        if (list[idx].imageFiles == null && raw['file'] != null) {
+          list[idx].file = raw['file'].toString();
+        }
+      }
+    }
+  }
+
+  Future<String?> _copyToAppDir(File file, String filename) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final destDir = Directory(p.join(dir.path, 'submitted_docs'));
+      await destDir.create(recursive: true);
+      final dest = await file.copy(p.join(destDir.path, filename));
+      return dest.path;
+    } catch (_) {
+      return null;
+    }
   }
 
   void changeStep(int step) {
