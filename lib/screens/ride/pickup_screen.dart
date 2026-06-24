@@ -637,6 +637,7 @@ import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/chat_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
+import 'package:myridedriverapp/screens/home/ridedetails_screen.dart' show bookingIdStore;
 import 'package:myridedriverapp/widgets/canclerideconfirmations.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:pinput/pinput.dart';
@@ -673,12 +674,28 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   @override
   void initState() {
     super.initState();
-
+    _initLocation();
     startTimer();
+  }
+
+  Future<void> _initLocation() async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      driverLatitude = position.latitude;
+      driverLongitude = position.longitude;
+      if (mounted) setState(() {});
+      debugPrint('[Pickup] Location obtained: ${position.latitude}, ${position.longitude}');
+    } catch (e) {
+      debugPrint('[Pickup] Location error: $e');
+    }
   }
 
   void startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 15), (timer) async {
+      if (!mounted) return;
+
       final prefs = await SharedPreferences.getInstance();
       String? bookingId = prefs.getString("booking_id");
       final controller = Get.find<HomeController>();
@@ -693,12 +710,44 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
       if (track == null || track.data == null) return;
       if (driverLatitude == null || driverLongitude == null) return;
 
+      // Check if backend has set status to 'arrived' — show OTP field
+      final rideStatus = track.data!.status?.toLowerCase() ?? '';
+      if (rideStatus == 'arrived' && !isArrived && mounted) {
+        setState(() {
+          isArrived = true;
+        });
+        debugPrint('[Pickup] Backend status is arrived — showing OTP');
+      }
+
       controller.getRouteCoordinates(
         startLat: driverLatitude!,
         startLng: driverLongitude!,
         endLat: track.data!.lat!,
         endLng: track.data!.lng!,
       );
+
+      // Move map camera to follow the driver's current position
+      if (mapController != null && mounted) {
+        try {
+          mapController!.animateCamera(
+            CameraUpdate.newLatLngBounds(
+              LatLngBounds(
+                southwest: LatLng(
+                  min(driverLatitude!, track.data!.lat!),
+                  min(driverLongitude!, track.data!.lng!),
+                ),
+                northeast: LatLng(
+                  max(driverLatitude!, track.data!.lat!),
+                  max(driverLongitude!, track.data!.lng!),
+                ),
+              ),
+              100,
+            ),
+          );
+        } catch (e) {
+          debugPrint('[Pickup] Camera update error: $e');
+        }
+      }
     });
   }
 
@@ -750,12 +799,28 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
             userLng: rideData.lng,
           );
 
-          double distanceInMeters = Geolocator.distanceBetween(
-            driverLatitude!,
-            driverLongitude!,
-            rideData.lat!,
-            rideData.lng!,
-          );
+          // Sync isArrived from backend status (e.g. admin changed to 'arrived')
+          final backendStatus = rideData.status?.toLowerCase() ?? '';
+          if (backendStatus == 'arrived' && !isArrived) {
+            // Schedule the setState for after this build frame
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && !isArrived) {
+                setState(() => isArrived = true);
+              }
+            });
+          }
+
+          // Sync isOtpVerified when ride is already ongoing (e.g. app restarted mid-ride)
+          if (backendStatus == 'ongoing' && !isOtpVerified) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && !isOtpVerified) {
+                setState(() {
+                  isArrived = true;
+                  isOtpVerified = true;
+                });
+              }
+            });
+          }
 
           return Stack(
             children: [
@@ -768,21 +833,23 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                 onMapCreated: (controllerMap) {
                   mapController = controllerMap;
 
-                  mapController!.animateCamera(
-                    CameraUpdate.newLatLngBounds(
-                      LatLngBounds(
-                        southwest: LatLng(
-                          min(driverLatitude!, rideData.lat!),
-                          min(driverLongitude!, rideData.lng!),
+                  if (driverLatitude != null && driverLongitude != null) {
+                    mapController!.animateCamera(
+                      CameraUpdate.newLatLngBounds(
+                        LatLngBounds(
+                          southwest: LatLng(
+                            min(driverLatitude!, rideData.lat!),
+                            min(driverLongitude!, rideData.lng!),
+                          ),
+                          northeast: LatLng(
+                            max(driverLatitude!, rideData.lat!),
+                            max(driverLongitude!, rideData.lng!),
+                          ),
                         ),
-                        northeast: LatLng(
-                          max(driverLatitude!, rideData.lat!),
-                          max(driverLongitude!, rideData.lng!),
-                        ),
+                        100,
                       ),
-                      100,
-                    ),
-                  );
+                    );
+                  }
                 },
 
                 myLocationEnabled: true,
@@ -835,7 +902,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                       const SizedBox(height: 4),
 
                       Text(
-                        'Distance: ${controller.totaldestance} km',
+                        'Distance: ${controller.computedDistance.isNotEmpty ? controller.computedDistance : (rideData.distance ?? controller.totaldestance ?? '0')} km',
                         style: PoppinsSemiBold.copyWith(
                           color: ColorResources.whiteColor,
                         ),
@@ -851,10 +918,10 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                 right: 0,
                 child: Container(
                   constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.45,
+                    maxHeight: MediaQuery.of(context).size.height * 0.50,
                   ),
                   child: Container(
-                    padding: const EdgeInsets.all(16),
+                    padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
                     decoration: const BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.vertical(
@@ -884,16 +951,19 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  "Going For Picking Up",
+                                  isOtpVerified ? "Ride In Progress" : "Going For Picking Up",
                                   style: PoppinsSemiBold.copyWith(fontSize: 14),
                                 ),
                               ),
 
                               GestureDetector(
                                 onTap: () {
+                                  bookingIdStore = rideData.bookingId?.toString();
                                   Get.toNamed(
                                     RouteHelper.getbookingTripDetailsScreen(),
-                                    arguments: {'trips': data},
+                                    arguments: {
+                                      'bookingId': rideData.bookingId?.toString(),
+                                    },
                                   );
                                 },
                                 child: Text(
@@ -921,9 +991,11 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
                               Chip(
                                 label: Text(
-                                  controller.totaltime.isEmpty
-                                      ? '0 Min'
-                                      : '${controller.totaltime} Min',
+                                  controller.computedDuration.isNotEmpty
+                                      ? '${controller.computedDuration} Min'
+                                      : (controller.totaltime.isEmpty
+                                          ? '0 Min'
+                                          : '${controller.totaltime} Min'),
                                 ),
                               ),
                             ],
@@ -956,7 +1028,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       const SizedBox(height: 5),
 
                                       Text(
-                                        '${controller.totaldestance ?? "0"} km',
+                                        '${controller.computedDistance.isNotEmpty ? controller.computedDistance : (rideData.distance ?? controller.totaldestance ?? "0")} km',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                         ),
@@ -1166,8 +1238,8 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                             ),
                           ),
 
-                          /// ARRIVED BUTTON
-                          if (!isArrived && distanceInMeters < 100) ...[
+                          /// ARRIVED BUTTON — shown whenever driver hasn't marked arrived yet
+                          if (!isArrived) ...[
                             const SizedBox(height: 18),
 
                             CustomButton(
@@ -1245,6 +1317,13 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                         acceptData: data,
                                         trips: trips,
                                       );
+
+                                  // Stay on this screen, show End Ride button
+                                  if (mounted) {
+                                    setState(() {
+                                      isOtpVerified = true;
+                                    });
+                                  }
                                 } else {
                                   Get.snackbar("Error", "Invalid OTP");
                                 }
@@ -1252,16 +1331,59 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                             ),
                           ],
 
-                          const SizedBox(height: 10),
+                          /// END RIDE BUTTON — shown when ride is ongoing (OTP verified)
+                          if (isOtpVerified) ...[
+                            const SizedBox(height: 18),
 
-                          CustomCancleButton(
-                            text: "Cancel Ride",
-                            onTap: () {
-                              _showCancelBottomSheet(
-                                rideData.bookingId.toString(),
-                              );
-                            },
-                          ),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.green.shade50,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.directions_car, size: 18, color: Colors.green.shade700),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Ride is ongoing...',
+                                    style: PoppinsSemiBold.copyWith(
+                                      fontSize: 13,
+                                      color: Colors.green.shade700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 12),
+
+                            CustomButton(
+                              text: "End Ride",
+                              onPressed: () {
+                                Get.toNamed(
+                                  RouteHelper.getstartDriverRideScreen(),
+                                  arguments: {"trips": null, "acceptData": data},
+                                );
+                              },
+                            ),
+                          ],
+
+                          /// CANCEL RIDE — only shown before OTP is verified
+                          if (!isOtpVerified) ...[
+                            const SizedBox(height: 10),
+
+                            CustomCancleButton(
+                              text: "Cancel Ride",
+                              onTap: () {
+                                _showCancelBottomSheet(
+                                  rideData.bookingId.toString(),
+                                );
+                              },
+                            ),
+                          ],
                           const SizedBox(height: 25),
                         ],
                       ),

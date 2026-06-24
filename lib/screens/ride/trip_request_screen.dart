@@ -204,7 +204,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
           ),
 
           Positioned(
-            bottom: 0,
+            bottom: MediaQuery.of(context).padding.bottom,
             left: 0,
             right: 0,
             child: SizedBox(
@@ -266,11 +266,11 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 GestureDetector(
                   onTap: () async {
                     try {
-                       showDialog(
-                              context: context,
-                              barrierDismissible: false,
-                              builder: (_) =>  PremiumBlurLoader(),
-                            );
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => PremiumBlurLoader(),
+                      );
 
                       await controller.acceptRidesTrip(
                         context: context,
@@ -321,18 +321,6 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
               ],
             ),
 
-            /// ✅ Accept Button
-            // CustomPrimaryButton(
-            //   text: "Accept",
-            //   onTap: () {
-            //     controller.acceptRidesTrip(
-            //       context: context,
-            //       bookingId: trip.id.toString(),
-            //       trips: trip,
-            //     );
-
-            //   },
-            // ),
             const SizedBox(height: 10),
 
             Row(
@@ -368,12 +356,6 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                   ],
                 ),
 
-                Text(
-                  "₹ --",
-                  style: PoppinsExtrabold.copyWith(
-                    color: ColorResources.blackcolor,
-                  ),
-                ),
               ],
             ),
 

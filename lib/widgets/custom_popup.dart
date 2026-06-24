@@ -31,8 +31,8 @@ class CustomPopup extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: status == "pending"
-                    ? Colors.orange.withOpacity(0.1)
-                    : Colors.red.withOpacity(0.1),
+                    ? Colors.orange.withValues(alpha: 0.1)
+                    : Colors.red.withValues(alpha: 0.1),
               ),
               child: Icon(
                 status == "pending"

@@ -573,7 +573,7 @@ class AuthController extends GetxController implements GetxService {
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body?['message'] ?? "Failed to send OTP. Please try again.",
+        message: 'Unable to send OTP. Please check your number and try again.',
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -676,7 +676,7 @@ class AuthController extends GetxController implements GetxService {
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Failed to save address. Please try again.",
+        message: 'Unable to save address. Please try again.',
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -696,7 +696,7 @@ class AuthController extends GetxController implements GetxService {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong",
+          message: 'Unable to load driver documents. Please try again.',
           backgroundColor: Colors.red,
           icon: Icons.error_rounded,
         );
@@ -721,7 +721,7 @@ class AuthController extends GetxController implements GetxService {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong",
+          message: 'Unable to load vehicle documents. Please try again.',
           backgroundColor: Colors.red,
           icon: Icons.error_rounded,
         );
@@ -758,7 +758,7 @@ class AuthController extends GetxController implements GetxService {
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Failed to resend OTP. Please try again.",
+        message: 'Unable to resend OTP. Please try again.',
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -926,7 +926,7 @@ else if (code == "401") {
 else {
   AnimatedTopToast.show(
     context: context,
-    message: body?['message'] ?? "Invalid or expired OTP. Please try again.",
+    message: 'Invalid or expired OTP. Please try again.',
     backgroundColor: Colors.red,
     icon: Icons.error_rounded,
   );
@@ -1080,7 +1080,7 @@ else {
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Failed to save personal information. Please try again.",
+        message: 'Unable to save your information. Please try again.',
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
@@ -1152,7 +1152,7 @@ else {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to upload documents. Please check your information and try again.",
+          message: 'Unable to upload documents. Please check your details and try again.',
           backgroundColor: Colors.red,
           icon: Icons.error_rounded,
         );
@@ -1252,7 +1252,7 @@ else {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to upload vehicle documents. Please try again.",
+          message: 'Unable to upload vehicle documents. Please try again.',
           backgroundColor: Colors.red,
           icon: Icons.error_rounded,
         );
@@ -1314,7 +1314,7 @@ else {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to update documents. Please check your information and try again.",
+          message: 'Unable to update documents. Please check your details and try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1385,7 +1385,7 @@ else {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to update vehicle documents. Please check your information and try again.",
+          message: 'Unable to update vehicle documents. Please check your details and try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1417,7 +1417,7 @@ else {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong",
+          message: 'Unable to load vehicle types. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1442,7 +1442,7 @@ else {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong",
+          message: 'Unable to load vehicle brands. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1506,7 +1506,7 @@ else {
     } else {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Failed to save vehicle information. Please try again.",
+        message: 'Unable to save vehicle information. Please try again.',
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
@@ -1585,7 +1585,7 @@ else {
     } else if (response.statusCode == 422) {
       AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Invalid verification code. Please try again.",
+        message: 'Invalid verification code. Please try again.',
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );

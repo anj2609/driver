@@ -16,12 +16,14 @@ import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
+import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/acceptedride_model.dart';
 import 'package:myridedriverapp/model/acceptride_details_model.dart';
 import 'package:myridedriverapp/model/canclereason_model.dart';
 import 'package:myridedriverapp/model/driveractive_model.dart';
 import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
 import 'package:myridedriverapp/model/trinpdetails_model.dart';
+import 'package:myridedriverapp/model/qr_payment_model.dart';
 import 'package:myridedriverapp/repository/home_repo.dart';
 import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
@@ -55,6 +57,7 @@ class HomeController extends GetxController {
 
   RideData? tripdata;
   Timer? _dummyTimer;
+  Timer? _ringtoneTimer;
   ////driverlatitude driverlongitude
   bool isIncomingScreenOpen = false;
   dynamic workStatus;
@@ -94,8 +97,12 @@ class HomeController extends GetxController {
     _autoUpdateTimer?.cancel();
     positionStream?.cancel();
     _dummyTimer?.cancel();
+    _ringtoneTimer?.cancel();
     positionStreams?.cancel();
-    _player.dispose();
+    isRingtonePlaying = false;
+    try {
+      _player.dispose();
+    } catch (_) {}
     super.onClose();
   }
 
@@ -292,13 +299,38 @@ class HomeController extends GetxController {
 
     isRingtonePlaying = true;
 
-    await _player.setReleaseMode(ReleaseMode.loop);
-    await _player.play(AssetSource('sound/ringtone.mp3'));
+    try {
+      // Stop and release any existing player first
+      try {
+        await _player.stop();
+        await _player.release();
+      } catch (_) {}
+
+      await _player.setReleaseMode(ReleaseMode.loop);
+      await _player.play(AssetSource('sound/ringtone.mp3'));
+    } catch (e) {
+      debugPrint('playRingtone error: $e');
+      // Reset flag so next attempt can try again
+      isRingtonePlaying = false;
+      return;
+    }
+
+    // Auto-stop after 30 seconds so it doesn't ring indefinitely
+    _ringtoneTimer?.cancel();
+    _ringtoneTimer = Timer(const Duration(seconds: 30), () {
+      stopRingtone();
+    });
   }
 
   void stopRingtone() async {
+    _ringtoneTimer?.cancel();
+    _ringtoneTimer = null;
     isRingtonePlaying = false;
-    await _player.stop();
+    try {
+      await _player.stop();
+    } catch (e) {
+      debugPrint('stopRingtone error: $e');
+    }
   }
 
   void acceptTrip(NewBookingNearByModel trip) async {
@@ -416,10 +448,9 @@ class HomeController extends GetxController {
     } else {
        AnimatedTopToast.show(
         context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
+        message: 'Unable to update your status. Please try again.',
         backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
+        icon: Icons.error_rounded,
       );
       // Get.snackbar(
       //   '',
@@ -478,7 +509,7 @@ class HomeController extends GetxController {
         stopListeningBookings();
          AnimatedTopToast.show(
         context: context,
-        message: response.body['message'] ?? "Trip accepted successfully.",
+        message: 'Trip accepted! Heading to pickup.',
         backgroundColor: ColorResources.blueeebutton,
         icon: Icons.check_circle_rounded,
       );
@@ -494,7 +525,7 @@ class HomeController extends GetxController {
         hasActiveRide = true;
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "You already have an active ride.",
+          message: 'You already have an active ride. Please complete it first.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -503,7 +534,7 @@ class HomeController extends GetxController {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to accept trip. Please try again.",
+          message: 'Could not accept this trip. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -556,8 +587,6 @@ class HomeController extends GetxController {
     required String cancellationid,
     NewBookingNearByModel? trips,
   }) async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-
     update();
 
     try {
@@ -566,24 +595,91 @@ class HomeController extends GetxController {
         cancellationid: cancellationid,
       );
 
+      debugPrint('Cancel ride response: ${response.body}');
+
       if (response.statusCode == 200 && response.body != null) {
-        if (response.body['status'] == '200' ||
-            response.body['status'] == '200') {
-          Get.back();
-          Get.offAllNamed(RouteHelper.getHomeScreen());
+        final code = response.body['code']?.toString() ??
+            response.body['status']?.toString() ??
+            '';
+
+        if (code == '200') {
+          // Close the cancel bottom sheet
+          if (Get.isBottomSheetOpen ?? false) Get.back();
+
+          // Clear all saved ride data
+          final prefs = await SharedPreferences.getInstance();
           await prefs.remove(ApiConstants.bookingid);
+          await prefs.remove(ApiConstants.acceptedtrip);
+          await prefs.remove('booking_id');
+          await prefs.remove('trip_data');
+          await clearRideData();
+
+          // Clear local model state
+          savedTripData = null;
+          savedAcceptData = null;
+          trackRideModel = null;
+          driverBookingActivesModel = null;
+          hasActiveRide = false;
+          isIncomingScreenOpen = false;
+          computedDistance = '';
+          computedDuration = '';
+          estimatePrice = '';
+          estimateDistance = '';
+          estimateDuration = '';
+
+          // Clear trip details in ProfileController
+          try {
+            Get.find<ProfileController>().tripDetailsModel = null;
+          } catch (_) {}
+
+          // Stop ringtone if playing
+          stopRingtone();
+
+          // Show success toast
+          AnimatedTopToast.show(
+            context: context,
+            message: 'Ride has been cancelled successfully.',
+            backgroundColor: ColorResources.blueeebutton,
+            icon: Icons.check_circle_rounded,
+          );
+
+          // Navigate to home screen
+          Get.offAllNamed(RouteHelper.getHomeScreen());
+
+          // Restart listening for new bookings if driver is still online
+          if (isOnline) {
+            startListeningBookings();
+          }
+
           update();
+          return response;
+        } else {
+          // API returned a non-200 code
+          AnimatedTopToast.show(
+            context: context,
+            message: 'Unable to cancel ride right now. Please try again.',
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+          return response;
         }
-
-        print('accept booking  Ride  |||||| ${response.body}');
-        update();
-        return response;
       } else {
-        print('accept booking  Ride Something went wrong');
-
+        AnimatedTopToast.show(
+          context: context,
+          message: 'Server error. Please try again.',
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
         return response;
       }
     } catch (e) {
+      debugPrint('cancleRideByDriver error: $e');
+      AnimatedTopToast.show(
+        context: context,
+        message: 'Something went wrong. Please try again.',
+        backgroundColor: ColorResources.redbuttoncolor,
+        icon: Icons.error_rounded,
+      );
       rethrow;
     }
   }
@@ -610,15 +706,33 @@ class HomeController extends GetxController {
         update();
 
         if (trackRideModel?.code == "200") {
-          // EasyLoading.dismiss();
+          // Fetch accurate distance & duration from Google Directions API
+          final rideData = trackRideModel?.data;
+          final double? pickupLat = rideData?.lat;
+          final double? pickupLng = rideData?.lng;
+          double? dLat = rideData?.dropLat;
+          double? dLng = rideData?.dropLng;
 
-          // Get.snackbar(
-          //   '',
-          //   trackRideModel?.message ?? "Success",
-          //   backgroundColor: ColorResources.blueeebutton,
-          //   colorText: Colors.white,
-          //   snackPosition: SnackPosition.TOP,
-          // );
+          // Fallback: try TripDetailsModel for drop coordinates
+          if ((dLat == null || dLng == null) || (dLat == 0.0 && dLng == 0.0)) {
+            try {
+              final tripData = Get.find<ProfileController>().tripDetailsModel?.data;
+              dLat = tripData?.dropLat;
+              dLng = tripData?.dropLng;
+            } catch (_) {}
+          }
+
+          if (pickupLat != null && pickupLng != null &&
+              dLat != null && dLng != null &&
+              !(pickupLat == 0.0 && pickupLng == 0.0) &&
+              !(dLat == 0.0 && dLng == 0.0)) {
+            fetchRouteDistanceDuration(
+              pickupLat: pickupLat,
+              pickupLng: pickupLng,
+              dropLat: dLat,
+              dropLng: dLng,
+            );
+          }
         } else {
           //  EasyLoading.dismiss();
           print(trackRideModel?.message ?? "Something went wrong");
@@ -725,6 +839,25 @@ class HomeController extends GetxController {
             /// CLEAR LOCAL MODEL
             savedTripData = null;
             savedAcceptData = null;
+            trackRideModel = null;
+            hasActiveRide = false;
+
+            // Clear trip details in ProfileController
+            try {
+              Get.find<ProfileController>().tripDetailsModel = null;
+            } catch (_) {}
+
+            // Clear prefs
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.remove(ApiConstants.bookingid);
+            await prefs.remove(ApiConstants.acceptedtrip);
+            await prefs.remove('booking_id');
+            await prefs.remove('trip_data');
+
+            // Restart booking listener if online
+            if (isOnline) {
+              startListeningBookings();
+            }
 
             update();
 
@@ -756,14 +889,14 @@ class HomeController extends GetxController {
 
     try {
       Response response = await homeRepo.driverArrivedApi(bookingid: bookingId);
-      print('testing mode for driverArrived ${response}');
+      print('testing mode for driverArrived body=${response.body}');
      // EasyLoading.dismiss();
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['status'] == '200') {
+          (response.body['code'] == '200' || response.body['code'] == 200)) {
        /// EasyLoading.dismiss();
-        arrivedStatusCode = response.body['status'].toString();
-        print('status code arrived ||||  ${response.body['status']}');
+        arrivedStatusCode = response.body['code'].toString();
+        print('status code arrived ||||  ${response.body['code']}');
         print('status code arrived ||||  ${arrivedStatusCode}');
         // Get.snackbar(
         //   '',
@@ -774,7 +907,7 @@ class HomeController extends GetxController {
         // );
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Ride cancelled successfully.",
+          message: 'You have arrived at the pickup location.',
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
@@ -786,7 +919,7 @@ class HomeController extends GetxController {
 
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "You already have an active ride.",
+          message: 'You already have an active ride. Please complete it first.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -795,7 +928,7 @@ class HomeController extends GetxController {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Failed to cancel ride. Please try again.",
+          message: 'Could not update arrival status. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -811,26 +944,61 @@ class HomeController extends GetxController {
   Future<Response> rideCompletedMarked({
     required BuildContext context,
     required String bookingId,
+    String source = 'offline',
   }) async {
-   /// EasyLoading.show(status: "Please wait...");
     update();
 
     try {
-      Response response = await homeRepo.completeRide(bookingid: bookingId);
+      Response response = await homeRepo.completeRide(bookingid: bookingId, source: source);
       print('testing mode for completeRide ${response.body['code']}');
-     /// EasyLoading.dismiss();
+
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['status'] == '200') {
-       /// EasyLoading.dismiss();
+          response.body['code']?.toString() == '200') {
 
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Ride completed successfully.",
+          message: 'Ride completed! Great job.',
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
+
+        // Clear saved ride data from SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(ApiConstants.bookingid);
+        await prefs.remove(ApiConstants.acceptedtrip);
+        await prefs.remove('booking_id');
+        await prefs.remove('trip_data');
+        await clearRideData();
+
+        // Clear local model state
+        savedTripData = null;
+        savedAcceptData = null;
+        trackRideModel = null;
+        driverBookingActivesModel = null;
+        hasActiveRide = false;
+        isIncomingScreenOpen = false;
+        computedDistance = '';
+        computedDuration = '';
+        estimatePrice = '';
+        estimateDistance = '';
+        estimateDuration = '';
+
+        // Clear trip details in ProfileController
+        try {
+          Get.find<ProfileController>().tripDetailsModel = null;
+        } catch (_) {}
+
+        // Stop ringtone if playing
+        stopRingtone();
+
+        // Navigate to home screen directly — no bottom sheet
         Get.offAllNamed(RouteHelper.getHomeScreen());
+
+        // Restart listening for new bookings if driver is still online
+        if (isOnline) {
+          startListeningBookings();
+        }
 
         update();
         return response;
@@ -839,7 +1007,7 @@ class HomeController extends GetxController {
 
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "You already have an active ride.",
+          message: 'You already have an active ride. Please complete it first.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -848,7 +1016,7 @@ class HomeController extends GetxController {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong. Please try again.",
+          message: 'Unable to complete the ride. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -856,8 +1024,57 @@ class HomeController extends GetxController {
         return response;
       }
     } catch (e) {
-    //  EasyLoading.dismiss();
       rethrow;
+    }
+  }
+
+  // ======= Online Payment — Generate QR & Verify =======
+
+  Future<QrPaymentData?> generateOnlineQr({
+    required BuildContext context,
+    required String bookingId,
+  }) async {
+    try {
+      final response = await homeRepo.generateQrCode(bookingId: bookingId);
+      if (response.statusCode == 200 &&
+          response.body != null &&
+          response.body['code']?.toString() == '200') {
+        final model = QrPaymentModel.fromJson(response.body);
+        return model.data;
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: response.body?['message'] ?? 'Failed to generate QR code.',
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+        return null;
+      }
+    } catch (e) {
+      debugPrint('generateOnlineQr error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> verifyOnlinePayment({
+    required BuildContext context,
+    required String bookingId,
+    required String qrId,
+  }) async {
+    try {
+      final response = await homeRepo.verifyQrPayment(
+        bookingId: bookingId,
+        qrId: qrId,
+      );
+      if (response.statusCode == 200 &&
+          response.body != null &&
+          response.body['code']?.toString() == '200') {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('verifyOnlinePayment error: $e');
+      return false;
     }
   }
 
@@ -880,23 +1097,19 @@ class HomeController extends GetxController {
      /// EasyLoading.dismiss();
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['status'] == '200') {
-        verifyPickupOtpStatusCode = response.body['status'].toString();
+          response.body['code']?.toString() == '200') {
+        verifyPickupOtpStatusCode = response.body['code'].toString();
 
       // EasyLoading.dismiss();
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "OTP verified. Starting your ride.",
+          message: 'OTP verified! Ride has started.',
           backgroundColor: ColorResources.appColor,
           icon: Icons.check_circle_rounded,
         );
 
-        print('testing data for Accept Data  ${trips!} ${acceptData!}');
-        // saveRideData(trips: trips, acceptData: acceptData);
-        Get.toNamed(
-          RouteHelper.getstartDriverRideScreen(),
-          arguments: {"trips": trips, "acceptData": acceptData},
-        );
+        debugPrint('testing data for Accept Data  $trips $acceptData');
+        // Navigation is now handled by the pickup screen itself (shows End Ride button)
 
         update();
         return response;
@@ -905,7 +1118,7 @@ class HomeController extends GetxController {
 
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong. Please try again.",
+          message: 'This ride is no longer available.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -914,7 +1127,7 @@ class HomeController extends GetxController {
       } else {
         AnimatedTopToast.show(
           context: context,
-          message: response.body['message'] ?? "Something went wrong. Please try again.",
+          message: 'Invalid OTP. Please check and try again.',
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -985,6 +1198,24 @@ class HomeController extends GetxController {
       var data = json.decode(response.body);
 
       if (data['routes'] == null || data['routes'].isEmpty) return;
+
+      // Extract distance and duration from the route
+      try {
+        final leg = data['routes'][0]['legs'][0];
+        final int distanceMeters = leg['distance']['value'] ?? 0;
+        final double distanceKm = distanceMeters / 1000.0;
+        final int durationSeconds = leg['duration']['value'] ?? 0;
+        final int durationMin = (durationSeconds / 60).round();
+
+        computedDistance = distanceKm.toStringAsFixed(1);
+        computedDuration = durationMin.toString();
+        totaldestance = computedDistance;
+        totaltime = computedDuration;
+
+        debugPrint('Route: Distance=$computedDistance km, Duration=$computedDuration min');
+      } catch (e) {
+        debugPrint('Error extracting route data: $e');
+      }
 
       String encodedPolyline = data['routes'][0]['overview_polyline']['points'];
 
@@ -1221,48 +1452,148 @@ class HomeController extends GetxController {
     return degree * pi / 180;
   }
 
-  //calculate time and distance-=-=-=-=-=-=-=-=-=-=--=-=-=
+  //calculate time and distance using Google Directions API
 
   String? totaldestance = '';
   String totaltime = '';
+
+  /// Computed values from Google Directions API (accurate route-based)
+  String computedDistance = '';
+  String computedDuration = '';
+
+  /// Estimate ride data from /api/estimate-ride-list
+  String estimatePrice = '';
+  String estimateDistance = '';
+  String estimateDuration = '';
+
+  /// Fetch ride estimate (price, distance, time) from backend
+  Future<void> fetchEstimateRideData({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropLat,
+    required double dropLng,
+  }) async {
+    try {
+      final response = await homeRepo.estimateRideList(
+        pickupLat: pickupLat.toString(),
+        pickupLng: pickupLng.toString(),
+        dropLat: dropLat.toString(),
+        dropLng: dropLng.toString(),
+      );
+
+      if (response.statusCode == 200 &&
+          response.body != null &&
+          response.body['code']?.toString() == '200') {
+        final dataList = response.body['data'] as List?;
+        if (dataList != null && dataList.isNotEmpty) {
+          final first = dataList[0];
+          estimatePrice = first['price']?.toString() ?? '';
+          estimateDistance = first['distance_km']?.toString() ?? '';
+          estimateDuration = first['estimated_time']?.toString() ?? '';
+          debugPrint('Estimate: price=$estimatePrice, dist=$estimateDistance, time=$estimateDuration');
+          update();
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchEstimateRideData error: $e');
+    }
+  }
+
+  /// Fetch accurate distance and duration using Google Directions API
+  Future<void> fetchRouteDistanceDuration({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropLat,
+    required double dropLng,
+  }) async {
+    try {
+      String url =
+          "https://maps.googleapis.com/maps/api/directions/json?"
+          "origin=$pickupLat,$pickupLng&destination=$dropLat,$dropLng&key=${ApiConstants.apiKey}";
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        var data = json.decode(response.body);
+
+        if (data['routes'] != null && data['routes'].isNotEmpty) {
+          final leg = data['routes'][0]['legs'][0];
+
+          // Distance in meters → convert to km
+          final int distanceMeters = leg['distance']['value'] ?? 0;
+          final double distanceKm = distanceMeters / 1000.0;
+          computedDistance = distanceKm.toStringAsFixed(1);
+
+          // Duration in seconds → convert to minutes
+          final int durationSeconds = leg['duration']['value'] ?? 0;
+          final int durationMin = (durationSeconds / 60).round();
+          computedDuration = durationMin.toString();
+
+          // Also update the old fields for backward compatibility
+          totaldestance = computedDistance;
+          totaltime = computedDuration;
+
+          debugPrint('Google Directions: Distance=$computedDistance km, Duration=$computedDuration min');
+
+          update();
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchRouteDistanceDuration error: $e');
+      // Fallback: use Haversine calculation
+      _calculateETAFallback(
+        driverLat: pickupLat,
+        driverLng: pickupLng,
+        userLat: dropLat,
+        userLng: dropLng,
+      );
+    }
+  }
+
+  /// Fallback calculation using Haversine formula (when Google API fails)
+  void _calculateETAFallback({
+    dynamic driverLat,
+    dynamic driverLng,
+    dynamic userLat,
+    dynamic userLng,
+  }) {
+    double dLat = _safeToDouble(driverLat);
+    double dLng = _safeToDouble(driverLng);
+    double uLat = _safeToDouble(userLat);
+    double uLng = _safeToDouble(userLng);
+
+    if ((dLat == 0.0 && dLng == 0.0) || (uLat == 0.0 && uLng == 0.0)) {
+      return;
+    }
+
+    double distance = calculateDistance(dLat, dLng, uLat, uLng);
+    if (distance.isNaN || distance.isInfinite) distance = 0.0;
+
+    double speed = 30.0;
+    double timeHours = distance / speed;
+    if (timeHours.isNaN || timeHours.isInfinite) timeHours = 0.0;
+
+    double timeMinutes = timeHours * 60;
+
+    totaldestance = distance.toStringAsFixed(1);
+    totaltime = timeMinutes.round().toString();
+    computedDistance = totaldestance!;
+    computedDuration = totaltime;
+    update();
+  }
+
   void calculateETA({
     dynamic driverLat,
     dynamic driverLng,
     dynamic userLat,
     dynamic userLng,
   }) {
-    print("Driver: ($driverLat, $driverLng) -> User: ($userLat, $userLng)");
-
-    double dLat = _safeToDouble(driverLat);
-    double dLng = _safeToDouble(driverLng);
-    double uLat = _safeToDouble(userLat);
-    double uLng = _safeToDouble(userLng);
-
-    // invalid check
-    if ((dLat == 0.0 && dLng == 0.0) || (uLat == 0.0 && uLng == 0.0)) {
-      print("Invalid coordinates");
-      return;
-    }
-
-    double distance = calculateDistance(dLat, dLng, uLat, uLng);
-
-    if (distance.isNaN || distance.isInfinite) {
-      distance = 0.0;
-    }
-
-    double speed = 30.0;
-    double timeHours = distance / speed;
-
-    if (timeHours.isNaN || timeHours.isInfinite) {
-      timeHours = 0.0;
-    }
-
-    double timeMinutes = timeHours * 60;
-
-    print("Distance: ${distance.toStringAsFixed(2)} km");
-    print("Time: ${timeMinutes.round()} minutes");
-    totaldestance = distance.toStringAsFixed(2);
-    totaltime = timeMinutes.round().toString();
+    _calculateETAFallback(
+      driverLat: driverLat,
+      driverLng: driverLng,
+      userLat: userLat,
+      userLng: userLng,
+    );
   }
 
   Future<void> callNumber({String? phoneNumber}) async {
@@ -1295,7 +1626,12 @@ class HomeController extends GetxController {
         ];
 
         return Container(
-          padding: EdgeInsets.all(Dimensions.smallSpace),
+          padding: EdgeInsets.fromLTRB(
+            Dimensions.smallSpace,
+            Dimensions.smallSpace,
+            Dimensions.smallSpace,
+            Dimensions.smallSpace + MediaQuery.of(context).padding.bottom,
+          ),
           decoration: BoxDecoration(
             color: ColorResources.whiteColor,
             borderRadius: BorderRadius.vertical(
@@ -1343,9 +1679,8 @@ class HomeController extends GetxController {
               SizedBox(height: 5),
 
               Text(
-                "Rohan Raj",
+                trackRideModel?.data?.customerInfo?.name ?? "Passenger",
                 style: PoppinsBold.copyWith(color: ColorResources.blackcolor),
-                // style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
 
               const SizedBox(height: 5),
@@ -1434,7 +1769,6 @@ class HomeController extends GetxController {
                   text: "Rate Passenger",
                   onTap: () {
                     driveController.submitRating();
-                    Get.offAllNamed(RouteHelper.getHomeScreen());
                   },
                 ),
               ),

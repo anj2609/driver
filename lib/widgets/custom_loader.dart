@@ -101,7 +101,7 @@ class PremiumBlurLoader extends StatelessWidget {
             child: Container(
               width: double.infinity,
               height: double.infinity,
-              color: Colors.black.withOpacity(0.15),
+              color: Colors.black.withValues(alpha: 0.15),
               alignment: Alignment.center,
               child: Container(
                 width: 150,

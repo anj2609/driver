@@ -22,6 +22,8 @@ class AcceptRideData {
   String? otp;
   double? lat;
   double? lng;
+  double? dropLat;
+  double? dropLng;
   String? pickupaddress;
   String? dropaddress;
 
@@ -31,6 +33,7 @@ class AcceptRideData {
   String? totalFare;
   String? distance;
   String? time;
+  String? paymentMode;
 
   AcceptRideData({
     this.bookingId,
@@ -38,6 +41,8 @@ class AcceptRideData {
     this.otp,
     this.lat,
     this.lng,
+    this.dropLat,
+    this.dropLng,
     this.pickupaddress,
     this.dropaddress,
     this.customerInfo,
@@ -45,6 +50,7 @@ class AcceptRideData {
     this.totalFare,
     this.distance,
     this.time,
+    this.paymentMode,
   });
 
   AcceptRideData.fromJson(Map<String, dynamic> json) {
@@ -54,6 +60,8 @@ class AcceptRideData {
 
     lat = json['lat'] != null ? (json['lat'] as num).toDouble() : null;
     lng = json['lng'] != null ? (json['lng'] as num).toDouble() : null;
+    dropLat = json['drop_lat'] != null ? double.tryParse(json['drop_lat'].toString()) : null;
+    dropLng = json['drop_lng'] != null ? double.tryParse(json['drop_lng'].toString()) : null;
     pickupaddress = json['pickup_address'];
     dropaddress = json['drop_address'];
 
@@ -65,6 +73,7 @@ class AcceptRideData {
     totalFare = json['total_fare']?.toString();
     distance = json['distance']?.toString();
     time = json['time']?.toString();
+    paymentMode = (json['payment_mode'] ?? json['payment_type'] ?? json['payment_method'])?.toString();
   }
 
   Map<String, dynamic> toJson() {
@@ -74,6 +83,8 @@ class AcceptRideData {
       'otp': otp,
       'lat': lat,
       'lng': lng,
+      'drop_lat': dropLat,
+      'drop_lng': dropLng,
       'pickup_address': pickupaddress,
       'drop_address': dropaddress,
       'customer_info': customerInfo?.toJson(),
@@ -81,6 +92,7 @@ class AcceptRideData {
       'total_fare': totalFare,
       'distance': distance,
       'time': time,
+      'payment_mode': paymentMode,
     };
   }
 }

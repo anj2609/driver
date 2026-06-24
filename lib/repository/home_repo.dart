@@ -46,10 +46,10 @@ class HomeRepo extends GetxService {
 
 ////// ======== Complete Ride ======================/////
 
-Future<Response> completeRide({String? bookingid}) async {
+Future<Response> completeRide({String? bookingid, String source = 'offline'}) async {
     return apiClient.myridepostData(ApiConstants.completeRideUrl, {
       "booking_id": bookingid.toString(),
-      "source":'offline'
+      "source": source,
     });
   }
 
@@ -91,10 +91,34 @@ Future<Response> completeRide({String? bookingid}) async {
     return apiClient.getDataalltypeApi  (ApiConstants.driverBookingActive);
   }
 
-///======= Genrate Qr Code Driver ===========
- 
- 
+///======= Generate QR Code for Online Payment ===========
 
- 
-  /////genrateQrCode
+  Future<Response> generateQrCode({String? bookingId}) async {
+    return apiClient.myridepostData(ApiConstants.genrateQrCode, {
+      "booking_id": bookingId.toString(),
+    });
+  }
+
+  Future<Response> verifyQrPayment({String? bookingId, String? qrId}) async {
+    return apiClient.myridepostData(ApiConstants.verifyQrPayment, {
+      "booking_id": bookingId.toString(),
+      "qr_id": qrId.toString(),
+    });
+  }
+
+///======= Estimate Ride List ===========
+
+  Future<Response> estimateRideList({
+    required String pickupLat,
+    required String pickupLng,
+    required String dropLat,
+    required String dropLng,
+  }) async {
+    return apiClient.myridepostData(ApiConstants.estimateUrl, {
+      "pickup_lat": pickupLat,
+      "pickup_lng": pickupLng,
+      "drop_lat": dropLat,
+      "drop_lng": dropLng,
+    });
+  }
 }

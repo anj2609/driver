@@ -3,7 +3,7 @@ import 'package:myridedriverapp/config/route.dart';
 
 class DriveController extends GetxController {
   var isRideStarted = false.obs;
-  var isRideCompleted = false.obs; // ✅ new variable
+  var isRideCompleted = false.obs;
 
   var timeText = "5:49".obs;
   var rating = 0.obs;
@@ -29,7 +29,18 @@ class DriveController extends GetxController {
 
   void submitRating() {
     print("Rating Submitted: ${rating.value}");
-    Get.back(); 
+    // Reset state
+    rating.value = 0;
+    selectedTags.clear();
+    isRideCompleted.value = false;
+    isRideStarted.value = false;
+    // Navigate to home — close the bottom sheet first, then ensure we're on home
+    Get.back();
+    // If we're already on the home screen (from rideCompletedMarked), just stay there.
+    // If not, navigate to home.
+    if (Get.currentRoute != RouteHelper.homescreen) {
+      Get.offAllNamed(RouteHelper.getHomeScreen());
+    }
   }
 
   void toggleTag(String tag) {
@@ -42,7 +53,16 @@ class DriveController extends GetxController {
 
   void skipRating() {
     print("Rating Skipped");
-    isRideCompleted.value = false; // reset
+    // Reset state
+    rating.value = 0;
+    selectedTags.clear();
+    isRideCompleted.value = false;
+    isRideStarted.value = false;
+    // Close the bottom sheet
     Get.back();
+    // If we're already on the home screen, stay there. Otherwise navigate.
+    if (Get.currentRoute != RouteHelper.homescreen) {
+      Get.offAllNamed(RouteHelper.getHomeScreen());
+    }
   }
 }

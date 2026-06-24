@@ -120,7 +120,7 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
                         borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -180,7 +180,7 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
                         borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -347,7 +347,7 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
             : Border.all(color: Colors.transparent),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -426,7 +426,7 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
                   Positioned.fill(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.35),
+                        color: Colors.black.withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: const Center(

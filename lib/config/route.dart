@@ -483,7 +483,12 @@ class RouteHelper {
     ),
     GetPage(
       name: paymentScreen,
-      page: () => PaymentScreen(acceptData: Get.arguments['acceptData']),
+      page: () {
+        final args = Get.arguments;
+        return PaymentScreen(
+          acceptData: args is Map ? args['acceptData'] : null,
+        );
+      },
 
       transitionDuration: Duration(
         milliseconds: ApiConstants.screenTransitionTime,

@@ -64,7 +64,7 @@ class _AddBankDetailsScreenState extends State<AddBankDetailsScreen> {
                   borderRadius: BorderRadius.circular(18),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black12.withOpacity(.05),
+                      color: Colors.black12.withValues(alpha: .05),
                       blurRadius: 10,
                     ),
                   ],

@@ -153,10 +153,10 @@ class TermsAndConditionScreen extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: ColorResources.blueeebutton.withOpacity(0.08),
+        color: ColorResources.blueeebutton.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: ColorResources.blueeebutton.withOpacity(0.25),
+          color: ColorResources.blueeebutton.withValues(alpha: 0.25),
         ),
       ),
       child: Text(
@@ -310,7 +310,7 @@ class TermsAndConditionScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),

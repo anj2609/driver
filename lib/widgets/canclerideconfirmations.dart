@@ -3,18 +3,20 @@ import 'package:get/get.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
+import 'package:myridedriverapp/widgets/custom_loader.dart';
 
 class CancelRideBottomSheet extends StatefulWidget {
   final String? bookingId;
-  CancelRideBottomSheet({super.key, this.bookingId});
+  const CancelRideBottomSheet({super.key, this.bookingId});
 
   @override
   State<CancelRideBottomSheet> createState() => _CancelRideBottomSheetState();
 }
 
 class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
-  int selectedIndex = -0;
+  int selectedIndex = -1;
   String cancleId = "";
+  bool isCancelling = false;
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +25,12 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
         return AnimatedContainer(
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeInOut,
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 16,
+            bottom: MediaQuery.of(context).padding.bottom + 16,
+          ),
           decoration: const BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
@@ -45,7 +52,7 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
                       ),
                     ),
                     IconButton(
-                      onPressed: () => Get.back(),
+                      onPressed: isCancelling ? null : () => Get.back(),
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -59,13 +66,7 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
                 ),
 
                 const SizedBox(height: 15),
-                controller.isLoading == true
-                    ? Center(
-                        child: CircularProgressIndicator(
-                          color: ColorResources.appColor,
-                        ),
-                      )
-                    : controller.cancleReasonModelList.isEmpty
+                controller.cancleReasonModelList.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -87,6 +88,7 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
                       )
                     : ListView.builder(
                         shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
                         itemCount: controller.cancleReasonModelList.length,
                         itemBuilder: (context, index) {
                           bool isSelected = selectedIndex == index;
@@ -94,15 +96,14 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
                               controller.cancleReasonModelList[index];
 
                           return GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                selectedIndex = index;
-                                cancleId = controller
-                                    .cancleReasonModelList[index]
-                                    .id
-                                    .toString();
-                              });
-                            },
+                            onTap: isCancelling
+                                ? null
+                                : () {
+                                    setState(() {
+                                      selectedIndex = index;
+                                      cancleId = reason.id.toString();
+                                    });
+                                  },
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 300),
                               margin: const EdgeInsets.only(bottom: 10),
@@ -116,7 +117,7 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
                                     : ColorResources.backgroundColor,
                                 borderRadius: BorderRadius.circular(30),
                                 border: isSelected
-                                    ? Border.all(color: Colors.black)
+                                    ? Border.all(color: Colors.black, width: 1.5)
                                     : null,
                               ),
                               child: Text(
@@ -132,32 +133,48 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
 
                 SizedBox(
                   width: double.infinity,
-                  child: CustomCancleButton(
-                    text: 'Confirm',
-                    onTap: () {
-                      if (selectedIndex == -1) {
-                        Get.snackbar(
-                          "Error",
-                          "Please select a cancellation reason",
-                          snackPosition: SnackPosition.BOTTOM,
-                        );
-                        return;
-                      }
+                  child: isCancelling
+                      ? const Center(child: PremiumBlurLoader())
+                      : CustomCancleButton(
+                          text: 'Confirm Cancellation',
+                          onTap: () async {
+                            if (selectedIndex == -1 || cancleId.isEmpty) {
+                              Get.snackbar(
+                                "Select Reason",
+                                "Please select a cancellation reason",
+                                snackPosition: SnackPosition.BOTTOM,
+                                backgroundColor: Colors.red.shade50,
+                                colorText: Colors.red,
+                              );
+                              return;
+                            }
 
-                      final selectedReason =
-                          controller.cancleReasonModelList[selectedIndex];
-                      print("Selected Reason: ${selectedIndex}");
+                            if (widget.bookingId == null || widget.bookingId!.isEmpty) {
+                              Get.snackbar(
+                                "Error",
+                                "Booking ID not found",
+                                snackPosition: SnackPosition.BOTTOM,
+                                backgroundColor: Colors.red.shade50,
+                                colorText: Colors.red,
+                              );
+                              return;
+                            }
 
-                      print("Selected Reason: ${selectedReason.name}");
-                      Get.find<HomeController>().cancleRideByDriver(
-                        context: context,
-                        bookingId: widget.bookingId!,
-                        cancellationid: cancleId,
-                      );
-                      ////selectedIndex
-                      //
-                    },
-                  ),
+                            setState(() => isCancelling = true);
+
+                            try {
+                              await Get.find<HomeController>().cancleRideByDriver(
+                                context: context,
+                                bookingId: widget.bookingId!,
+                                cancellationid: cancleId,
+                              );
+                            } catch (_) {
+                              if (mounted) {
+                                setState(() => isCancelling = false);
+                              }
+                            }
+                          },
+                        ),
                 ),
 
                 const SizedBox(height: 10),

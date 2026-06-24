@@ -335,7 +335,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                       right: Dimensions.smallSpace,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: Colors.blue.withOpacity(.1),
+                                      color: Colors.blue.withValues(alpha: .1),
                                       borderRadius: BorderRadius.circular(14),
                                     ),
                                     child: const Icon(

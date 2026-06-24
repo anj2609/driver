@@ -6,6 +6,7 @@ import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 String? bookingIdStore;
 
@@ -35,20 +36,20 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
   }
 
   Future<void> loaddata() async {
-    final ProfileController controllerprofile = Get.find<ProfileController>();
-    final HomeController controller = Get.find<HomeController>();
-    controllerprofile.tripRideDetailsApi(
-      context: context,
-      bookingid: bookingIdStore!.isNotEmpty
-          ? bookingIdStore
-          : widget.bookingId.toString(),
-    );
+    final prefs = await SharedPreferences.getInstance();
+    final String bookingId = widget.bookingId?.isNotEmpty == true
+        ? widget.bookingId!
+        : (bookingIdStore?.isNotEmpty == true
+            ? bookingIdStore!
+            : (prefs.getString("booking_id") ?? ''));
 
-    controller.trackbookingRide(
-      context: context,
-      bookingId: bookingIdStore!.isNotEmpty
-          ? bookingIdStore
-          : widget.bookingId.toString(),
+    if (bookingId.isEmpty) return;
+
+    // Only fetch trip details — trackRideModel is already populated
+    // by the pickup/startride screen before navigation here.
+    Get.find<ProfileController>().tripRideDetailsApi(
+      context: Get.context!,
+      bookingid: bookingId,
     );
   }
 
@@ -84,41 +85,75 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
         ),
       ),
 
-      body: GetBuilder<ProfileController>(
-        init: Get.find<ProfileController>(),
-        builder: (profileController) {
-          final trips = profileController.tripDetailsModel;
+      body: GetBuilder<HomeController>(
+        init: Get.find<HomeController>(),
+        builder: (homeController) {
+          final acceptData = homeController.trackRideModel;
 
-          /// Profile data loading
-          if (trips == null || trips.data == null) {
-            return  Center(child:  PremiumBlurLoader());
+          if (acceptData == null || acceptData.data == null) {
+            return const Center(child: PremiumBlurLoader());
           }
 
-          return GetBuilder<HomeController>(
-            init: Get.find<HomeController>(),
-            builder: (homeController) {
-              final acceptData = homeController.trackRideModel;
+          final double pickupLat = acceptData.data!.lat ?? 28.6139;
+          final double pickupLng = acceptData.data!.lng ?? 77.2090;
 
-              /// Home data loading
-              if (acceptData == null || acceptData.data == null) {
-                return const Center( child: PremiumBlurLoader());
+          // Reactive inner builder: rebuilds when tripDetailsModel loads
+          return GetBuilder<ProfileController>(
+            init: Get.find<ProfileController>(),
+            builder: (profileController) {
+              final tripData = profileController.tripDetailsModel?.data;
+
+              // Fetch estimate ride data if not already fetched
+              if (homeController.estimatePrice.isEmpty &&
+                  acceptData.data!.dropLat != null &&
+                  acceptData.data!.dropLng != null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  homeController.fetchEstimateRideData(
+                    pickupLat: pickupLat,
+                    pickupLng: pickupLng,
+                    dropLat: acceptData.data!.dropLat!,
+                    dropLng: acceptData.data!.dropLng!,
+                  );
+                });
               }
 
-              /// SAFE LAT LNG
-              final double pickupLat =
-                  double.tryParse(trips.data?.pickupLat?.toString() ?? '') ??
-                  28.6139;
+              // Price from estimate API
+              final String ridePrice = homeController.estimatePrice;
 
-              final double pickupLng =
-                  double.tryParse(trips.data?.pickupLng?.toString() ?? '') ??
-                  77.2090;
+              // Distance: prefer estimate API → Google Directions → track API
+              final String distance = _getValidValue(
+                homeController.estimateDistance,
+                _getValidValue(
+                  homeController.computedDistance,
+                  _getValidValue(
+                    acceptData.data?.distance,
+                    tripData?.distance?.toString(),
+                  ),
+                ),
+              );
+
+              // Duration: prefer estimate API → Google Directions → track API
+              final String rawDuration = _getValidValue(
+                homeController.estimateDuration,
+                _getValidValue(
+                  homeController.computedDuration,
+                  acceptData.data?.time,
+                ),
+              );
+
+              final String distanceText = (distance.isNotEmpty && distance != '0')
+                  ? '$distance km' : 'N/A';
+              // estimateDuration already contains "3 mins" format
+              final String durationText = (rawDuration.isNotEmpty && rawDuration != '0')
+                  ? (rawDuration.contains('min') ? rawDuration : '$rawDuration min')
+                  : 'N/A';
 
               return SingleChildScrollView(
                 padding: EdgeInsets.all(width * 0.04),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    /// TOP CARD
+                    /// TOP CARD — Ride Charges from estimate API
                     Container(
                       padding: EdgeInsets.all(width * 0.04),
                       decoration: BoxDecoration(
@@ -129,14 +164,16 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            "Trip Details",
+                            "Ride Charges",
                             style: TextStyle(color: Colors.grey),
                           ),
 
                           SizedBox(height: height * 0.01),
 
                           Text(
-                            "₹ ${acceptData.data?.totalFare ?? "0"}",
+                            ridePrice.isNotEmpty
+                                ? "₹ $ridePrice"
+                                : "₹ --",
                             style: TextStyle(
                               fontSize: width * 0.08,
                               fontWeight: FontWeight.bold,
@@ -147,19 +184,9 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
 
                           Row(
                             children: [
-                              _infoBox(
-                                "DURATION",
-                                acceptData.data?.time?.toString() ?? "0",
-                                width,
-                              ),
-
+                              _infoBox("DURATION", durationText, width),
                               SizedBox(width: width * 0.04),
-
-                              _infoBox(
-                                "DISTANCE",
-                                acceptData.data?.distance?.toString() ?? "0",
-                                width,
-                              ),
+                              _infoBox("DISTANCE", distanceText, width),
                             ],
                           ),
                         ],
@@ -181,17 +208,13 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
                             target: LatLng(pickupLat, pickupLng),
                             zoom: 14,
                           ),
-
                           onMapCreated: (controllerMap) {
                             mapController = controllerMap;
                           },
-
                           myLocationEnabled: true,
                           myLocationButtonEnabled: false,
-
                           markers: homeController.markers,
                           polylines: homeController.polylines,
-
                           zoomControlsEnabled: false,
                           mapToolbarEnabled: false,
                         ),
@@ -215,55 +238,12 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
                             subtitle: acceptData.data?.pickupaddress ?? "",
                             iconColor: Colors.blue,
                           ),
-
                           const Divider(),
-
                           _locationTile(
                             icon: Icons.location_on,
                             title: acceptData.data?.dropaddress ?? "",
                             subtitle: acceptData.data?.dropaddress ?? "",
                             iconColor: Colors.red,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    SizedBox(height: height * 0.02),
-
-                    const Text(
-                      "Your Earnings",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    SizedBox(height: height * 0.01),
-
-                    /// EARNINGS
-                    Container(
-                      padding: EdgeInsets.all(width * 0.04),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        children: [
-                          _earningRow(
-                            "Fare",
-                            double.tryParse(
-                                  acceptData.data?.baseFare?.toString() ?? "0",
-                                ) ??
-                                0.0,
-                          ),
-
-                          _earningRow(
-                            "Your Earnings",
-                            double.tryParse(
-                                  acceptData.data?.totalFare?.toString() ?? "0",
-                                ) ??
-                                0.0,
-                            isBold: true,
                           ),
                         ],
                       ),
@@ -278,6 +258,17 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
         },
       ),
     );
+  }
+
+  /// Returns the first non-null, non-empty, non-"0" value from two candidates
+  String _getValidValue(String? primary, String? fallback) {
+    if (primary != null && primary.isNotEmpty && primary != '0' && primary != 'null') {
+      return primary;
+    }
+    if (fallback != null && fallback.isNotEmpty && fallback != '0' && fallback != 'null') {
+      return fallback;
+    }
+    return '';
   }
 
   /// INFO BOX
@@ -320,31 +311,6 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
       ),
 
       subtitle: Text(subtitle),
-    );
-  }
-
-  /// EARNING ROW
-  Widget _earningRow(String title, double amount, {bool isBold = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-
-          Text(
-            "₹${amount.toStringAsFixed(2)}",
-            style: TextStyle(
-              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

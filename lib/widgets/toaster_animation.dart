@@ -109,7 +109,7 @@ class _ToastWidgetState extends State<_ToastWidget>
               borderRadius: BorderRadius.circular(18),
               boxShadow: [
                 BoxShadow(
-                  color: widget.backgroundColor.withOpacity(.35),
+                  color: widget.backgroundColor.withValues(alpha: .35),
                   blurRadius: 20,
                   spreadRadius: 1,
                   offset: const Offset(0, 8),

@@ -116,16 +116,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   itemBuilder: (context, index) {
                     return Column(
                       children: [
-                        /// IMAGE
-                        SizedBox(
-                          height: height * 0.32,
+                        /// IMAGE — expands to fill available space, shrinks on small screens
+                        Expanded(
                           child: Lottie.asset(
                             onboardingData[index]["image"]!,
                             fit: BoxFit.contain,
                           ),
                         ),
 
-                        SizedBox(height: height * 0.05),
+                        SizedBox(height: height * 0.03),
 
                         /// TITLE
                         Text(
@@ -137,7 +136,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           ),
                         ),
 
-                        SizedBox(height: height * 0.02),
+                        SizedBox(height: height * 0.015),
 
                         /// SUBTITLE
                         Padding(
@@ -154,6 +153,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             ),
                           ),
                         ),
+
+                        SizedBox(height: height * 0.02),
                       ],
                     );
                   },
