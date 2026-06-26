@@ -175,8 +175,9 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         String? verificationStatus = body["verification_status"]
                             ?.toString();
 
-                        // Clear field on any non-success response so user re-enters
-                        if (code != "200" && code != "401") {
+                        // Clear field on failure; keep it for doc-pending 401 (has token)
+                        final hasToken = body["data"]?["token"]?.toString().isNotEmpty == true;
+                        if (code != "200" && !(code == "401" && hasToken)) {
                           _otpController.clear();
                         }
 

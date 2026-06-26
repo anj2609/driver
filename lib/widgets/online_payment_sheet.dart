@@ -2,22 +2,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:razorpay_flutter/razorpay_flutter.dart';
+
+import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
+import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/qr_payment_model.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class OnlinePaymentSheet extends StatefulWidget {
   final String bookingId;
   final QrPaymentData qrData;
+  final HomeController homeController;
 
   const OnlinePaymentSheet({
     super.key,
     required this.bookingId,
     required this.qrData,
+    required this.homeController,
   });
 
   @override
@@ -25,10 +30,11 @@ class OnlinePaymentSheet extends StatefulWidget {
 }
 
 class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
-  late Razorpay _razorpay;
-  bool isVerifying = false;
+
+  bool _isCheckingPayment = false;
   bool isPaid = false;
   bool isRegenerating = false;
+  bool _isPaymentConfirmed = false;
   Timer? _pollTimer;
   Timer? _countdownTimer;
   int _remainingSeconds = 0;
@@ -40,17 +46,11 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
   void initState() {
     super.initState();
     _currentQrData = widget.qrData;
-    _initRazorpay();
     _startCountdown();
     _startPolling();
   }
 
-  void _initRazorpay() {
-    _razorpay = Razorpay();
-    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _handlePaymentSuccess);
-    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError);
-    _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
-  }
+
 
   void _startCountdown() {
     _countdownTimer?.cancel();
@@ -73,46 +73,35 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+    _checkPaymentStatus();
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (!mounted || isPaid) return;
-      await _checkPayment(silent: true);
+      _checkPaymentStatus();
     });
   }
 
-  Future<void> _checkPayment({bool silent = false}) async {
-    if (isVerifying || isPaid) return;
+  Future<void> _checkPaymentStatus() async {
+    if (_isCheckingPayment || isPaid) return;
+    if (widget.bookingId.isEmpty) return;
+    _isCheckingPayment = true;
 
-    setState(() => isVerifying = true);
+    try {
+      final paid = await widget.homeController.checkPaymentStatusById(
+        bookingId: widget.bookingId,
+      );
 
-    final controller = Get.find<HomeController>();
-    final verified = await controller.verifyOnlinePayment(
-      context: context,
-      bookingId: widget.bookingId,
-      qrId: _currentQrData.qrId ?? '',
-    );
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-    if (verified) {
-      _pollTimer?.cancel();
-      _countdownTimer?.cancel();
-      setState(() {
+      if (paid) {
+        _pollTimer?.cancel();
+        _countdownTimer?.cancel();
         isPaid = true;
-        isVerifying = false;
-      });
-      // Brief success display then complete ride
-      await Future.delayed(const Duration(milliseconds: 1200));
-      if (mounted) await _completeRide();
-    } else {
-      setState(() => isVerifying = false);
-      if (!silent) {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Payment not received yet. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.info_rounded,
-        );
+        await _onPaymentConfirmed();
       }
+    } catch (e) {
+      debugPrint('payment status check error: $e');
+    } finally {
+      _isCheckingPayment = false;
     }
   }
 
@@ -123,8 +112,7 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
     setState(() => isRegenerating = true);
 
     try {
-      final controller = Get.find<HomeController>();
-      final newQrData = await controller.generateOnlineQr(
+      final newQrData = await widget.homeController.generateOnlineQr(
         context: context,
         bookingId: widget.bookingId,
       );
@@ -174,77 +162,106 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
     }
   }
 
-  void _handlePaymentSuccess(PaymentSuccessResponse response) async {
-    debugPrint('Razorpay success: ${response.paymentId}');
+
+
+  Future<void> _onPaymentConfirmed() async {
     if (!mounted) return;
-    _pollTimer?.cancel();
-    _countdownTimer?.cancel();
-    setState(() => isPaid = true);
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (mounted) await _completeRide();
-  }
 
-  void _handlePaymentError(PaymentFailureResponse response) {
-    if (!mounted) return;
-    AnimatedTopToast.show(
-      context: context,
-      message: response.message ?? 'Payment failed. Please try again.',
-      backgroundColor: ColorResources.redbuttoncolor,
-      icon: Icons.error_rounded,
-    );
-  }
+    // 1. Replace sheet content with thank-you view immediately
+    setState(() => _isPaymentConfirmed = true);
 
-  void _handleExternalWallet(ExternalWalletResponse response) {
-    debugPrint('External wallet: ${response.walletName}');
-  }
-
-  Future<void> _completeRide() async {
-    if (!mounted) return;
-    Navigator.of(context).pop();
-    await Get.find<HomeController>().rideCompletedMarked(
-      context: Get.context!,
-      bookingId: widget.bookingId,
-      source: 'online',
-    );
-  }
-
-  void _openRazorpay() {
-    // Amount in paise — use paymentAmount first, fallback to parsing amount string
-    int amountInPaise = _currentQrData.paymentAmount ?? 0;
-    if (amountInPaise == 0 && _currentQrData.amount != null) {
-      final parsed = double.tryParse(_currentQrData.amount!);
-      if (parsed != null) amountInPaise = (parsed * 100).toInt();
-    }
-
-    if (amountInPaise <= 0) {
-      AnimatedTopToast.show(
-        context: context,
-        message: 'Invalid payment amount. Please regenerate QR.',
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
-      );
-      return;
-    }
-
-    final options = {
-      'key': ApiConstants.razorpayKeyId,
-      'amount': amountInPaise,
-      'name': 'My Ride',
-      'description': 'Booking #${widget.bookingId}',
-      'theme': {'color': '#1A237E'},
-    };
+    // 2. Clear all saved ride data and stop booking polling
     try {
-      _razorpay.open(options);
-    } catch (e) {
-      debugPrint('Razorpay open error: $e');
-      AnimatedTopToast.show(
-        context: context,
-        message: 'Could not open Razorpay. Please try QR payment.',
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
-      );
-    }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(ApiConstants.bookingid);
+      await prefs.remove(ApiConstants.acceptedtrip);
+      await prefs.remove('booking_id');
+      await prefs.remove('trip_data');
+      await HomeController.clearRideData();
+
+      widget.homeController.savedTripData = null;
+      widget.homeController.savedAcceptData = null;
+      widget.homeController.trackRideModel = null;
+      widget.homeController.driverBookingActivesModel = null;
+      widget.homeController.hasActiveRide = false;
+      widget.homeController.isIncomingScreenOpen = false;
+      widget.homeController.computedDistance = '';
+      widget.homeController.computedDuration = '';
+      widget.homeController.estimatePrice = '';
+      widget.homeController.estimateDistance = '';
+      widget.homeController.estimateDuration = '';
+      widget.homeController.resetRideState();
+      widget.homeController.stopListeningBookings();
+
+      try {
+        Get.find<ProfileController>().tripDetailsModel = null;
+      } catch (_) {}
+    } catch (_) {}
+
+    // 3. Let the thank-you message display for 2 seconds
+    await Future.delayed(const Duration(seconds: 2));
+
+    // 4. Navigate to home — closes the sheet and replaces entire stack
+    Get.offAllNamed(RouteHelper.getHomeScreen());
   }
+
+  Widget _buildThankYouView() {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: MediaQuery.of(context).padding.bottom + 32,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Drag handle — matches other bottom sheets
+          Container(
+            height: 5,
+            width: 50,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.check_circle_rounded,
+              color: Colors.green.shade600,
+              size: 64,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Payment Successful!',
+            style: PoppinsBold.copyWith(fontSize: 20, color: Colors.black87),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Thank you for choosing us!',
+            textAlign: TextAlign.center,
+            style: PoppinsReguler.copyWith(fontSize: 15, color: Colors.black54),
+          ),
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+
+
 
   String _formatTime(int seconds) {
     if (seconds <= 0) return '00:00';
@@ -255,7 +272,6 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
 
   @override
   void dispose() {
-    _razorpay.clear();
     _pollTimer?.cancel();
     _countdownTimer?.cancel();
     super.dispose();
@@ -263,6 +279,8 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isPaymentConfirmed) return _buildThankYouView();
+
     final qr = _currentQrData;
     final hasQr = (qr.imageUrl ?? '').isNotEmpty;
 
@@ -345,192 +363,108 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
 
             const SizedBox(height: 18),
 
-            // --- Success state ---
-            if (isPaid) ...[
+            // --- QR Code section ---
+            if (hasQr) ...[
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 24),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
                 child: Column(
                   children: [
-                    const Icon(
-                      Icons.check_circle_rounded,
-                      color: Colors.green,
-                      size: 72,
+                    QrImageView(
+                      data: qr.imageUrl!,
+                      version: QrVersions.auto,
+                      size: 210,
+                      backgroundColor: Colors.white,
+                      errorCorrectionLevel: QrErrorCorrectLevel.M,
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Payment Received!',
-                      style: PoppinsSemiBold.copyWith(
-                        fontSize: 18,
-                        color: Colors.green,
+
+                    const SizedBox(height: 10),
+
+                    // Timer row
+                    if (_remainingSeconds > 0)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.timer_outlined,
+                            size: 15,
+                            color: Colors.orange,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Expires in ${_formatTime(_remainingSeconds)}',
+                            style: PoppinsReguler.copyWith(
+                              fontSize: 12,
+                              color: Colors.orange,
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      Column(
+                        children: [
+                          Text(
+                            'QR Expired',
+                            style: PoppinsReguler.copyWith(
+                              fontSize: 12,
+                              color: Colors.red,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: isRegenerating ? null : _regenerateQr,
+                              icon: isRegenerating
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.refresh, size: 18),
+                              label: Text(
+                                isRegenerating ? 'Regenerating...' : 'Regenerate QR',
+                                style: PoppinsSemiBold.copyWith(fontSize: 13),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: ColorResources.appColor,
+                                side: BorderSide(color: ColorResources.appColor),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Completing your ride...',
-                      style: PoppinsReguler.copyWith(
-                        fontSize: 13,
-                        color: Colors.black54,
-                      ),
-                    ),
                   ],
                 ),
               ),
+
+              const SizedBox(height: 10),
+
+              Text(
+                'Show this QR to the passenger — they scan & pay with any UPI app',
+                textAlign: TextAlign.center,
+                style: PoppinsReguler.copyWith(
+                  fontSize: 12,
+                  color: Colors.black54,
+                ),
+              ),
+
+              const SizedBox(height: 18),
             ] else ...[
-              // --- QR Code section ---
-              if (hasQr) ...[
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        blurRadius: 14,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      QrImageView(
-                        data: qr.imageUrl!,
-                        version: QrVersions.auto,
-                        size: 210,
-                        backgroundColor: Colors.white,
-                        errorCorrectionLevel: QrErrorCorrectLevel.M,
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      // Timer row
-                      if (_remainingSeconds > 0)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.timer_outlined,
-                              size: 15,
-                              color: Colors.orange,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Expires in ${_formatTime(_remainingSeconds)}',
-                              style: PoppinsReguler.copyWith(
-                                fontSize: 12,
-                                color: Colors.orange,
-                              ),
-                            ),
-                          ],
-                        )
-                      else
-                        Column(
-                          children: [
-                            Text(
-                              'QR Expired',
-                              style: PoppinsReguler.copyWith(
-                                fontSize: 12,
-                                color: Colors.red,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            // Regenerate button when expired
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: isRegenerating ? null : _regenerateQr,
-                                icon: isRegenerating
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
-                                      )
-                                    : const Icon(Icons.refresh, size: 18),
-                                label: Text(
-                                  isRegenerating ? 'Regenerating...' : 'Regenerate QR',
-                                  style: PoppinsSemiBold.copyWith(fontSize: 13),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: ColorResources.appColor,
-                                  side: BorderSide(color: ColorResources.appColor),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-                Text(
-                  'Show this QR to the passenger — they scan & pay with any UPI app',
-                  textAlign: TextAlign.center,
-                  style: PoppinsReguler.copyWith(
-                    fontSize: 12,
-                    color: Colors.black54,
-                  ),
-                ),
-
-                const SizedBox(height: 18),
-
-                // Verify Payment button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: isVerifying ? null : () => _checkPayment(silent: false),
-                    icon: isVerifying
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.verified_outlined, color: Colors.white),
-                    label: Text(
-                      isVerifying ? 'Checking...' : 'Verify Payment',
-                      style: PoppinsSemiBold.copyWith(color: Colors.white, fontSize: 15),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: ColorResources.appColor,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                // OR divider
-                Row(
-                  children: [
-                    const Expanded(child: Divider()),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Text(
-                        'OR',
-                        style: PoppinsReguler.copyWith(
-                          color: Colors.black38,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    const Expanded(child: Divider()),
-                  ],
-                ),
-
-                const SizedBox(height: 14),
-              ] else ...[
                 // QR not generated — show regenerate option
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
@@ -597,65 +531,7 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
                 ),
 
                 const SizedBox(height: 18),
-
-                // OR divider
-                Row(
-                  children: [
-                    const Expanded(child: Divider()),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Text(
-                        'OR',
-                        style: PoppinsReguler.copyWith(
-                          color: Colors.black38,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    const Expanded(child: Divider()),
-                  ],
-                ),
-
-                const SizedBox(height: 14),
               ],
-
-              // Pay with Razorpay button
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: _openRazorpay,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    side: BorderSide(color: Colors.grey.shade400),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Image.asset(
-                        'assets/images/razorpay_logo.png',
-                        height: 20,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.payment,
-                          color: Colors.black87,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Pay with Razorpay',
-                        style: PoppinsSemiBold.copyWith(
-                          color: Colors.black87,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
 
             const SizedBox(height: 8),
           ],

@@ -19,6 +19,10 @@ class HomeRepo extends GetxService {
     return apiClient.getDataApi(ApiConstants.driverStatus);
   }
 
+  Future<Response> getDriverProfile() async {
+    return apiClient.getDataApi(ApiConstants.getUserProfileUrl);
+  }
+
   Future<Response> newBookingNearByMe() async {
     return apiClient.getDataApi(ApiConstants.newBookingLUrl);
   }
@@ -104,6 +108,12 @@ Future<Response> completeRide({String? bookingid, String source = 'offline'}) as
       "booking_id": bookingId.toString(),
       "qr_id": qrId.toString(),
     });
+  }
+
+  Future<Response> checkPaymentStatus({required String bookingId}) async {
+    return apiClient.getDataalltypeApi(
+      '${ApiConstants.paymentStatus}/$bookingId',
+    );
   }
 
 ///======= Estimate Ride List ===========

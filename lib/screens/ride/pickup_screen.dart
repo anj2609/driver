@@ -792,12 +792,51 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
             );
           }
 
-          controller.calculateETA(
-            driverLat: driverLatitude,
-            driverLng: driverLongitude,
-            userLat: rideData.lat,
-            userLng: rideData.lng,
-          );
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            controller.calculateETA(
+              driverLat: driverLatitude,
+              driverLng: driverLongitude,
+              userLat: rideData.lat,
+              userLng: rideData.lng,
+            );
+
+            // Fetch estimate ride data (distance, time, price) from API
+            if (controller.estimatePrice.isEmpty &&
+                rideData.lat != null && rideData.lng != null) {
+              // Drop coordinates come from trip-detail API (ProfileController), not track-booking-ride
+              try {
+                final profileCtrl = Get.find<ProfileController>();
+                final tripData = profileCtrl.tripDetailsModel?.data;
+                if (tripData?.dropLat != null && tripData?.dropLng != null) {
+                  controller.fetchEstimateRideData(
+                    pickupLat: rideData.lat!,
+                    pickupLng: rideData.lng!,
+                    dropLat: tripData!.dropLat!,
+                    dropLng: tripData.dropLng!,
+                  );
+                } else {
+                  // Trip details not loaded yet — fetch them first, then estimate
+                  final bookingId = rideData.bookingId?.toString() ?? '';
+                  if (bookingId.isNotEmpty) {
+                    profileCtrl.tripRideDetailsApi(
+                      context: context,
+                      bookingid: bookingId,
+                    ).then((_) {
+                      final td = profileCtrl.tripDetailsModel?.data;
+                      if (td?.dropLat != null && td?.dropLng != null) {
+                        controller.fetchEstimateRideData(
+                          pickupLat: rideData.lat!,
+                          pickupLng: rideData.lng!,
+                          dropLat: td!.dropLat!,
+                          dropLng: td.dropLng!,
+                        );
+                      }
+                    });
+                  }
+                }
+              } catch (_) {}
+            }
+          });
 
           // Sync isArrived from backend status (e.g. admin changed to 'arrived')
           final backendStatus = rideData.status?.toLowerCase() ?? '';
@@ -902,7 +941,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                       const SizedBox(height: 4),
 
                       Text(
-                        'Distance: ${controller.computedDistance.isNotEmpty ? controller.computedDistance : (rideData.distance ?? controller.totaldestance ?? '0')} km',
+                        'Distance: ${controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'} km',
                         style: PoppinsSemiBold.copyWith(
                           color: ColorResources.whiteColor,
                         ),
@@ -991,11 +1030,9 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
                               Chip(
                                 label: Text(
-                                  controller.computedDuration.isNotEmpty
-                                      ? '${controller.computedDuration} Min'
-                                      : (controller.totaltime.isEmpty
-                                          ? '0 Min'
-                                          : '${controller.totaltime} Min'),
+                                  controller.estimateDuration.isNotEmpty
+                                      ? controller.estimateDuration
+                                      : '—',
                                 ),
                               ),
                             ],
@@ -1028,7 +1065,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       const SizedBox(height: 5),
 
                                       Text(
-                                        '${controller.computedDistance.isNotEmpty ? controller.computedDistance : (rideData.distance ?? controller.totaldestance ?? "0")} km',
+                                        '${controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'} km',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                         ),
@@ -1062,7 +1099,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       const SizedBox(height: 5),
 
                                       Text(
-                                        '₹ ${rideData.totalFare ?? "0"}',
+                                        '₹ ${controller.estimatePrice.isNotEmpty ? controller.estimatePrice : '—'}',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                           color: ColorResources.blackcolor11,

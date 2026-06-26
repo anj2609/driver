@@ -77,6 +77,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           builder: (_) => OnlinePaymentSheet(
             bookingId: _bookingId,
             qrData: qrData,
+            homeController: controller,
           ),
         );
       }

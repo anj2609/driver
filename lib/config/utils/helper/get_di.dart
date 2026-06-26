@@ -28,7 +28,7 @@ Future<Map<String, Map<String, String>>> init() async {
   Get.lazyPut(() => ChatRepo(apiClient: Get.find()));
   Get.lazyPut(() => (apiClient: Get.find(), sharedPreferences: Get.find()));
   
-  Get.lazyPut(() => HomeRepo(apiClient: Get.find()));
+  Get.lazyPut(() => HomeRepo(apiClient: Get.find()), fenix: true);
   Get.lazyPut<HomeController>(
     () => HomeController(homeRepo: Get.find()),
     fenix: true,
@@ -37,7 +37,7 @@ Future<Map<String, Map<String, String>>> init() async {
   ///Get.lazyPut(() => HomeController(homeRepo: Get.find()));
   Get.lazyPut(() => ChatController(chatRepo: Get.find()));
 
-  Get.lazyPut(() => ProfiileRepo(apiClient: Get.find()));
-  Get.lazyPut(() => ProfileController(profileRepo: Get.find()));
+  Get.lazyPut(() => ProfiileRepo(apiClient: Get.find()), fenix: true);
+  Get.lazyPut(() => ProfileController(profileRepo: Get.find()), fenix: true);
   return _languages;
 }

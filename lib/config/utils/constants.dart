@@ -82,6 +82,7 @@ class ApiConstants {
   static const String getvehicleInfo = 'get-vehicle-info';
   static const String genrateQrCode = 'generate-qr-payment';
   static const String verifyQrPayment = 'verify-qr-payment';
+  static const String paymentStatus = 'payment-status';
   static const String razorpayKeyId = 'rzp_test_T300vQB506EcW8';
   static const String driverEarningActivityDetails =
       'driver-earning-activity-list';

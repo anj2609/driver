@@ -39,6 +39,8 @@ class HomeController extends GetxController {
   bool isActiveLoading = false;
   bool isRingtonePlaying = false;
   bool hasActiveRide = false;
+  // true once the ringtone has played for the current ride batch; resets when trips clear
+  bool _rideRingtoneHasPlayed = false;
 
   StreamSubscription<Position>? positionStream;
   NewBookingNearByListModel? newBookingNearByModel;
@@ -78,14 +80,19 @@ class HomeController extends GetxController {
   StreamSubscription<Position>? positionStreams;
   GoogleMapController? mapController;
 
+  bool _isInitialized = false;
+
   @override
   void onInit() {
     super.onInit();
+    if (_isInitialized) return;
+    _isInitialized = true;
+
     startLocationUpdates();
     startAutoUpdate();
     loadCustomMarker();
     loadUserMarker();
-    driverStatusOnlineOffline(context: Get.context!);
+    // Online status is restored from SharedPreferences via loadSavedStatus() below
     loadSavedStatus();
     stopLiveTracking();
     loadOnlineStatus();
@@ -241,53 +248,78 @@ class HomeController extends GetxController {
 
   void startListeningBookings() {
     stopListeningBookings();
+    // Fire immediately so the driver sees nearby rides the moment they go online
+    _pollNearbyBookings();
+    _dummyTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollNearbyBookings());
+  }
 
-    _dummyTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      if (!isOnline) return;
+  Future<void> _pollNearbyBookings() async {
+    if (!isOnline) return;
 
-      try {
-        Response response = await homeRepo.newBookingNearByMe();
-
-        if (response.statusCode == 200 && response.body['code'] == "200") {
-          List data = response.body['data'] ?? [];
-
-          List<NewBookingNearByModel> apiTrips = data
-              .map((trip) => NewBookingNearByModel.fromJson(trip))
-              .toList();
-
-          incomingTrips.clear();
-
-          incomingTrips.addAll(apiTrips);
-
-          print("Incoming Trips: ${incomingTrips.length}");
-
-          if (incomingTrips.isNotEmpty) {
-            playRingtone();
-          } else {
-            stopRingtone();
-            isIncomingScreenOpen = false;
-          }
-
-          if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
-            isIncomingScreenOpen = true;
-
-            Get.to(
-              () => IncomingBookingScreen(trips: incomingTrips),
-            )?.then((_) {
-              isIncomingScreenOpen = false;
-              stopRingtone();
-            });
-          }
-
-          update();
+    // Do not search if the driver is busy with an accepted/ongoing ride
+    try {
+      final profileRes = await homeRepo.getDriverProfile();
+      if (profileRes.statusCode == 200 && profileRes.body != null) {
+        final profileData = profileRes.body['data'];
+        final isBusy = profileData?['is_busy'];
+        if (isBusy == true || isBusy == 1 || isBusy?.toString() == '1') {
+          debugPrint('Driver is_busy — skipping new-booking-list poll');
+          return;
         }
-      } catch (e) {
-        debugPrint("Booking fetch error: $e");
       }
-    });
+    } catch (_) {
+      // Profile check failed — skip poll to be safe
+      return;
+    }
+
+    try {
+      Response response = await homeRepo.newBookingNearByMe();
+
+      if (response.statusCode == 200 && response.body['code'] == "200") {
+        List data = response.body['data'] ?? [];
+
+        List<NewBookingNearByModel> apiTrips = data
+            .map((trip) => NewBookingNearByModel.fromJson(trip))
+            .toList();
+
+        incomingTrips.clear();
+        incomingTrips.addAll(apiTrips);
+
+        if (incomingTrips.isNotEmpty) {
+          if (!_rideRingtoneHasPlayed) {
+            _rideRingtoneHasPlayed = true;
+            playRingtone();
+          }
+        } else {
+          _rideRingtoneHasPlayed = false;
+          stopRingtone();
+          isIncomingScreenOpen = false;
+        }
+
+        if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
+          isIncomingScreenOpen = true;
+          Get.to(
+            () => IncomingBookingScreen(trips: incomingTrips),
+          )?.then((_) {
+            isIncomingScreenOpen = false;
+            stopRingtone();
+          });
+        }
+
+        update();
+      }
+    } catch (e) {
+      debugPrint("Booking fetch error: $e");
+    }
   }
 
   ////////acceptRideUrl
+
+  void resetRideState() {
+    _rideRingtoneHasPlayed = false;
+    incomingTrips.clear();
+    stopRingtone();
+  }
 
   void stopListeningBookings() {
     _dummyTimer?.cancel();
@@ -306,7 +338,7 @@ class HomeController extends GetxController {
         await _player.release();
       } catch (_) {}
 
-      await _player.setReleaseMode(ReleaseMode.loop);
+      await _player.setReleaseMode(ReleaseMode.release);
       await _player.play(AssetSource('sound/ringtone.mp3'));
     } catch (e) {
       debugPrint('playRingtone error: $e');
@@ -315,9 +347,9 @@ class HomeController extends GetxController {
       return;
     }
 
-    // Auto-stop after 30 seconds so it doesn't ring indefinitely
+    // Auto-stop after 3 seconds
     _ringtoneTimer?.cancel();
-    _ringtoneTimer = Timer(const Duration(seconds: 30), () {
+    _ringtoneTimer = Timer(const Duration(seconds: 3), () {
       stopRingtone();
     });
   }
@@ -334,6 +366,7 @@ class HomeController extends GetxController {
   }
 
   void acceptTrip(NewBookingNearByModel trip) async {
+    _rideRingtoneHasPlayed = false;
     stopRingtone();
     acceptedTrip.clear();
     acceptedTrip.add(trip);
@@ -347,13 +380,14 @@ class HomeController extends GetxController {
 
     stopListeningBookings();
 
-    Get.snackbar("Success", "Trip Accepted");
+
   }
 
   void rejectTrip(NewBookingNearByModel trip) {
     incomingTrips.remove(trip);
 
     if (incomingTrips.isEmpty) {
+      _rideRingtoneHasPlayed = false;
       stopRingtone();
       isIncomingScreenOpen = false;
 
@@ -446,12 +480,6 @@ class HomeController extends GetxController {
       isLoading = false;
       update();
     } else {
-       AnimatedTopToast.show(
-        context: context,
-        message: 'Unable to update your status. Please try again.',
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
-      );
       // Get.snackbar(
       //   '',
       //   response.body['message'] ?? "Something went wrong",
@@ -507,12 +535,7 @@ class HomeController extends GetxController {
         isIncomingScreenOpen = false;
 
         stopListeningBookings();
-         AnimatedTopToast.show(
-        context: context,
-        message: 'Trip accepted! Heading to pickup.',
-        backgroundColor: ColorResources.blueeebutton,
-        icon: Icons.check_circle_rounded,
-      );
+
 
       //  Get.snackbar("Success", "Trip Accepted");
         prefs.setString(ApiConstants.acceptedtrip, jsonEncode(trips!.toJson()));
@@ -603,9 +626,6 @@ class HomeController extends GetxController {
             '';
 
         if (code == '200') {
-          // Close the cancel bottom sheet
-          if (Get.isBottomSheetOpen ?? false) Get.back();
-
           // Clear all saved ride data
           final prefs = await SharedPreferences.getInstance();
           await prefs.remove(ApiConstants.bookingid);
@@ -635,15 +655,7 @@ class HomeController extends GetxController {
           // Stop ringtone if playing
           stopRingtone();
 
-          // Show success toast
-          AnimatedTopToast.show(
-            context: context,
-            message: 'Ride has been cancelled successfully.',
-            backgroundColor: ColorResources.blueeebutton,
-            icon: Icons.check_circle_rounded,
-          );
-
-          // Navigate to home screen
+          // Navigate to home screen first (clears all routes including bottom sheet)
           Get.offAllNamed(RouteHelper.getHomeScreen());
 
           // Restart listening for new bookings if driver is still online
@@ -655,30 +667,33 @@ class HomeController extends GetxController {
           return response;
         } else {
           // API returned a non-200 code
-          AnimatedTopToast.show(
-            context: context,
-            message: 'Unable to cancel ride right now. Please try again.',
+          Get.snackbar(
+            'Cancel Failed',
+            'Unable to cancel ride right now. Please try again.',
             backgroundColor: ColorResources.redbuttoncolor,
-            icon: Icons.error_rounded,
+            colorText: Colors.white,
+            snackPosition: SnackPosition.TOP,
           );
           return response;
         }
       } else {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Server error. Please try again.',
+        Get.snackbar(
+          'Error',
+          'Server error. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
         );
         return response;
       }
     } catch (e) {
       debugPrint('cancleRideByDriver error: $e');
-      AnimatedTopToast.show(
-        context: context,
-        message: 'Something went wrong. Please try again.',
+      Get.snackbar(
+        'Error',
+        'Something went wrong. Please try again.',
         backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
+        colorText: Colors.white,
+        snackPosition: SnackPosition.TOP,
       );
       rethrow;
     }
@@ -905,12 +920,7 @@ class HomeController extends GetxController {
         //   colorText: Colors.white,
         //   snackPosition: SnackPosition.TOP,
         // );
-        AnimatedTopToast.show(
-          context: context,
-          message: 'You have arrived at the pickup location.',
-          backgroundColor: ColorResources.blueeebutton,
-          icon: Icons.check_circle_rounded,
-        );
+
 
         update();
         return response;
@@ -926,13 +936,6 @@ class HomeController extends GetxController {
 
         return response;
       } else {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Could not update arrival status. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-
         return response;
       }
     } catch (e) {
@@ -956,12 +959,7 @@ class HomeController extends GetxController {
           response.body != null &&
           response.body['code']?.toString() == '200') {
 
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Ride completed! Great job.',
-          backgroundColor: ColorResources.blueeebutton,
-          icon: Icons.check_circle_rounded,
-        );
+
 
         // Clear saved ride data from SharedPreferences
         final prefs = await SharedPreferences.getInstance();
@@ -1036,9 +1034,13 @@ class HomeController extends GetxController {
   }) async {
     try {
       final response = await homeRepo.generateQrCode(bookingId: bookingId);
-      if (response.statusCode == 200 &&
-          response.body != null &&
-          response.body['code']?.toString() == '200') {
+      final body = response.body;
+      final isSuccess = response.statusCode == 200 &&
+          body != null &&
+          (body['code']?.toString() == '200' ||
+              body['status'] == true ||
+              body['status']?.toString() == 'true');
+      if (isSuccess) {
         final model = QrPaymentModel.fromJson(response.body);
         return model.data;
       } else {
@@ -1057,7 +1059,6 @@ class HomeController extends GetxController {
   }
 
   Future<bool> verifyOnlinePayment({
-    required BuildContext context,
     required String bookingId,
     required String qrId,
   }) async {
@@ -1066,14 +1067,28 @@ class HomeController extends GetxController {
         bookingId: bookingId,
         qrId: qrId,
       );
-      if (response.statusCode == 200 &&
-          response.body != null &&
-          response.body['code']?.toString() == '200') {
-        return true;
-      }
-      return false;
+      debugPrint('verify-qr-payment response: ${response.body}');
+      if (response.body == null) return false;
+      final data = response.body['data'];
+      final isPaid = data?['is_paid']?.toString() ?? response.body['is_paid']?.toString();
+      return isPaid == '1';
     } catch (e) {
       debugPrint('verifyOnlinePayment error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> checkPaymentStatusById({required String bookingId}) async {
+    try {
+      final response = await homeRepo.checkPaymentStatus(bookingId: bookingId);
+      debugPrint('payment-status response: ${response.body}');
+      if (response.body == null) return false;
+      final data = response.body['data'];
+      if (data == null) return false;
+      final isPaid = data['is_paid'];
+      return isPaid == true || isPaid == 1 || isPaid?.toString() == '1';
+    } catch (e) {
+      debugPrint('checkPaymentStatusById error: $e');
       return false;
     }
   }
@@ -1125,13 +1140,6 @@ class HomeController extends GetxController {
 
         return response;
       } else {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Invalid OTP. Please check and try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-
         return response;
       }
     } catch (e) {
@@ -1535,7 +1543,7 @@ class HomeController extends GetxController {
 
           debugPrint('Google Directions: Distance=$computedDistance km, Duration=$computedDuration min');
 
-          update();
+          WidgetsBinding.instance.addPostFrameCallback((_) => update());
         }
       }
     } catch (e) {
@@ -1579,7 +1587,7 @@ class HomeController extends GetxController {
     totaltime = timeMinutes.round().toString();
     computedDistance = totaldestance!;
     computedDuration = totaltime;
-    update();
+    WidgetsBinding.instance.addPostFrameCallback((_) => update());
   }
 
   void calculateETA({

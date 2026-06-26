@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
@@ -85,7 +86,23 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
         ),
       ),
 
-      body: GetBuilder<HomeController>(
+      body: !Get.isRegistered<HomeController>()
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('Session expired. Returning to home...'),
+                  const SizedBox(height: 16),
+                  Builder(builder: (ctx) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      Get.offAllNamed(RouteHelper.getHomeScreen());
+                    });
+                    return const PremiumBlurLoader();
+                  }),
+                ],
+              ),
+            )
+          : GetBuilder<HomeController>(
         init: Get.find<HomeController>(),
         builder: (homeController) {
           final acceptData = homeController.trackRideModel;
@@ -120,33 +137,18 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
               // Price from estimate API
               final String ridePrice = homeController.estimatePrice;
 
-              // Distance: prefer estimate API → Google Directions → track API
-              final String distance = _getValidValue(
-                homeController.estimateDistance,
-                _getValidValue(
-                  homeController.computedDistance,
-                  _getValidValue(
-                    acceptData.data?.distance,
-                    tripData?.distance?.toString(),
-                  ),
-                ),
-              );
+              // Distance from estimate API only
+              final String distance = homeController.estimateDistance;
 
-              // Duration: prefer estimate API → Google Directions → track API
-              final String rawDuration = _getValidValue(
-                homeController.estimateDuration,
-                _getValidValue(
-                  homeController.computedDuration,
-                  acceptData.data?.time,
-                ),
-              );
+              // Duration from estimate API only
+              final String rawDuration = homeController.estimateDuration;
 
-              final String distanceText = (distance.isNotEmpty && distance != '0')
-                  ? '$distance km' : 'N/A';
+              final String distanceText = distance.isNotEmpty
+                  ? '$distance km' : '—';
               // estimateDuration already contains "3 mins" format
-              final String durationText = (rawDuration.isNotEmpty && rawDuration != '0')
-                  ? (rawDuration.contains('min') ? rawDuration : '$rawDuration min')
-                  : 'N/A';
+              final String durationText = rawDuration.isNotEmpty
+                  ? rawDuration
+                  : '—';
 
               return SingleChildScrollView(
                 padding: EdgeInsets.all(width * 0.04),

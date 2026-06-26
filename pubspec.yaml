@@ -1,5 +1,5 @@
 name: myridedriverapp
-description: "A new Flutter project."
+description: "NRide Driver - Accept rides, navigate to passengers, and manage your earnings."
 publish_to: 'none'
 
 version: 1.0.0+1

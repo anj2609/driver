@@ -72,8 +72,6 @@ class _SplashScreenState extends State<SplashScreen>
 
       controller.setWorkStatus(workStatus);
 
-      controller.driverStatusOnlineOffline(context: Get.context!);
-
       Get.offAllNamed(RouteHelper.gethomescreen());
 
       return;

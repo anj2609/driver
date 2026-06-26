@@ -15,6 +15,7 @@ import 'package:myridedriverapp/screens/home/ridedetails_screen.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 import 'package:myridedriverapp/widgets/online_payment_sheet.dart';
+import 'package:myridedriverapp/widgets/onlineoffline_custombutton.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
 
 class StartDriverRideScreen extends StatefulWidget {
@@ -34,6 +35,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
   GoogleMapController? mapController;
   bool isNavigating = false;
   bool _isPaymentProcessing = false;
+  bool _isPaymentDone = false;
 
   Set<Marker> markers = {};
 
@@ -109,8 +111,11 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
           builder: (_) => OnlinePaymentSheet(
             bookingId: bookingId,
             qrData: qrData,
+            homeController: controller,
           ),
         );
+        // Sheet dismissed — payment flow done; show toggle-only view
+        if (mounted) setState(() => _isPaymentDone = true);
       } else if (qrData == null && context.mounted) {
         AnimatedTopToast.show(
           context: context,
@@ -219,9 +224,24 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
         );
       }
     } finally {
-      if (Get.isDialogOpen ?? false) Get.back();
-      if (mounted) setState(() => _isPaymentProcessing = false);
+      if (Get.isDialogOpen ?? false) { Get.back(); }
+      if (mounted) {
+        setState(() {
+          _isPaymentProcessing = false;
+          _isPaymentDone = true;
+        });
+      }
     }
+  }
+
+  Widget _buildPostPaymentToggle(HomeController controller) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: OnlineToggleButton(
+        isOnline: controller.isOnline,
+        onTap: () => controller.toggleOnline(controller.isOnline, context),
+      ),
+    );
   }
 
   @override
@@ -235,12 +255,14 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
             return Center(child: PremiumBlurLoader());
           }
 
-          controller.calculateETA(
-            driverLat: driverLatitude,
-            driverLng: driverLongitude,
-            userLat: data.data!.lat,
-            userLng: data.data!.lng,
-          );
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            controller.calculateETA(
+              driverLat: driverLatitude,
+              driverLng: driverLongitude,
+              userLat: data.data!.lat,
+              userLng: data.data!.lng,
+            );
+          });
 
           final bookingId = data.data!.bookingId.toString();
           final totalFare = data.data?.totalFare?.toString() ?? '0';
@@ -358,165 +380,160 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
                       ),
                     ],
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      /// Ride info row
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.shade100,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
+                  child: _isPaymentDone
+                      ? _buildPostPaymentToggle(controller)
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            /// Ride info row
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Icon(
-                                  Icons.access_time,
-                                  size: 14,
-                                  color: Colors.orange,
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.shade100,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.access_time,
+                                        size: 14,
+                                        color: Colors.orange,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        controller.estimateDuration.isNotEmpty
+                                            ? controller.estimateDuration
+                                            : '—',
+                                        style: PoppinsSemiBold.copyWith(
+                                          fontSize: 12,
+                                          color: Colors.orange.shade800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  controller.computedDuration.isNotEmpty
-                                      ? '${controller.computedDuration} min'
-                                      : (controller.totaltime.isEmpty
-                                          ? '0 min'
-                                          : '${controller.totaltime} min'),
-                                  style: PoppinsSemiBold.copyWith(
-                                    fontSize: 12,
-                                    color: Colors.orange.shade800,
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: ColorResources.appColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    '₹$totalFare',
+                                    style: PoppinsBold.copyWith(
+                                      fontSize: 16,
+                                      color: ColorResources.appColor,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                          /// Total fare badge
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: ColorResources.appColor.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '₹$totalFare',
-                              style: PoppinsBold.copyWith(
-                                fontSize: 16,
-                                color: ColorResources.appColor,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
 
-                      const SizedBox(height: 10),
+                            const SizedBox(height: 10),
 
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.location_on,
-                            color: Colors.red,
-                            size: 22,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '${data.data!.dropaddress}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: PoppinsReguler.copyWith(
-                                color: ColorResources.blackcolor11,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          GestureDetector(
-                            onTap: () async {
-                              String? id;
-                              setState(() {
-                                id = data.data?.bookingId?.toString() ?? "";
-                                bookingIdStore = data.data?.bookingId?.toString();
-                              });
-                              if (isNavigating) return;
-
-                              isNavigating = true;
-
-                              try {
-                                await Get.toNamed(
-                                  RouteHelper.getbookingTripDetailsScreen(),
-                                  arguments: {"bookingId": id},
-                                );
-                              } finally {
-                                isNavigating = false;
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: ColorResources.blackcolor11,
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.location_on,
+                                  color: Colors.red,
+                                  size: 22,
                                 ),
-                              ),
-                              child: Text(
-                                "Ride Details",
-                                style: PoppinsSemiBold.copyWith(
-                                  color: ColorResources.blackcolor11,
-                                  fontSize: 13,
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '${data.data!.dropaddress}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: PoppinsReguler.copyWith(
+                                      color: ColorResources.blackcolor11,
+                                      fontSize: 13,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(width: 12),
+                                GestureDetector(
+                                  onTap: () async {
+                                    String? id;
+                                    setState(() {
+                                      id = data.data?.bookingId?.toString() ?? "";
+                                      bookingIdStore = data.data?.bookingId?.toString();
+                                    });
+                                    if (isNavigating) return;
+                                    isNavigating = true;
+                                    try {
+                                      await Get.toNamed(
+                                        RouteHelper.getbookingTripDetailsScreen(),
+                                        arguments: {"bookingId": id},
+                                      );
+                                    } finally {
+                                      isNavigating = false;
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: ColorResources.blackcolor11,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      "Ride Details",
+                                      style: PoppinsSemiBold.copyWith(
+                                        color: ColorResources.blackcolor11,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
-                      ),
 
+                            const SizedBox(height: 12),
 
-
-
-                      /// Payment buttons
-                      if (_isPaymentProcessing)
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: CircularProgressIndicator(),
-                          ),
-                        )
-                      else
-                        Row(
-                          children: [
-                            /// Online Payment Button — always active
-                            Expanded(
-                              child: CustomPrimaryButton(
-                                text: 'Online Payment',
-                                onTap: () => _openOnlinePayment(controller, bookingId),
+                            /// Payment buttons
+                            if (_isPaymentProcessing)
+                              const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 12),
+                                  child: CircularProgressIndicator(),
+                                ),
+                              )
+                            else
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: CustomPrimaryButton(
+                                      text: 'Online Payment',
+                                      onTap: () => _openOnlinePayment(controller, bookingId),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: CustomPrimaryButton(
+                                      text: 'Cash Payment',
+                                      onTap: () => _completeCashRide(controller, bookingId, totalFare),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            /// Cash Payment Button — always active
-                            Expanded(
-                              child: CustomPrimaryButton(
-                                text: 'Cash Payment',
-                                onTap: () => _completeCashRide(controller, bookingId, totalFare),
-                              ),
-                            ),
+
+                            const SizedBox(height: 10),
                           ],
                         ),
-                      const SizedBox(height: 10),
-                    ],
-                  ),
                 ),
               ),
             ],

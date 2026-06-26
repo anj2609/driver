@@ -556,13 +556,7 @@ class AuthController extends GetxController implements GetxService {
 
       await Future.delayed(const Duration(milliseconds: 500));
 
-      Get.toNamed(
-        RouteHelper.getOtpVerification(mobileNumber, type),
-        arguments: {
-          "type": type.toString(),
-          "phoneNumber": mobileNumber.toString(),
-        },
-      );
+      RouteHelper.getOtpVerification(mobileNumber, type);
     } else if (response.statusCode == 500) {
       AnimatedTopToast.show(
         context: context,
@@ -604,7 +598,7 @@ class AuthController extends GetxController implements GetxService {
         icon: Icons.check_circle_rounded,
       );
       await Future.delayed(const Duration(milliseconds: 500));
-      Get.toNamed(RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserRegister));
+      RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserRegister);
       return;
     }
 
@@ -625,7 +619,7 @@ class AuthController extends GetxController implements GetxService {
         icon: Icons.check_circle_rounded,
       );
       await Future.delayed(const Duration(milliseconds: 500));
-      Get.toNamed(RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserLogin));
+      RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserLogin);
     } else {
       AnimatedTopToast.show(
         context: context,
@@ -850,17 +844,27 @@ class AuthController extends GetxController implements GetxService {
 }
 else if (code == "401") {
 
-  ApiConstants.userTokenSocial =
-      data?['token']?.toString() ?? "";
+  final token = data?['token']?.toString() ?? "";
+
+  // No token → wrong OTP, not a document-pending response
+  if (token.isEmpty) {
+    AnimatedTopToast.show(
+      context: context,
+      message: body?['message'] ?? 'Incorrect OTP. Please try again.',
+      backgroundColor: Colors.red,
+      icon: Icons.error_rounded,
+    );
+    return response;
+  }
+
+  ApiConstants.userTokenSocial = token;
 
   ApiConstants.userIdSocial =
       data?['id']?.toString() ?? "";
 
   // Persist token so auth headers survive app restart
-  if (ApiConstants.userTokenSocial.isNotEmpty) {
-    authRepo.saveUserToken(ApiConstants.userTokenSocial);
-    authRepo.saveUserprofileid(ApiConstants.userIdSocial);
-  }
+  authRepo.saveUserToken(ApiConstants.userTokenSocial);
+  authRepo.saveUserprofileid(ApiConstants.userIdSocial);
 
   Get.find<ProfileController>().fetchProfile();
 

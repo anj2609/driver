@@ -34,7 +34,8 @@ class QrPaymentData {
   QrPaymentData.fromJson(Map<String, dynamic> json) {
     qrId = json['qr_id']?.toString();
     qrCode = json['qr_code']?.toString();
-    imageUrl = json['image_url']?.toString();
+    // API may return upi_link instead of image_url — use whichever is present
+    imageUrl = json['image_url']?.toString() ?? json['upi_link']?.toString();
     amount = json['amount']?.toString();
     paymentAmount = json['payment_amount'] is int
         ? json['payment_amount'] as int
