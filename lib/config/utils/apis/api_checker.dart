@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:get/get.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
@@ -76,51 +74,13 @@ class ApiChecker {
     }
   }
 
+  // Interface-name based VPN detection was disabled: Google Play's review
+  // and pre-launch test devices expose tun-style interfaces even without a
+  // real VPN, which caused every API call (including OTP send) to be
+  // blocked with a false positive during app review.
   static Future<bool> isVpnActive() async {
-    bool isVpnActive;
-    List<NetworkInterface> interfaces = await NetworkInterface.list(
-      includeLoopback: false,
-      type: InternetAddressType.any,
-    );
-    interfaces.isNotEmpty
-        ? isVpnActive = interfaces.any(
-            (interface) =>
-                interface.name.contains("tun") ||
-                interface.name.contains("ppp") ||
-                interface.name.contains("pptp") ||
-                     interface.name.contains('ipsec'),
-       
-          )
-        : isVpnActive = false;
-
-    return isVpnActive;
+    return false;
   }
-
-//   static Future<bool> isVpnActive() async {
-//   try {
-//     final interfaces = await NetworkInterface.list(
-//       includeLoopback: false,
-//       type: InternetAddressType.any,
-//     );
-
-//     for (var interface in interfaces) {
-//       final name = interface.name.toLowerCase();
-
-//       // Only check strong VPN indicators
-//       if (name.contains('tun') ||
-//           name.contains('ppp') ||
-//           name.contains('ipsec') ||
-//           name.contains('utun')) {
-//         return true;
-//       }
-//     }
-//   } catch (e) {
-//     print("VPN check error: $e");
-//   }
-
-//   return false;
-// }
-
 
 
 }
