@@ -84,7 +84,14 @@ class AuthController extends GetxController implements GetxService {
   Future<void> initDeviceData() async {
     deviceType = Platform.isAndroid ? "android" : "ios";
 
-    deviceToken = await FirebaseMessaging.instance.getToken();
+    try {
+      deviceToken = await FirebaseMessaging.instance.getToken().timeout(
+        const Duration(seconds: 10),
+      );
+    } catch (e) {
+      deviceToken = null;
+      print("FCM getToken failed: $e");
+    }
 
     await saveDeviceData();
 

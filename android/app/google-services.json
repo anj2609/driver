@@ -88,11 +88,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "532090628700-acnvdgth802dnpf8mshnrro6gh0c4i47.apps.googleusercontent.com",
+          "client_id": "532090628700-a8drd7fslhemtik56v4sntinrqr1sfaq.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "online.nride.driver",
-            "certificate_hash": "bd3187e668ea7a5011947e41d11b4c51cfc7f70e"
+            "certificate_hash": "85e5f201c79ffe8142e145b02028dd1c28b78ae5"
           }
         },
         {
