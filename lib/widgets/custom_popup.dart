@@ -7,8 +7,15 @@ import 'package:myridedriverapp/config/utils/colors.dart';
 
 class CustomPopup extends StatelessWidget {
   final String status;
- 
-  const CustomPopup({Key? key, required this.status,}) : super(key: key);
+  final String buttonLabel;
+  final bool showCloseButton;
+
+  const CustomPopup({
+    Key? key,
+    required this.status,
+    this.buttonLabel = "Check Status",
+    this.showCloseButton = false,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +32,14 @@ class CustomPopup extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (showCloseButton)
+              Align(
+                alignment: Alignment.topRight,
+                child: GestureDetector(
+                  onTap: () => Get.back(),
+                  child: const Icon(Icons.close, size: 22, color: Colors.grey),
+                ),
+              ),
             Container(
               height: 80,
               width: 80,
@@ -92,10 +107,10 @@ class CustomPopup extends StatelessWidget {
                           ],
                   ),
                 ),
-                child: const Center(
+                child: Center(
                   child: Text(
-                    "Check Status",
-                    style: TextStyle(
+                    buttonLabel,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                     ),

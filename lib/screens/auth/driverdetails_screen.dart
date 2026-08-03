@@ -12,6 +12,7 @@ import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:intl/intl.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
+import 'package:myridedriverapp/widgets/image_source_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // String? driverprofileStatus;
@@ -42,11 +43,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   String? selectedBrand;
   String? selectedModel;
-
-  Map<String, List<String>> brandModels = {
-    "Toyota": ["Innova 2020", "Fortuner", "Etios"],
-    "Honda": ["City", "Amaze"],
-  };
 
   final TextEditingController registrationController = TextEditingController();
   final TextEditingController engineNumberController = TextEditingController();
@@ -93,10 +89,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   /// ---------------- IMAGE PICK FUNCTION ----------------
   Future<void> pickImage(bool isProfile) async {
-    final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
+    final File? picked = await pickImageFromSource(context);
 
     if (picked != null) {
-      File file = File(picked.path);
+      File file = picked;
 
       File? compressedFile = await compressTo50KB(file);
 
@@ -355,7 +351,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       height: 55,
       padding: const EdgeInsets.symmetric(horizontal: 15),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFEFF1),
+        color: const Color(0xFFF5F7FA),
         borderRadius: BorderRadius.circular(15),
       ),
       child: Row(
@@ -413,7 +409,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 CircleAvatar(
                   radius: 14,
                   backgroundColor: isCompleted || isActive
-                      ? Colors.blue
+                      ? const Color(0xFF123EBC)
                       : Colors.grey.shade300,
                   child: Text(
                     "${stepIndex + 1}",
@@ -451,7 +447,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               child: Container(
                 margin: const EdgeInsets.only(bottom: 20),
                 height: 2,
-                color: isCompleted ? Colors.blue : Colors.grey.shade300,
+                color: isCompleted ? const Color(0xFF123EBC) : Colors.grey.shade300,
               ),
             );
           }
@@ -771,7 +767,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ),
               GestureDetector(
                 onTap: onEdit,
-                child: const Text("Edit", style: TextStyle(color: Colors.blue)),
+                child: const Text("Edit", style: TextStyle(color: Color(0xFF123EBC))),
               ),
             ],
           ),
@@ -963,10 +959,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
               return;
             }
 
-            if (controller.selectedBrandName == null ||
-                controller.selectedBrandName!.isEmpty) {
+            if (brandController.text.trim().isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Please select vehicle brand")),
+                const SnackBar(content: Text("Vehicle brand is required")),
               );
               return;
             }
@@ -1013,7 +1008,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             final response = await Get.find<AuthController>().vehicaleInfoApi(
               vehicalid: controller.selectedVehicleTypeId.toString(),
               vehicalnumber: regController.text.trim(),
-              brand: controller.selectedBrandName.toString(),
+              brand: brandController.text.trim(),
               model: modelCOntroller.text.trim(),
               color: "",
               chassisnumber: chassisController.text.trim(),
@@ -1159,7 +1154,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: isSelected ? Colors.blue : Colors.transparent,
+                        color: isSelected ? const Color(0xFF123EBC) : Colors.transparent,
                         width: 2,
                       ),
                     ),
@@ -1188,7 +1183,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 fontSize: 16,
                                 fontWeight: FontWeight.w500,
                                 color: isSelected
-                                    ? Colors.blue
+                                    ? const Color(0xFF123EBC)
                                     : Colors.black87,
                               ),
                             ),
@@ -1202,7 +1197,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             child: Container(
                               padding: const EdgeInsets.all(2),
                               decoration: const BoxDecoration(
-                                color: Colors.blue,
+                                color: Color(0xFF123EBC),
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
@@ -1235,15 +1230,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           style: TextStyle(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
-        GetBuilder<AuthController>(
-          builder: (controller) {
-            return _buildDropdown(
-              value: controller.selectedBrandName,
-              hint: "Select Brand",
-              items: controller.brands.map((e) => e["name"]!).toList(),
-              onChanged: controller.selectBrand,
-            );
-          },
+        _buildTextField(
+          label: "Please Enter Brand",
+          controller: brandController,
         ),
 
         const SizedBox(height: 16),
@@ -1500,33 +1489,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
 
-
-  Widget _buildDropdown({
-    required String? value,
-    required String hint,
-    required List<String> items,
-    required Function(String?) onChanged,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          hint: Text(hint),
-          isExpanded: true,
-          icon: const Icon(Icons.keyboard_arrow_down),
-          items: items
-              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-              .toList(),
-          onChanged: onChanged,
-        ),
-      ),
-    );
-  }
 
   List<File> uploadedimages = [];
 

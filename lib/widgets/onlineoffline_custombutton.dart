@@ -92,7 +92,7 @@ class _OnlineToggleButtonState extends State<OnlineToggleButton> {
                       widget.isOnline
                           ? Icons.power_settings_new
                           : Icons.double_arrow,
-                      color: Colors.blue,
+                      color: const Color(0xFF123EBC),
                     ),
                   ),
                 ),

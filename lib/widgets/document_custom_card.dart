@@ -49,7 +49,7 @@ class DocumentCard extends StatelessWidget {
                           ? Icons.check_circle
                           : Icons.pending,
                       color: isApproved
-                          ? Colors.blue
+                          ? const Color(0xFF123EBC)
                           : Colors.orange,
                       size: 18,
                     ),
@@ -60,7 +60,7 @@ class DocumentCard extends StatelessWidget {
                           : "Pending",
                       style: TextStyle(
                         color: isApproved
-                            ? Colors.blue
+                            ? const Color(0xFF123EBC)
                             : Colors.orange,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,

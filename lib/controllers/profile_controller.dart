@@ -7,10 +7,12 @@ import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
+import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:myridedriverapp/model/aboutus_model.dart';
 import 'package:myridedriverapp/model/arningactivitylist_model.dart';
 import 'package:myridedriverapp/model/bankdetals_model.dart';
+import 'package:myridedriverapp/model/coupon_model.dart';
 import 'package:myridedriverapp/model/earning_model.dart';
 import 'package:myridedriverapp/model/notification_model.dart';
 import 'package:myridedriverapp/model/privacy_model.dart';
@@ -55,6 +57,10 @@ class ProfileController extends GetxController implements GetxService {
   bool isVehicleLoading = false;
   List<String> vehicleImages = [];
   bool isEarningLoading = false;
+
+  bool isCouponHistoryLoading = false;
+  bool hasCouponHistoryError = false;
+  List<CouponHistoryItem> couponHistoryList = [];
 
   EarningModels? earningModel;
 
@@ -839,6 +845,45 @@ class ProfileController extends GetxController implements GetxService {
     return response;
   }
 
+  Future<Response> getCouponHistoryApi({required BuildContext context}) async {
+    isCouponHistoryLoading = true;
+    hasCouponHistoryError = false;
+    update();
+
+    try {
+      final userId = ApiConstants.userIdSocial.isNotEmpty
+          ? ApiConstants.userIdSocial
+          : ((await SharedPreferences.getInstance())
+                  .getString(ApiConstants.profileid) ??
+              '');
+
+      Response response = await profileRepo.getCouponHistory(userId: userId);
+
+      if (response.statusCode == 200 &&
+          response.body['code'].toString() == '200') {
+        final data = response.body['data'];
+        couponHistoryList = data is List
+            ? data
+                .map((e) => CouponHistoryItem.fromJson(e))
+                .toList()
+            : [];
+      } else {
+        // Never surface the backend's raw message here — show a plain,
+        // user-facing explanation instead and let the screen render a
+        // proper error state (not just a toast) with a retry option.
+        hasCouponHistoryError = true;
+      }
+
+      return response;
+    } catch (e) {
+      hasCouponHistoryError = true;
+      return Response(statusCode: 0);
+    } finally {
+      isCouponHistoryLoading = false;
+      update();
+    }
+  }
+
   Future<Response> driverEarningHistory({
     required BuildContext context,
     required String type,
@@ -1076,14 +1121,20 @@ class ProfileController extends GetxController implements GetxService {
           bankDetailsData = null;
         }
       } else {
+        // A non-200 here (this backend represents "no data yet" the same
+        // way it represents real errors) almost always just means the
+        // driver hasn't added bank details yet — the screen already
+        // falls back to the add-bank form for that case, so a raw/red
+        // "Something went wrong" toast (via Get.snackbar's default,
+        // empty-title layout) was both alarming and visually broken.
+        // A plain, friendly prompt is all this needs.
         bankDetailsData = null;
 
-        Get.snackbar(
-          '',
-          response.body['message'] ?? "Something went wrong",
-          backgroundColor: ColorResources.textColorRed,
-          colorText: Colors.white,
-          snackPosition: SnackPosition.TOP,
+        AnimatedTopToast.show(
+          context: context,
+          message: "Please add your bank details to receive payments.",
+          backgroundColor: ColorResources.appColor,
+          icon: Icons.info_outline,
         );
       }
 

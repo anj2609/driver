@@ -18,12 +18,20 @@ final FlutterLocalNotificationsPlugin localNotifications =
     FlutterLocalNotificationsPlugin();
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
-void main() async {
+Future<void> _initializeCore() async {
+  await Firebase.initializeApp();
+  await di.init();
+}
+
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp();
+  // Kicked off without awaiting so Flutter can paint its first frame (and
+  // dismiss Android's mandatory native splash) immediately, instead of
+  // sitting on the OS splash for as long as Firebase/DI setup takes.
+  appInitialization = _initializeCore();
 
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.white,
@@ -32,7 +40,6 @@ void main() async {
     ),
   );
 
-  await di.init();
   runApp(MyApp());
   //configLoading();
 }
@@ -64,6 +71,12 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
+    // Firebase isn't ready until appInitialization resolves, so FCM setup
+    // has to wait for it rather than assuming it already completed.
+    appInitialization?.then((_) => _setupMessaging());
+  }
+
+  void _setupMessaging() {
     // App killed → user taps notification → app launches
     FirebaseMessaging.instance.getInitialMessage().then((message) {
       if (message != null) _handleFcmMessage(message);
@@ -118,6 +131,15 @@ class _MyAppState extends State<MyApp> {
     try {
       if (!_isApprovalMessage(message)) return;
       final prefs = await SharedPreferences.getInstance();
+
+      // A notification is not proof of a session: without this guard, a
+      // stale/test push landing on a fresh install (e.g. tapped while the
+      // app was killed, which is effectively a first open) would shove the
+      // user straight to Home with no login ever having happened. Only act
+      // on the message if this device actually holds a logged-in session.
+      final token = prefs.getString(ApiConstants.token);
+      if (token == null || token.isEmpty) return;
+
       await prefs.setString(ApiConstants.verificationStatus, 'approved');
       final home = RouteHelper.gethomescreen();
       if (Get.currentRoute != home) {
@@ -149,7 +171,7 @@ class _MyAppState extends State<MyApp> {
         RegExp(r'\b\d{4,8}\b').hasMatch(body) &&
         body.toLowerCase().contains('otp');
     if (hasOtpInData || bodyHasOtp) {
-      title = 'My Ride Verification';
+      title = 'Nride driver Verification';
       body = 'Tap to open the app and enter your verification code.';
     }
 

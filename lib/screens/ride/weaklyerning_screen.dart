@@ -155,7 +155,7 @@ class WeeklyEarningScreen extends StatelessWidget {
                                   ? Colors.grey.shade300
                                   : value == maxValue
                                   ? Colors.orange
-                                  : Colors.blue,
+                                  : const Color(0xFF123EBC),
                             ),
                           ],
                         );

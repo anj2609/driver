@@ -170,14 +170,14 @@ class DocumentCard extends StatelessWidget {
                   children: const [
                     Icon(
                       Icons.check_circle,
-                      color: Colors.blue,
+                      color: Color(0xFF123EBC),
                       size: 18,
                     ),
                     SizedBox(width: 6),
                     Text(
                       "Approved",
                       style: TextStyle(
-                        color: Colors.blue,
+                        color: Color(0xFF123EBC),
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),

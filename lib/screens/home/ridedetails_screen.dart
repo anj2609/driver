@@ -238,7 +238,7 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
                             icon: Icons.radio_button_checked,
                             title: acceptData.data?.pickupaddress ?? "",
                             subtitle: acceptData.data?.pickupaddress ?? "",
-                            iconColor: Colors.blue,
+                            iconColor: const Color(0xFF123EBC),
                           ),
                           const Divider(),
                           _locationTile(

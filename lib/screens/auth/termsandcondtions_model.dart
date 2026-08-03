@@ -190,7 +190,7 @@ class TermsAndConditionScreen extends StatelessWidget {
         text,
         style: PoppinsMedium.copyWith(
           fontSize: 13.5,
-          color: const Color(0xFF444444),
+          color: const Color(0xFF1F2937),
           height: 1.6,
         ),
       ),
@@ -290,7 +290,7 @@ class TermsAndConditionScreen extends StatelessWidget {
               text,
               style: PoppinsMedium.copyWith(
                 fontSize: 13.5,
-                color: const Color(0xFF444444),
+                color: const Color(0xFF1F2937),
                 height: 1.5,
               ),
             ),

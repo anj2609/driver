@@ -54,7 +54,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       if (!mounted) return;
 
       try {
-      await Get.find<HomeController>().driverBookingActives();
+        await Get.find<HomeController>().driverBookingActives();
       } catch (e) {
         debugPrint("TIMER ERROR => $e");
       }
@@ -368,7 +368,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                     18 + MediaQuery.of(context).padding.bottom,
                   ),
                   decoration: const BoxDecoration(
-                    color: Color(0xFFF5F5F5),
+                    color: Color(0xFFF5F7FA),
                     borderRadius: BorderRadius.vertical(
                       top: Radius.circular(25),
                     ),
@@ -388,26 +388,30 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.circle,
-                                size: 10,
-                                color: controller.isOnline
-                                    ? Colors.green
-                                    : Colors.red,
-                              ),
-                              const SizedBox(width: 10),
-                              Text(
-                                controller.isOnline
-                                    ? "You're Online"
-                                    : "You're Offline",
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.circle,
+                                  size: 10,
+                                  color: controller.isOnline
+                                      ? Colors.green
+                                      : Colors.red,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    controller.isOnline
+                                        ? "You're Online"
+                                        : "You're Offline, please press the toggle button to go online",
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -435,21 +439,21 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               if (controller.isLoading) {
                 return Container(
                   color: Colors.black.withValues(alpha: 0.6),
-                  child:  Center(
-                    child: PremiumBlurLoader()
+                  child: Center(
+                    child: PremiumBlurLoader(),
+
                     /// CircularProgressIndicator(color: Colors.white),
                   ),
                 );
               }
-              return  SizedBox();
+              return SizedBox();
             },
           ),
-        //  PremiumBlurLoader()
+          //  PremiumBlurLoader()
         ],
       ),
     );
   }
-
 
   Widget circleButton(IconData icon) {
     return Container(

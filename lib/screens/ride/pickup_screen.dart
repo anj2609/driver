@@ -1009,7 +1009,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                   "Ride Details",
                                   style: PoppinsSemiBold.copyWith(
                                     fontSize: 12,
-                                    color: Colors.blue,
+                                    color: const Color(0xFF123EBC),
                                   ),
                                 ),
                               ),

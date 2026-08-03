@@ -249,7 +249,9 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
+import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
+import 'package:myridedriverapp/model/vehicledetails_model.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 import 'package:myridedriverapp/widgets/vehicle_zoom_custom.dart';
 
@@ -335,12 +337,12 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                       right: Dimensions.smallSpace,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: Colors.blue.withValues(alpha: .1),
+                                      color: const Color(0xFF123EBC).withValues(alpha: .1),
                                       borderRadius: BorderRadius.circular(14),
                                     ),
                                     child: const Icon(
                                       Icons.directions_car,
-                                      color: Colors.blue,
+                                      color: Color(0xFF123EBC),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -667,12 +669,27 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  "Vehicle Details",
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text(
+                                      "Vehicle Details",
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () =>
+                                          _showEditVehicleSheet(context, vehicle),
+                                      child: const Icon(
+                                        Icons.edit,
+                                        color: Color(0xFF123EBC),
+                                        size: 20,
+                                      ),
+                                    ),
+                                  ],
                                 ),
 
                                 const SizedBox(height: 15),
@@ -683,17 +700,17 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                                 detailRow(
                                   "Chassis No",
-                                  vehicle?.chassisNumber ?? "-",
+                                  vehicle?.chassisNumber?.toString() ?? "-",
                                 ),
 
                                 detailRow(
                                   "Engine No",
-                                  vehicle?.engineNumber ?? "-",
+                                  vehicle?.engineNumber?.toString() ?? "-",
                                 ),
 
                                 detailRow(
                                   "Manufacture Year",
-                                  vehicle?.manufactureYear ?? "-",
+                                  vehicle?.manufactureYear?.toString() ?? "-",
                                 ),
                               ],
                             ),
@@ -707,6 +724,226 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                 ),
         );
       },
+    );
+  }
+
+  Future<void> _showEditVehicleSheet(
+    BuildContext context,
+    VehicleDetailsData? vehicle,
+  ) async {
+    final authController = Get.find<AuthController>();
+
+    // The update goes through the same vehical-info endpoint used at
+    // signup, which requires a vehicle_type_id — make sure the type list
+    // is loaded so the driver can confirm/select it here too.
+    if (authController.vehicleTypeList.isEmpty) {
+      await authController.vehicleType(context: context);
+    }
+
+    final brandController = TextEditingController(text: vehicle?.brand ?? '');
+    final modelController = TextEditingController(text: vehicle?.model ?? '');
+    final vehicleNumberController =
+        TextEditingController(text: vehicle?.vehicleNumber ?? '');
+    final chassisController =
+        TextEditingController(text: vehicle?.chassisNumber?.toString() ?? '');
+    final engineController =
+        TextEditingController(text: vehicle?.engineNumber?.toString() ?? '');
+    final yearController = TextEditingController(
+      text: vehicle?.manufactureYear?.toString() ?? '',
+    );
+
+    int? selectedVehicleTypeId = int.tryParse(
+      vehicle?.vehicleTypeId?.toString() ?? '',
+    );
+    if (authController.vehicleTypeList.isNotEmpty &&
+        !authController.vehicleTypeList
+            .any((v) => v.id == selectedVehicleTypeId)) {
+      selectedVehicleTypeId = null;
+    }
+
+    final formKey = GlobalKey<FormState>();
+    bool isSaving = false;
+
+    if (!context.mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                // Keyboard inset when a field is focused, plus the device's
+                // own bottom safe area so Save Changes never sits under the
+                // gesture bar / on-screen nav buttons.
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom +
+                    MediaQuery.of(sheetContext).padding.bottom +
+                    20,
+              ),
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Edit Vehicle Details",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<int>(
+                        initialValue: selectedVehicleTypeId,
+                        decoration: InputDecoration(
+                          labelText: "Vehicle Type",
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        items: authController.vehicleTypeList
+                            .map(
+                              (v) => DropdownMenuItem<int>(
+                                value: v.id,
+                                child: Text(v.name ?? "-"),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (val) =>
+                            setSheetState(() => selectedVehicleTypeId = val),
+                        validator: (v) =>
+                            v == null ? "Select a vehicle type" : null,
+                      ),
+                      const SizedBox(height: 14),
+                      _editField("Brand", brandController),
+                      _editField("Model", modelController),
+                      // Now editable — the backend's vehical-info endpoint
+                      // accepts a vehicle_id identifying the record being
+                      // updated, so it no longer confuses an edit for a
+                      // new-vehicle creation and rejecting the driver's own
+                      // number as "already taken".
+                      _editField("Vehicle Number", vehicleNumberController),
+                      _editField("Chassis No", chassisController),
+                      _editField("Engine No", engineController),
+                      _editField(
+                        "Manufacture Year",
+                        yearController,
+                        keyboardType: TextInputType.number,
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF123EBC),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                          ),
+                          onPressed: isSaving
+                              ? null
+                              : () async {
+                                  if (!formKey.currentState!.validate()) {
+                                    return;
+                                  }
+                                  setSheetState(() => isSaving = true);
+
+                                  final response =
+                                      await Get.find<AuthController>()
+                                          .vehicaleInfoApi(
+                                    context: sheetContext,
+                                    vehicalid:
+                                        selectedVehicleTypeId?.toString(),
+                                    vehicleId: vehicle?.vehicleId?.toString(),
+                                    vehicalnumber:
+                                        vehicleNumberController.text.trim(),
+                                    brand: brandController.text.trim(),
+                                    model: modelController.text.trim(),
+                                    color: "",
+                                    chassisnumber:
+                                        chassisController.text.trim(),
+                                    enginenumber:
+                                        engineController.text.trim(),
+                                    manufactureyear:
+                                        yearController.text.trim(),
+                                  );
+
+                                  setSheetState(() => isSaving = false);
+
+                                  if (response.statusCode == 200 &&
+                                      response.body['code'] == '200') {
+                                    if (Navigator.of(sheetContext).canPop()) {
+                                      Navigator.of(sheetContext).pop();
+                                    }
+                                    if (mounted) {
+                                      Get.find<ProfileController>()
+                                          .getVehicleDetailsApi(
+                                              context: context);
+                                    }
+                                  }
+                                },
+                          child: isSaving
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  "Save Changes",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _editField(
+    String label,
+    TextEditingController controller, {
+    TextInputType? keyboardType,
+    bool readOnly = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: keyboardType,
+        readOnly: readOnly,
+        style: readOnly ? const TextStyle(color: Colors.grey) : null,
+        validator: (v) =>
+            (v == null || v.trim().isEmpty) ? "$label is required" : null,
+        decoration: InputDecoration(
+          labelText: label,
+          filled: readOnly,
+          fillColor: readOnly ? Colors.grey.shade100 : null,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
     );
   }
 

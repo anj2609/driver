@@ -246,8 +246,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF4A90E2), Color(0xFF357ABD)],
+                gradient: LinearGradient(
+                  colors: ColorResources.gradientVibrant,
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -283,7 +283,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             _buildPaymentOption(
               methodId: 1,
               icon: Icons.account_balance_wallet_outlined,
-              iconColor: const Color(0xFF4A90E2),
+              iconColor: ColorResources.appColor,
               title: 'Online Payment',
               subtitle: _isOnlinePayment ? 'Customer selected this method' : 'UPI / Card payment via QR',
               isEnabled: _isOnlinePayment,

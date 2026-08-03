@@ -124,7 +124,7 @@ class PremiumBlurLoader extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const SpinKitThreeBounce(
-                      color: Colors.blue,
+                      color: Color(0xFF123EBC),
                       size: 28,
                     ),
                     const SizedBox(height: 12),

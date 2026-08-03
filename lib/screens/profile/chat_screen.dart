@@ -387,7 +387,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
                     await loadChats();
                   },
                   child: const CircleAvatar(
-                    backgroundColor: Colors.blue,
+                    backgroundColor: Color(0xFF123EBC),
                     child: Icon(Icons.send, color: Colors.white),
                   ),
                 ),

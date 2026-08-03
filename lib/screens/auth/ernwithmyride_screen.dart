@@ -21,7 +21,10 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
   String? selecteDivision;
 
   String? selectedCityName;
-  String referralCode = "";
+  final referralController = TextEditingController();
+  bool _isCouponValidated = false;
+  bool _isCouponRedeemed = false;
+  bool _isCouponProcessing = false;
 
   // Only Tripura Division
   final List<String> divisions = ["Tripura"];
@@ -93,7 +96,7 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                 const SizedBox(height: 20),
 
                 const Text(
-                  "Address with My Ride",
+                  "Address with N Ride",
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                 ),
 
@@ -193,20 +196,124 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                 /// REFERRAL CODE
                 const Text("Referral Code"),
                 const SizedBox(height: 6),
-                TextFormField(
-                  decoration: InputDecoration(
-                    hintText: "Code",
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: referralController,
+                        enabled: !_isCouponValidated && !_isCouponProcessing,
+                        decoration: InputDecoration(
+                          hintText: "Code",
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF123EBC),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                        ),
+                        onPressed: (_isCouponProcessing || _isCouponRedeemed)
+                            ? null
+                            : () async {
+                                final code = referralController.text.trim();
+                                if (code.isEmpty) {
+                                  Get.snackbar(
+                                    "Error",
+                                    "Please enter a referral code",
+                                    snackPosition: SnackPosition.BOTTOM,
+                                  );
+                                  return;
+                                }
+
+                                setState(() => _isCouponProcessing = true);
+
+                                final authController =
+                                    Get.find<AuthController>();
+
+                                try {
+                                  if (!_isCouponValidated) {
+                                    await authController.validateCouponApi(
+                                      context: context,
+                                      code: code,
+                                    );
+                                    if (mounted) {
+                                      setState(() {
+                                        _isCouponValidated =
+                                            authController.isCouponValidated;
+                                      });
+                                    }
+                                  } else {
+                                    await authController.redeemCouponApi(
+                                      context: context,
+                                      code: code,
+                                    );
+                                    if (mounted) {
+                                      setState(() {
+                                        _isCouponRedeemed = true;
+                                      });
+                                    }
+                                  }
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _isCouponProcessing = false);
+                                  }
+                                }
+                              },
+                        child: _isCouponProcessing
+                            ? const SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                _isCouponRedeemed
+                                    ? "Redeemed"
+                                    : (_isCouponValidated
+                                        ? "Redeem"
+                                        : "Validate"),
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                if (_isCouponValidated)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Builder(
+                      builder: (context) {
+                        final coupon =
+                            Get.find<AuthController>().validatedCoupon;
+                        if (coupon == null) return const SizedBox.shrink();
+                        return Text(
+                          _isCouponRedeemed
+                              ? "${coupon.couponName ?? 'Coupon'} redeemed — wallet balance: ₹${coupon.walletBalance ?? '-'}"
+                              : "${coupon.couponName ?? 'Coupon'} — reward ₹${coupon.rewardAmount ?? '-'}",
+                          style: const TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        );
+                      },
                     ),
                   ),
-                  onChanged: (value) {
-                    referralCode = value; // store in string
-                  },
-                ),
 
                 const SizedBox(height: 25),
 

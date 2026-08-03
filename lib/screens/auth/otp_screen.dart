@@ -177,8 +177,22 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
 
                         // Clear field on failure; keep it for doc-pending 401 (has token)
                         final hasToken = body["data"]?["token"]?.toString().isNotEmpty == true;
+                        final isWrongOtp = code == "401" && !hasToken;
                         if (code != "200" && !(code == "401" && hasToken)) {
                           _otpController.clear();
+                        }
+
+                        // A wrong/expired OTP means no session was ever
+                        // established for this attempt — stop here.
+                        // verifyOtpApi() already showed the "Incorrect OTP"
+                        // toast; continuing on to check profileStatus below
+                        // is wrong because `data` can still carry a stale
+                        // profile (e.g. from an earlier partial registration
+                        // attempt on the same phone number), which would
+                        // otherwise navigate the user forward as if the OTP
+                        // had actually been verified.
+                        if (isWrongOtp) {
+                          return;
                         }
 
                         final prefs = await SharedPreferences.getInstance();
@@ -202,19 +216,17 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         String? profileStatus = data?["profile_status"]
                             ?.toString();
 
-                        // verificationStatus takes full priority:
-                        // once a profile is submitted for review (pending) or
-                        // rejected, always show the status popup — never re-enter
-                        // the registration flow regardless of profileStatus.
-                        if (verificationStatus == "rejected" ||
-                            verificationStatus == "pending") {
-                          Get.dialog(
-                            CustomPopup(status: verificationStatus!),
-                            barrierDismissible: false,
-                          );
-                          return;
-                        }
-
+                        // An incomplete profile takes priority over
+                        // verification_status: the backend can return
+                        // verification_status == "pending" as the default
+                        // for a brand-new account that hasn't even finished
+                        // the earlier onboarding steps yet, not only for a
+                        // driver who has actually submitted documents. So a
+                        // driver still mid-registration must always be sent
+                        // back into the registration flow — showing the
+                        // "documents under review" popup here would be a lie
+                        // (there are no documents yet), and "Check Status"
+                        // would land them on an empty document screen.
                         if (profileStatus == "1") {
                           Get.offAllNamed(
                             RouteHelper.getearnWithMyRideScreen(),
@@ -259,6 +271,19 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                           Get.toNamed(
                             RouteHelper.getDriverDetails(),
                             arguments: {"step": 5},
+                          );
+                          return;
+                        }
+
+                        // Only once the profile is fully submitted (no
+                        // incomplete-step profileStatus above matched) does a
+                        // pending/rejected verification_status genuinely mean
+                        // "documents were submitted and are awaiting review".
+                        if (verificationStatus == "rejected" ||
+                            verificationStatus == "pending") {
+                          Get.dialog(
+                            CustomPopup(status: verificationStatus!),
+                            barrierDismissible: false,
                           );
                           return;
                         }

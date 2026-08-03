@@ -16,7 +16,7 @@ class CustomButton extends StatelessWidget {
     Key? key,
     required this.text,
     required this.onPressed,
-    this.backgroundColor = Colors.blue,
+    this.backgroundColor = const Color(0xFF123EBC),
     this.textColor = Colors.white,
     this.borderRadius = 30,
   }) : super(key: key);
@@ -135,7 +135,11 @@ class CustomPrimaryButton extends StatelessWidget {
         width: double.infinity,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: ColorResources.blueeebutton,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: ColorResources.gradientDeep,
+          ),
           borderRadius: BorderRadius.circular(30),
         ),
         child: Text(
@@ -203,7 +207,11 @@ class CustomPrimaryDyanamicButton extends StatelessWidget {
         width: double.infinity,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: ColorResources.blueeebutton,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: ColorResources.gradientDeep,
+          ),
           borderRadius: BorderRadius.circular(Dimensions.spacingSize30),
         ),
         child: Text(
@@ -311,7 +319,11 @@ class CustomMessageButton extends StatelessWidget {
       child: Container(
         height: MediaQuery.of(context).size.height * 0.06,
         decoration: BoxDecoration(
-          color: ColorResources.blueeebutton,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: ColorResources.gradientDeep,
+          ),
           borderRadius: BorderRadius.circular(Dimensions.spacingSize30),
         ),
         child: Row(
@@ -469,9 +481,14 @@ class CustomOtpButton extends StatelessWidget {
         width: double.infinity,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: isEnabled
-              ? ColorResources.blueeebutton
-              : ColorResources.buttonColors,
+          gradient: isEnabled
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: ColorResources.gradientDeep,
+                )
+              : null,
+          color: isEnabled ? null : ColorResources.buttonColors,
           borderRadius: BorderRadius.circular(30),
         ),
         child: isLoading

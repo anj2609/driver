@@ -180,7 +180,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: Container(
                             padding: EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: Colors.blue,
+                              color: const Color(0xFF123EBC),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
@@ -213,7 +213,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         height: 55,
                         padding: const EdgeInsets.symmetric(horizontal: 15),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFEFEFF1),
+                          color: const Color(0xFFF5F7FA),
                           borderRadius: BorderRadius.circular(15),
                         ),
                         child: Row(
@@ -243,7 +243,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         height: 55,
                         padding: const EdgeInsets.symmetric(horizontal: 15),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFEFEFF1),
+                          color: const Color(0xFFF5F7FA),
                           borderRadius: BorderRadius.circular(15),
                         ),
                         child: Row(
@@ -269,7 +269,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 //   height: 55,
                 //   padding: const EdgeInsets.symmetric(horizontal: 15),
                 //   decoration: BoxDecoration(
-                //     color: const Color(0xFFEFEFF1),
+                //     color: const Color(0xFFF5F7FA),
                 //     borderRadius: BorderRadius.circular(15),
                 //   ),
                 //   child: Row(
@@ -297,7 +297,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   height: 55,
                   padding: const EdgeInsets.symmetric(horizontal: 15),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFEFEFF1),
+                    color: const Color(0xFFF5F7FA),
                     borderRadius: BorderRadius.circular(15),
                   ),
                   child: DropdownButtonHideUnderline(
@@ -418,7 +418,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       height: 55,
       padding: const EdgeInsets.symmetric(horizontal: 15),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFEFF1),
+        color: const Color(0xFFF5F7FA),
         borderRadius: BorderRadius.circular(15),
       ),
       child: Row(

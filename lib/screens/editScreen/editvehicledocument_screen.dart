@@ -57,7 +57,7 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
-          Get.offAllNamed(RouteHelper.getmyRideLoginScreen());
+          Get.offAllNamed(RouteHelper.gethomescreen());
         }
       },
       child: Scaffold(
@@ -65,7 +65,7 @@ class _EditVehicleDocumentScreenState extends State<EditVehicleDocumentScreen>
       appBar: AppBar(
         title: const Text("My Documents"),
         leading: GestureDetector(
-          onTap: () => Get.offAllNamed(RouteHelper.getmyRideLoginScreen()),
+          onTap: () => Get.offAllNamed(RouteHelper.gethomescreen()),
           child: const Icon(Icons.arrow_back_ios_new),
         ),
         actions: [

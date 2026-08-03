@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:developer';
 import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/cupertino.dart';
@@ -7,12 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:get/get.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
+import 'package:myridedriverapp/model/coupon_model.dart';
 import 'package:myridedriverapp/model/driverdocument_model.dart';
 import 'package:myridedriverapp/model/driveruploaddoc_model.dart';
 import 'package:myridedriverapp/model/updatevehicledoc_model.dart';
@@ -21,6 +20,7 @@ import 'package:myridedriverapp/model/vehicle_upload_model.dart';
 import 'package:myridedriverapp/model/vehicleupload_model.dart';
 import 'package:myridedriverapp/repository/auth_repo.dart';
 import 'package:myridedriverapp/screens/auth/socialauth_screen.dart';
+import 'package:myridedriverapp/widgets/image_source_sheet.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
@@ -42,6 +42,10 @@ class AuthController extends GetxController implements GetxService {
   List<EditVehicleDocumentsModel> editDriverDocumentList = [];
   List<EditVehicleDocumentsModel> editVehicleDocumentList = [];
 
+  CouponData? validatedCoupon;
+  bool isCouponValidated = false;
+  bool isCouponLoading = false;
+
   int? selectedVehicleTypeId;
   String? updateStroeId;
   bool isLoading = false;
@@ -49,8 +53,6 @@ class AuthController extends GetxController implements GetxService {
   bool isPersonalSaved = false;
   bool isDriverDocSaved = false;
   bool isSoicialSaved = false;
-  String? selectedBrandId;
-  String? selectedBrandName;
   String? vehicleStoreId;
   String? _lastKnownVehicleId;
   bool isDocLoading = true;
@@ -113,13 +115,9 @@ class AuthController extends GetxController implements GetxService {
   }
 
   Future<void> pickDriverImage(int index) async {
-    final pickedFile = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-    );
+    final originalFile = await pickImageFromSource(Get.context!, allowFiles: true);
 
-    if (pickedFile == null) return;
-
-    final originalFile = File(pickedFile.path);
+    if (originalFile == null) return;
 
     // temp folder
     final dir = await getTemporaryDirectory();
@@ -189,13 +187,9 @@ class AuthController extends GetxController implements GetxService {
   }
 
   Future<void> vehiclpickDriverImage(int index) async {
-    final pickedFile = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-    );
+    final originalFile = await pickImageFromSource(Get.context!, allowFiles: true);
 
-    if (pickedFile == null) return;
-
-    final originalFile = File(pickedFile.path);
+    if (originalFile == null) return;
 
     final dir = await getTemporaryDirectory();
 
@@ -254,13 +248,13 @@ class AuthController extends GetxController implements GetxService {
 
   /// ================= PICK IMAGE =================
   Future<void> pickImage(int index, bool isDriver) async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final picked = await pickImageFromSource(Get.context!, allowFiles: true);
 
     if (picked != null) {
       if (isDriver) {
-        editDriverDocumentList[index].imageFiles = File(picked.path);
+        editDriverDocumentList[index].imageFiles = picked;
       } else {
-        editVehicleDocumentList[index].imageFiles = File(picked.path);
+        editVehicleDocumentList[index].imageFiles = picked;
       }
       update();
     }
@@ -477,34 +471,16 @@ class AuthController extends GetxController implements GetxService {
       /// DRIVER DOCS
       if (response.body['data']?["driver_doc"] != null) {
         for (var item in response.body['data']["driver_doc"]) {
-          var doc = EditVehicleDocumentsModel.fromJson(item);
-          doc.numberControllers.text = doc.number ?? "";
-
-          if (doc.expriydate != null && doc.expriydate!.isNotEmpty) {
-            DateTime parsedDate = DateTime.parse(doc.expriydate!);
-            doc.expiryControllers.text = DateFormat(
-              'yyyy-MM-dd',
-            ).format(parsedDate);
-          }
-
-          editDriverDocumentList.add(doc);
+          final doc = _buildEditDocFromJson(item);
+          if (doc != null) editDriverDocumentList.add(doc);
         }
       }
 
       /// VEHICLE DOCS
       if (response.body['data']?["vehicle_doc"] != null) {
         for (var item in response.body['data']["vehicle_doc"]) {
-          var doc = EditVehicleDocumentsModel.fromJson(item);
-          doc.numberControllers.text = doc.number ?? "";
-
-          if (doc.expriydate != null && doc.expriydate!.isNotEmpty) {
-            DateTime parsedDate = DateTime.parse(doc.expriydate!);
-            doc.expiryControllers.text = DateFormat(
-              'yyyy-MM-dd',
-            ).format(parsedDate);
-          }
-
-          editVehicleDocumentList.add(doc);
+          final doc = _buildEditDocFromJson(item);
+          if (doc != null) editVehicleDocumentList.add(doc);
         }
       }
 
@@ -686,6 +662,80 @@ class AuthController extends GetxController implements GetxService {
     return response;
   }
 
+  Future<String> _currentUserId() async {
+    if (ApiConstants.userIdSocial.isNotEmpty) return ApiConstants.userIdSocial;
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(ApiConstants.profileid) ?? '';
+  }
+
+  Future<Response> validateCouponApi({
+    required BuildContext context,
+    required String code,
+  }) async {
+    isCouponLoading = true;
+    update();
+
+    try {
+      final userId = await _currentUserId();
+      Response response = await authRepo.validateCoupon(
+        userId: userId,
+        code: code,
+      );
+
+      final body = response.body;
+      final resCode = body?['code']?.toString();
+
+      if (resCode == '200') {
+        validatedCoupon = body?['data'] != null
+            ? CouponData.fromJson(body['data'])
+            : null;
+        isCouponValidated = true;
+      } else {
+        isCouponValidated = false;
+        validatedCoupon = null;
+      }
+
+      return response;
+    } catch (e) {
+      rethrow;
+    } finally {
+      isCouponLoading = false;
+      update();
+    }
+  }
+
+  Future<Response> redeemCouponApi({
+    required BuildContext context,
+    required String code,
+  }) async {
+    isCouponLoading = true;
+    update();
+
+    try {
+      final userId = await _currentUserId();
+      Response response = await authRepo.redeemCoupon(
+        userId: userId,
+        code: code,
+      );
+
+      final body = response.body;
+      final resCode = body?['code']?.toString();
+
+      if (resCode == '200') {
+        if (body?['data'] != null) {
+          validatedCoupon = CouponData.fromJson(body['data']);
+        }
+      }
+
+      return response;
+    } catch (e) {
+      rethrow;
+    } finally {
+      isCouponLoading = false;
+      update();
+    }
+  }
+
   Future<Response> driverdocument({required BuildContext context}) async {
     isDriverDocsFetching = true;
     update();
@@ -694,6 +744,7 @@ class AuthController extends GetxController implements GetxService {
       if (response.statusCode == 200 && response.body['code'] == '200') {
         driverDocumentModel = DriverDocumentModel.fromJson(response.body);
         driverDocumentList = driverDocumentModel?.data ?? [];
+        _applyDriverDocDisplayNames(driverDocumentList);
       } else {
         AnimatedTopToast.show(
           context: context,
@@ -719,6 +770,7 @@ class AuthController extends GetxController implements GetxService {
       if (response.statusCode == 200 && response.body['code'] == '200') {
         vehicleDocumentModel = VehicleDocumentModel.fromJson(response.body);
         vehicleDocumentList = vehicleDocumentModel?.data ?? [];
+        _applyVehicleDocDisplayNames(vehicleDocumentList);
       } else {
         AnimatedTopToast.show(
           context: context,
@@ -733,6 +785,45 @@ class AuthController extends GetxController implements GetxService {
     } finally {
       isVehicleDocsFetching = false;
       update();
+    }
+  }
+
+  /// Normalizes a document name for matching: lowercase, all whitespace
+  /// removed. The backend's actual spacing is inconsistent (observed both
+  /// "Driver Doc 1" and "Driver Doc1" in the wild), so matching must not
+  /// depend on exact spacing.
+  String _normalizeDocName(String? name) =>
+      (name ?? '').toLowerCase().replaceAll(RegExp(r'\s+'), '');
+
+  /// Relabels the API-provided "Driver Doc 1"/"Driver Doc 2" entries with
+  /// clearer names. Only the display name changes — `id` (used for
+  /// upload/matching) is left untouched.
+  void _applyDriverDocDisplayNames(List<DriverDocumentDataModel> docs) {
+    for (final doc in docs) {
+      final normalized = _normalizeDocName(doc.name);
+      if (normalized == 'driverdoc1') {
+        doc.name = 'Driving License Front';
+      } else if (normalized == 'driverdoc2') {
+        doc.name = 'Driving License Back';
+      }
+    }
+  }
+
+  /// The backend returns two RC document slots ("Rc Document 1" and
+  /// "Rc Document 2"); the product only wants a single Registration
+  /// Certificate upload, so the second slot is dropped entirely (not just
+  /// hidden) and the first is relabelled. Dropping it here — before the
+  /// list is used for both rendering and the required-fields validation —
+  /// means the removed slot can never block submission.
+  void _applyVehicleDocDisplayNames(List<VehicleDocumentDataModel> docs) {
+    docs.removeWhere(
+      (doc) => _normalizeDocName(doc.name) == 'rcdocument2',
+    );
+    for (final doc in docs) {
+      final normalized = _normalizeDocName(doc.name);
+      if (normalized == 'rcdocument1') {
+        doc.name = 'Registration Certificate';
+      }
     }
   }
 
@@ -873,7 +964,15 @@ else if (code == "401") {
   authRepo.saveUserToken(ApiConstants.userTokenSocial);
   authRepo.saveUserprofileid(ApiConstants.userIdSocial);
 
-  Get.find<ProfileController>().fetchProfile();
+  // profile_status "1" means this is a brand-new number's very first OTP
+  // verify — nothing has been entered yet, so there's no profile on the
+  // backend to fetch. Calling fetchProfile() here anyway made the very
+  // first screen after signing up show a confusing "Unable to load
+  // profile" error toast for every new driver.
+  final String? profileStatusForFetch = data?['profile_status']?.toString();
+  if (profileStatusForFetch != null && profileStatusForFetch != '1') {
+    Get.find<ProfileController>().fetchProfile();
+  }
 
   editDriverDocumentList.clear();
   editVehicleDocumentList.clear();
@@ -882,26 +981,9 @@ else if (code == "401") {
   if (data != null &&
       data["driver_doc"] != null &&
       data["driver_doc"] is List) {
-
     for (var item in data["driver_doc"]) {
-      var doc = EditVehicleDocumentsModel.fromJson(item);
-
-      doc.numberControllers.text = doc.number ?? "";
-
-      if ((doc.expriydate ?? "").isNotEmpty) {
-        try {
-          DateTime parsedDate =
-              DateTime.parse(doc.expriydate!);
-
-          doc.expiryControllers.text =
-              DateFormat('yyyy-MM-dd')
-                  .format(parsedDate);
-        } catch (e) {
-          log("Driver Date Parse Error: $e");
-        }
-      }
-
-      editDriverDocumentList.add(doc);
+      final doc = _buildEditDocFromJson(item);
+      if (doc != null) editDriverDocumentList.add(doc);
     }
   }
 
@@ -909,26 +991,9 @@ else if (code == "401") {
   if (data != null &&
       data["vehicle_doc"] != null &&
       data["vehicle_doc"] is List) {
-
     for (var item in data["vehicle_doc"]) {
-      var doc = EditVehicleDocumentsModel.fromJson(item);
-
-      doc.numberControllers.text = doc.number ?? "";
-
-      if ((doc.expriydate ?? "").isNotEmpty) {
-        try {
-          DateTime parsedDate =
-              DateTime.parse(doc.expriydate!);
-
-          doc.expiryControllers.text =
-              DateFormat('yyyy-MM-dd')
-                  .format(parsedDate);
-        } catch (e) {
-          log("Vehicle Date Parse Error: $e");
-        }
-      }
-
-      editVehicleDocumentList.add(doc);
+      final doc = _buildEditDocFromJson(item);
+      if (doc != null) editVehicleDocumentList.add(doc);
     }
   }
 
@@ -1248,6 +1313,7 @@ else {
         // All registration docs submitted — mark as pending and persist session
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(ApiConstants.verificationStatus, "pending");
+        await prefs.setBool(ApiConstants.docsSubmittedForReview, true);
         // Persist in-memory registration token so session survives app restart
         if (ApiConstants.userTokenSocial.isNotEmpty) {
           await authRepo.saveUserToken(ApiConstants.userTokenSocial);
@@ -1472,6 +1538,7 @@ else {
   Future<Response> vehicaleInfoApi({
     required BuildContext context,
     String? vehicalid,
+    String? vehicleId,
     String? vehicalnumber,
     String? brand,
     String? model,
@@ -1486,6 +1553,7 @@ else {
 
     Response response = await authRepo.vehicaleInfo(
       vehicalid: vehicalid,
+      vehicleId: vehicleId,
       vehicalnumber: vehicalnumber,
       brand: brand,
       model: model,
@@ -1636,6 +1704,7 @@ else {
     // Clear registration-step state so next login starts fresh
     await prefs.remove(ApiConstants.isPersonalSavedStatus);
     await prefs.remove(ApiConstants.isPersonalSaved);
+    await prefs.remove(ApiConstants.docsSubmittedForReview);
   }
 
   Future<void> _saveDocsToCache() async {
@@ -1699,7 +1768,15 @@ else {
   /// Called every 30 seconds by the timer, on pull-to-refresh, and on the
   /// refresh AppBar button. Updates each doc's status/remark in real time and
   /// auto-navigates to home when the driver is fully approved.
-  Future<void> fetchDocumentStatus() async {
+  /// Fetches the driver's document approval status from the server and
+  /// syncs local state (edit lists, cached verification_status, navigation
+  /// on approval) exactly as before. Returns whether the driver is, as of
+  /// this fresh check, fully approved — used by [HomeController] to
+  /// strictly gate going online. On a genuine network/parse failure (no
+  /// verdict available), falls back to the last cached verification_status
+  /// rather than hard-blocking an already-approved driver over an
+  /// unrelated connectivity hiccup.
+  Future<bool> fetchDocumentStatus({bool navigateOnApproved = true}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = ApiConstants.userIdSocial.isNotEmpty
@@ -1711,7 +1788,7 @@ else {
 
       if (userId.isEmpty) {
         debugPrint('[DocStatus] userId is empty — aborting');
-        return;
+        return prefs.getString(ApiConstants.verificationStatus) == 'approved';
       }
 
       final resp = await authRepo.fetchDriverDocumentStatus(userId);
@@ -1721,15 +1798,15 @@ else {
 
       if (resp.statusCode != 200 || resp.body == null) {
         debugPrint('[DocStatus] bad response — aborting');
-        return;
+        return prefs.getString(ApiConstants.verificationStatus) == 'approved';
       }
 
       // When all docs are approved, the server may return an empty body
       // or a non-JSON string. Handle gracefully — treat as approved.
       if (resp.body is! Map<String, dynamic>) {
         debugPrint('[DocStatus] body is not a Map (${resp.body.runtimeType}) — treating as approved');
-        await _navigateToHomeAsApproved();
-        return;
+        await _navigateToHomeAsApproved(navigate: navigateOnApproved);
+        return true;
       }
 
       final body = resp.body as Map<String, dynamic>;
@@ -1760,8 +1837,8 @@ else {
           overallStatus != 'rejected' &&
           overallStatus != 'under_review' &&
           overallStatus.isNotEmpty) {
-        await _navigateToHomeAsApproved();
-        return;
+        await _navigateToHomeAsApproved(navigate: navigateOnApproved);
+        return true;
       }
 
       // Parse driver doc arrays — try every common key name.
@@ -1842,9 +1919,10 @@ else {
         final bodyCode = body['code']?.toString();
         if (bodyCode != null && bodyCode != '401' && bodyCode == '200') {
           // Server returned success code with no pending docs — treat as approved.
-          await _navigateToHomeAsApproved();
+          await _navigateToHomeAsApproved(navigate: navigateOnApproved);
+          return true;
         }
-        return;
+        return false;
       }
 
       final allApproved =
@@ -1854,8 +1932,8 @@ else {
           editVehicleDocumentList.every((d) => d.status == 'approved');
 
       if (allApproved) {
-        await _navigateToHomeAsApproved();
-        return;
+        await _navigateToHomeAsApproved(navigate: navigateOnApproved);
+        return true;
       }
 
       _saveDocsToCache();
@@ -1866,20 +1944,25 @@ else {
           'One or more document statuses have changed. Please review.',
           snackPosition: SnackPosition.TOP,
           duration: const Duration(seconds: 3),
-          backgroundColor: const Color(0xFF323232),
+          backgroundColor: const Color(0xFF1F2937),
           colorText: const Color(0xFFFFFFFF),
         );
       }
       update();
+      return false;
     } catch (e, st) {
       debugPrint('[DocStatus] ERROR: $e\n$st');
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(ApiConstants.verificationStatus) == 'approved';
     }
   }
 
-  Future<void> _navigateToHomeAsApproved() async {
+  Future<void> _navigateToHomeAsApproved({bool navigate = true}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(ApiConstants.verificationStatus, 'approved');
-    Get.offAllNamed(RouteHelper.gethomescreen());
+    if (navigate) {
+      Get.offAllNamed(RouteHelper.gethomescreen());
+    }
   }
 
   /// Extract overall verification status from a response body, trying common
@@ -1962,9 +2045,49 @@ else {
         if (list[idx].imageFiles == null && raw['file'] != null) {
           list[idx].file = raw['file'].toString();
         }
+      } else {
+        // No local record for this document (e.g. the upload-time list
+        // population never ran, or the app/controller restarted and the
+        // cache didn't restore it) — build one straight from the server
+        // response instead of silently dropping it. Without this, the
+        // status screen can end up showing "No documents found" even
+        // though the server clearly has documents pending review.
+        final doc = _buildEditDocFromJson(raw);
+        if (doc == null) continue; // dropped by design (rc document 2)
+        list.add(doc);
+        changed++;
       }
     }
     return changed;
+  }
+
+  /// Builds an [EditVehicleDocumentsModel] from a raw server document map,
+  /// applying the same display-name relabeling used across the app, and
+  /// returns null for document types that should be dropped entirely (the
+  /// redundant second RC document slot).
+  EditVehicleDocumentsModel? _buildEditDocFromJson(Map<String, dynamic> item) {
+    final normalized = _normalizeDocName(
+      (item['document_name'] ?? item['name'])?.toString(),
+    );
+    if (normalized == 'rcdocument2') return null;
+
+    final doc = EditVehicleDocumentsModel.fromJson(item);
+    if (normalized == 'driverdoc1') {
+      doc.name = 'Driving License Front';
+    } else if (normalized == 'driverdoc2') {
+      doc.name = 'Driving License Back';
+    } else if (normalized == 'rcdocument1') {
+      doc.name = 'Registration Certificate';
+    }
+    doc.numberControllers.text = doc.number ?? '';
+    if ((doc.expriydate ?? '').isNotEmpty) {
+      try {
+        doc.expiryControllers.text = DateFormat(
+          'yyyy-MM-dd',
+        ).format(DateTime.parse(doc.expriydate!));
+      } catch (_) {}
+    }
+    return doc;
   }
 
   String _buildServerDocUrl(String? file) {
@@ -2004,69 +2127,6 @@ else {
 
   void saveDriverDoc() {
     isDriverDocSaved = true;
-    update();
-  }
-
-  List<Map<String, String>> brands = [
-    {"id": "Maruti Suzuki", "name": "Maruti Suzuki"},
-    {"id": "Hyundai", "name": "Hyundai"},
-    {"id": "Tata Motors", "name": "Tata Motors"},
-    {"id": "Mahindra", "name": "Mahindra"},
-    {"id": "Honda", "name": "Honda"},
-    {"id": "Toyota", "name": "Toyota"},
-    {"id": "Kia", "name": "Kia"},
-    {"id": "Renault", "name": "Renault"},
-    {"id": "Nissan", "name": "Nissan"},
-    {"id": "Volkswagen", "name": "Volkswagen"},
-    {"id": "Skoda", "name": "Skoda"},
-    {"id": "MG (Morris Garages)", "name": "MG (Morris Garages)"},
-    {"id": "Ford", "name": "Ford"},
-    {"id": "Citroen", "name": "Citroen"},
-    {"id": "Jeep", "name": "Jeep"},
-    {"id": "BMW", "name": "BMW"},
-    {"id": "Mercedes-Benz", "name": "Mercedes-Benz"},
-    {"id": "Audi", "name": "Audi"},
-    {"id": "Lexus", "name": "Lexus"},
-    {"id": "Volvo", "name": "Volvo"},
-    {"id": "Jaguar", "name": "Jaguar"},
-    {"id": "Land Rover", "name": "Land Rover"},
-    {"id": "Porsche", "name": "Porsche"},
-    {"id": "Mini", "name": "Mini"},
-    {"id": "Isuzu", "name": "Isuzu"},
-    {"id": "Tesla", "name": "Tesla"},
-    {"id": "BYD", "name": "BYD"},
-    {"id": "Aston Martin", "name": "Aston Martin"},
-    {"id": "Bentley", "name": "Bentley"},
-    {"id": "Rolls-Royce", "name": "Rolls-Royce"},
-    {"id": "Ferrari", "name": "Ferrari"},
-    {"id": "Lamborghini", "name": "Lamborghini"},
-    {"id": "Maserati", "name": "Maserati"},
-    {"id": "McLaren", "name": "McLaren"},
-    {"id": "Bugatti", "name": "Bugatti"},
-    {"id": "Peugeot", "name": "Peugeot"},
-    {"id": "Fiat", "name": "Fiat"},
-    {"id": "Chevrolet", "name": "Chevrolet"},
-    {"id": "Mitsubishi", "name": "Mitsubishi"},
-    {"id": "Suzuki (Global)", "name": "Suzuki (Global)"},
-    {"id": "Genesis", "name": "Genesis"},
-    {"id": "Changan", "name": "Changan"},
-    {"id": "Geely", "name": "Geely"},
-    {"id": "Great Wall Motors", "name": "Great Wall Motors"},
-    {"id": "Haval", "name": "Haval"},
-    {"id": "SsangYong", "name": "SsangYong"},
-    {"id": "Opel", "name": "Opel"},
-    {"id": "Datsun", "name": "Datsun"},
-    {"id": "Infiniti", "name": "Infiniti"},
-    {"id": "Acura", "name": "Acura"},
-  ];
-
-  void selectBrand(String? brandName) {
-    selectedBrandName = brandName;
-
-    final brand = brands.firstWhere((e) => e["name"] == brandName);
-
-    selectedBrandId = brand["id"];
-
     update();
   }
 

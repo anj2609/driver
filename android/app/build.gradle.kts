@@ -92,6 +92,10 @@ dependencies {
     // ✅ OkHttp
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
+    // ✅ SplashScreen compat — lets us force-dismiss the mandatory
+    // Android 12+ Starting Window the instant Flutter's first frame is ready.
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
     // ✅ Desugaring Required
     coreLibraryDesugaring(
         "com.android.tools:desugar_jdk_libs:2.1.4"

@@ -199,6 +199,17 @@ class ProfiileRepo extends GetxService {
     return apiClient.getData(ApiConstants.getBankInfo);
   }
 
+  Future<Response> getCouponHistory({required String userId}) async {
+    // The backend only accepts GET/HEAD on this route (a POST here returns
+    // a 405 Method Not Allowed) — so user_id/user_type/code go as query
+    // params instead of a request body.
+    final uri = '${ApiConstants.couponHistory}'
+        '?user_id=${Uri.encodeQueryComponent(userId)}'
+        '&user_type=${Uri.encodeQueryComponent(ApiConstants.driverLogin)}'
+        '&code=';
+    return apiClient.getData(uri);
+  }
+
 
   ///
 

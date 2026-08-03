@@ -38,13 +38,12 @@ class _RegistrationSuccessScreenState extends State<RegistrationSuccessScreen>
 
   Future<void> _navigateAfterDelay() async {
     await Future.delayed(const Duration(seconds: 4));
-    // Navigate directly to the document status screen with "pending" status.
-    // Previously used Get.offAll() + Get.dialog() which left the route stack
-    // in an unstable state and caused crashes when "Check Status" was tapped.
-    Get.offAllNamed(
-      RouteHelper.getEditVehicleDocumentScreen(),
-      arguments: {"status": "pending"},
-    );
+    // Documents being submitted doesn't mean verified — but the driver
+    // should still land on the dashboard, not the documents screen. Going
+    // online itself stays gated (HomeController.toggleOnline shows the
+    // "under verification" popup with an Edit Documents option) until the
+    // admin actually approves.
+    Get.offAllNamed(RouteHelper.gethomescreen());
   }
 
   @override

@@ -22,6 +22,15 @@ class VehicleDetailsData {
   dynamic engineNumber;
   dynamic manufactureYear;
   List<String>? images;
+  // The vehicle type category (Car/Bike/etc.) id — still needed by the
+  // vehical-info endpoint's payload on every submit, create or edit.
+  dynamic vehicleTypeId;
+  // The vehicle's own record id, now returned by get-vehicle-info. Sending
+  // this back on an edit is what lets the backend treat the submission as
+  // an update to this exact vehicle instead of validating it as a new one
+  // (which previously rejected the driver's own unchanged vehicle number
+  // as "already taken").
+  dynamic vehicleId;
 
   VehicleDetailsData(
       {this.vehicleNumber,
@@ -30,7 +39,9 @@ class VehicleDetailsData {
       this.chassisNumber,
       this.engineNumber,
       this.manufactureYear,
-      this.images});
+      this.images,
+      this.vehicleTypeId,
+      this.vehicleId});
 
   VehicleDetailsData.fromJson(Map<String, dynamic> json) {
     vehicleNumber = json['vehicle_number'];
@@ -40,7 +51,7 @@ class VehicleDetailsData {
     engineNumber = json['engine_number'];
     manufactureYear = json['manufacture_year'];
     images = json['images'].cast<String>();
+    vehicleTypeId = json['vehicle_type_id'] ?? json['vehicle_type'];
+    vehicleId = json['id'] ?? json['vehicle_id'];
   }
-
- 
 }

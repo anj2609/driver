@@ -233,63 +233,46 @@ class ApiClient extends GetxService {
     }
 
     try {
+      // Always submit as multipart, even when there are no new images to
+      // attach. This endpoint had only ever been exercised with images
+      // attached (during signup); a plain application/json body for a
+      // no-new-images edit was an untested path — many form-based backends
+      // only populate their request fields from multipart/form-data, not a
+      // raw JSON body, and fail validation silently instead of erroring.
+      var request = http.MultipartRequest(
+        "POST",
+        Uri.parse(ApiConstants.baseUrl + uri),
+      );
+
+      body.forEach((key, value) {
+        if (value != null) {
+          request.fields[key] = value.toString();
+        }
+      });
 
       if (images != null && images.isNotEmpty) {
-        var request = http.MultipartRequest(
-          "POST",
-          Uri.parse(ApiConstants.baseUrl + uri),
-        );
-
-        /// Ã°Å¸â€Â¹ Text Fields
-        body.forEach((key, value) {
-          request.fields[key] = value.toString();
-        });
-
         for (int i = 0; i < images.length; i++) {
           request.files.add(
             await http.MultipartFile.fromPath("images[]", images[i].path),
           );
         }
-
-        request.headers.addAll({
-          'Accept': 'application/json',
-          'id': ApiConstants.userIdSocial.isNotEmpty
-          ? ApiConstants.userIdSocial
-          : (sharedPreferences.getString(ApiConstants.profileid) ?? ""),
-
-      'authorizationToken': ApiConstants.userTokenSocial.isNotEmpty
-          ? ApiConstants.userTokenSocial
-          : (sharedPreferences.getString(ApiConstants.token) ?? ""),
-          // 'id': profileId ?? "",
-          // 'authorizationToken': token ?? "",
-          // 'User-Agent': 'Mozilla/5.0',
-        });
-
-        var streamedResponse = await request.send();
-        var response = await http.Response.fromStream(streamedResponse);
-
-        return handleResponse(response, uri);
       }
 
-      http.Response httpResponse = await http.post(
-        Uri.parse(ApiConstants.baseUrl + uri),
-        body: jsonEncode(body),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'id': ApiConstants.userIdSocial.isNotEmpty
-          ? ApiConstants.userIdSocial
-          : (sharedPreferences.getString(ApiConstants.profileid) ?? ""),
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'id': ApiConstants.userIdSocial.isNotEmpty
+        ? ApiConstants.userIdSocial
+        : (sharedPreferences.getString(ApiConstants.profileid) ?? ""),
 
-      'authorizationToken': ApiConstants.userTokenSocial.isNotEmpty
-          ? ApiConstants.userTokenSocial
-          : (sharedPreferences.getString(ApiConstants.token) ?? ""),
-          // 'id': profileId ?? "",
-          // 'authorizationToken': token ?? "",
-        },
-      ).timeout(Duration(seconds: timeoutInSeconds));
+    'authorizationToken': ApiConstants.userTokenSocial.isNotEmpty
+        ? ApiConstants.userTokenSocial
+        : (sharedPreferences.getString(ApiConstants.token) ?? ""),
+      });
 
-      return handleResponse(httpResponse, uri);
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      return handleResponse(response, uri);
     } catch (e, s) {
       debugPrint("ERROR: $e");
       debugPrint("STACK: $s");
@@ -868,6 +851,9 @@ class ApiClient extends GetxService {
       statusCode: response.statusCode,
       statusText: response.reasonPhrase,
     );
+
+    _checkSessionExpired(httpResp.body);
+
     if (httpResp.statusCode != 200 &&
         httpResp.body != null &&
         httpResp.body is! String) {
@@ -890,5 +876,35 @@ class ApiClient extends GetxService {
       '====> API Response: [${httpResp.statusCode}] $uri\n${httpResp.body}',
     );
     return httpResp;
+  }
+
+  static const String _loginRoute = '/myRideLoginScreen';
+
+  /// This backend returns HTTP 200 with a body-level "code" for auth
+  /// failures (e.g. an expired/invalidated token), so the check has to
+  /// happen here rather than on the HTTP status code. Guarding on the
+  /// current route (rather than a one-shot flag) means this naturally
+  /// re-arms itself after the user logs back in and leaves the login screen.
+  void _checkSessionExpired(dynamic body) {
+    if (body is! Map) return;
+    if (Get.currentRoute == _loginRoute) return;
+
+    final code = body['code']?.toString();
+    final message = body['message']?.toString().toLowerCase() ?? '';
+    final isSessionExpired = code == '402' || message.contains('unauthenticated');
+    if (!isSessionExpired) return;
+
+    sharedPreferences.remove(ApiConstants.token);
+    sharedPreferences.remove(ApiConstants.profileid);
+    ApiConstants.userIdSocial = "";
+    ApiConstants.userTokenSocial = "";
+
+    Get.snackbar(
+      "Session Expired",
+      "Please log in again.",
+      backgroundColor: Colors.red,
+      colorText: Colors.white,
+    );
+    Get.offAllNamed(_loginRoute);
   }
 }

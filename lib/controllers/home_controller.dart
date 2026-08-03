@@ -15,6 +15,7 @@ import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
+import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/acceptedride_model.dart';
@@ -27,6 +28,7 @@ import 'package:myridedriverapp/model/qr_payment_model.dart';
 import 'package:myridedriverapp/repository/home_repo.dart';
 import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
+import 'package:myridedriverapp/widgets/custom_popup.dart';
 import 'package:http/http.dart' as http;
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -103,6 +105,7 @@ class HomeController extends GetxController {
   void onClose() {
     _autoUpdateTimer?.cancel();
     positionStream?.cancel();
+    _locationRetryTimer?.cancel();
     _dummyTimer?.cancel();
     _ringtoneTimer?.cancel();
     positionStreams?.cancel();
@@ -184,6 +187,31 @@ class HomeController extends GetxController {
   Future<void> toggleOnline(bool value, BuildContext context) async {
     if (isLoading) return;
 
+    // Going offline is always allowed. Going online is strictly gated on
+    // document approval — a driver whose documents aren't approved must
+    // never be able to take a ride.
+    if (!isOnline) {
+      final authController = Get.find<AuthController>();
+      final bool isApproved = await authController.fetchDocumentStatus();
+      if (!isApproved) {
+        final status =
+            (authController.isAnyDriverRejected ||
+                authController.isAnyVehicleRejected)
+            ? "rejected"
+            : "pending";
+
+        Get.dialog(
+          CustomPopup(
+            status: status,
+            buttonLabel: "Edit Documents",
+            showCloseButton: true,
+          ),
+          barrierDismissible: true,
+        );
+        return;
+      }
+    }
+
     isLoading = true;
     update();
 
@@ -223,27 +251,81 @@ class HomeController extends GetxController {
     update();
   }
 
-  void startLocationUpdates() {
+  Timer? _locationRetryTimer;
+
+  void startLocationUpdates() async {
     positionStream?.cancel();
+    _locationRetryTimer?.cancel();
 
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
-    );
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('❌ Location services are OFF — retrying shortly');
+        _scheduleLocationRetry();
+        return;
+      }
 
-    positionStream =
-        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-          (Position position) {
-            latitude = position.latitude;
-            longitude = position.longitude;
-            driverLatitude = position.latitude;
-            driverLongitude = position.longitude;
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
 
-            print("Lat: $latitude, Lng: $longitude");
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        debugPrint('❌ Location permission not granted — retrying shortly');
+        _scheduleLocationRetry();
+        return;
+      }
 
-            update();
-          },
+      const LocationSettings locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      );
+
+      // Get an immediate fix so the first update isn't stuck waiting on the
+      // device to physically move by distanceFilter meters.
+      try {
+        final position = await Geolocator.getCurrentPosition(
+          locationSettings: locationSettings,
         );
+        latitude = position.latitude;
+        longitude = position.longitude;
+        driverLatitude = position.latitude;
+        driverLongitude = position.longitude;
+        update();
+      } catch (e) {
+        debugPrint('❌ Could not get initial position: $e');
+      }
+
+      positionStream =
+          Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+            (Position position) {
+              latitude = position.latitude;
+              longitude = position.longitude;
+              driverLatitude = position.latitude;
+              driverLongitude = position.longitude;
+
+              print("Lat: $latitude, Lng: $longitude");
+
+              update();
+            },
+            onError: (e) {
+              debugPrint('❌ Location stream error: $e — retrying shortly');
+              _scheduleLocationRetry();
+            },
+          );
+    } catch (e) {
+      debugPrint('❌ startLocationUpdates error: $e — retrying shortly');
+      _scheduleLocationRetry();
+    }
+  }
+
+  /// Retries silently (no user-facing error) so location uploads — and
+  /// therefore ride matching — resume automatically the moment GPS/
+  /// permission becomes available, without requiring an app restart.
+  void _scheduleLocationRetry() {
+    _locationRetryTimer?.cancel();
+    _locationRetryTimer = Timer(const Duration(seconds: 15), startLocationUpdates);
   }
 
   void startListeningBookings() {

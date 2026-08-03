@@ -50,101 +50,113 @@ class _MyRideLoginScreenState extends State<MyRideLoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Image.asset(
-                'assets/images/splashscreen.png',
-                height: MediaQuery.of(context).size.height * 0.15,
-                width: MediaQuery.of(context).size.width * 0.5,
-                color: ColorResources.blueeebutton,
-                fit: BoxFit.contain,
-              ),
+              // Centers the logo/text/buttons block in the space above the
+              // footer, instead of the block sitting pinned to the top with
+              // a large empty gap below it.
+              Expanded(
+                child: Align(
+                  alignment: const Alignment(0, -0.8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Image.asset(
+                        'assets/images/nride_wordmark_transparent.png',
+                        height: MediaQuery.of(context).size.height * 0.05,
+                        fit: BoxFit.contain,
+                      ),
 
-              Text(
-                "Let's Get Started!",
-                style: PoppinsSemiBold.copyWith(
-                  color: ColorResources.blackcolor,
+                      SizedBox(height: MediaQuery.of(context).size.height * 0.02),
+
+                      Text(
+                        "Let's Get Started!",
+                        style: PoppinsSemiBold.copyWith(
+                          color: ColorResources.blackcolor,
+                        ),
+                      ),
+
+                      SizedBox(height: Dimensions.spacingSize10),
+
+                      Text(
+                        "Let's dive in into your account",
+                        style: PoppinsMedium.copyWith(
+                          color: ColorResources.TextColorForGrey,
+                        ),
+                      ),
+
+                      SizedBox(height: Dimensions.spacingSize40),
+
+                      CustomSocialButton(
+                        text: "Continue with Google",
+                        images: 'assets/images/google.png',
+                        iconColor: Colors.red,
+                        onTap: () async {
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (_) => PremiumBlurLoader(),
+                          );
+
+                          try {
+                            final response = await Get.find<AuthController>()
+                                .signInWithGoogle(
+                                  provider: 'google',
+                                  context: context,
+                                );
+
+                            if (Get.isDialogOpen ?? false) Get.back();
+
+                            if (response == null) return;
+
+                            final code = response.body?['code']?.toString() ?? '';
+                            final verificationStatus =
+                                response.body?['verification_status']?.toString() ?? '';
+
+                            if (code == '200') {
+                              Get.offAllNamed(RouteHelper.gethomescreen());
+                            } else if (code == '401') {
+                              if (verificationStatus == "rejected" ||
+                                  verificationStatus == "pending") {
+                                Get.dialog(
+                                  CustomPopup(status: verificationStatus),
+                                  barrierDismissible: false,
+                                );
+                              }
+                            } else {
+                              Get.snackbar(
+                                "Error",
+                                response.body?['message'] ?? "Something went wrong",
+                                backgroundColor: ColorResources.textColorRed,
+                                colorText: ColorResources.whiteColor,
+                              );
+                            }
+                          } catch (e) {
+                            if (Get.isDialogOpen ?? false) Get.back();
+                          }
+                        },
+                      ),
+
+                      SizedBox(height: Dimensions.spacingSize10),
+
+                      CustomPrimaryButton(
+                        text: "Sign up",
+                        onTap: () {
+                          Get.toNamed(RouteHelper.getSignupScreen());
+                        },
+                      ),
+
+                      SizedBox(height: Dimensions.spacingSize16),
+
+                      CustomSecondaryButton(
+                        text: "Sign in",
+                        onTap: () {
+                          Get.toNamed(RouteHelper.getLoginRoute());
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
-
-              SizedBox(height: Dimensions.spacingSize10),
-
-              Text(
-                "Let's dive in into your account",
-                style: PoppinsMedium.copyWith(
-                  color: ColorResources.TextColorForGrey,
-                ),
-              ),
-
-              SizedBox(height: Dimensions.spacingSize40),
-
-              CustomSocialButton(
-                text: "Continue with Google",
-                images: 'assets/images/google.png',
-                iconColor: Colors.red,
-                onTap: () async {
-                  showDialog(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (_) => PremiumBlurLoader(),
-                  );
-
-                  try {
-                    final response = await Get.find<AuthController>()
-                        .signInWithGoogle(
-                          provider: 'google',
-                          context: context,
-                        );
-
-                    if (Get.isDialogOpen ?? false) Get.back();
-
-                    if (response == null) return;
-
-                    final code = response.body?['code']?.toString() ?? '';
-                    final verificationStatus =
-                        response.body?['verification_status']?.toString() ?? '';
-
-                    if (code == '200') {
-                      Get.offAllNamed(RouteHelper.gethomescreen());
-                    } else if (code == '401') {
-                      if (verificationStatus == "rejected" ||
-                          verificationStatus == "pending") {
-                        Get.dialog(
-                          CustomPopup(status: verificationStatus),
-                          barrierDismissible: false,
-                        );
-                      }
-                    } else {
-                      Get.snackbar(
-                        "Error",
-                        response.body?['message'] ?? "Something went wrong",
-                        backgroundColor: ColorResources.textColorRed,
-                        colorText: ColorResources.whiteColor,
-                      );
-                    }
-                  } catch (e) {
-                    if (Get.isDialogOpen ?? false) Get.back();
-                  }
-                },
-              ),
-
-              SizedBox(height: Dimensions.spacingSize10),
-
-              CustomPrimaryButton(
-                text: "Sign up",
-                onTap: () {
-                  Get.toNamed(RouteHelper.getSignupScreen());
-                },
-              ),
-
-              SizedBox(height: Dimensions.spacingSize16),
-
-              CustomSecondaryButton(
-                text: "Sign in",
-                onTap: () {
-                  Get.toNamed(RouteHelper.getLoginRoute());
-                },
-              ),
-
-              const Spacer(),
 
               RichText(
                 textAlign: TextAlign.center,

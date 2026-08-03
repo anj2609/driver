@@ -240,6 +240,10 @@ class _EarningsScreenState extends State<EarningsScreen> {
                     return Center(child: SizedBox());
                   }
 
+                  final hasEarnings =
+                      controller.totalEarnings > 0 &&
+                      controller.barGroups.isNotEmpty;
+
                   return Container(
                     margin: const EdgeInsets.symmetric(horizontal: 16),
                     padding: const EdgeInsets.all(16),
@@ -261,6 +265,39 @@ class _EarningsScreenState extends State<EarningsScreen> {
 
                         const SizedBox(height: 16),
 
+                        if (!hasEarnings)
+                          SizedBox(
+                            height: 160,
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.bar_chart_rounded,
+                                    size: 40,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    "No earnings yet",
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "Complete rides to start earning",
+                                    style: TextStyle(
+                                      color: Colors.grey.shade500,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        else
                         /// BAR CHART
                         SizedBox(
                           height: 160,

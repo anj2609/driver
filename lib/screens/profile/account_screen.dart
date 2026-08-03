@@ -50,10 +50,15 @@ class AccountScreen extends StatelessWidget {
                     accountTile(
                       icon: Icons.directions_car,
                       title: "Vehicles",
-                      
+
                     ),
 
-                   
+                    accountTile(
+                      icon: Icons.local_offer_outlined,
+                      title: "Referral History",
+                    ),
+
+
                     accountTile(
                       icon: Icons.lock_outline,
                       title: "Privacy",
@@ -124,6 +129,8 @@ class AccountScreen extends StatelessWidget {
           onTap: () {
             if (title == 'Vehicles') {
               Get.toNamed(RouteHelper.getvehiclesScreen());
+            } else if (title == 'Referral History') {
+              Get.toNamed(RouteHelper.getcouponHistoryScreen());
             } else if (title == 'Documents') {
               Get.toNamed(RouteHelper.getaccountDocumentsScreen());
             } else if (title == 'Manage Account') {

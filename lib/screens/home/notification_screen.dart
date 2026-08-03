@@ -165,7 +165,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                                       ? Icons.notifications_active
                                       : Icons.notifications,
                                   color: item.isRead == "0"
-                                      ? Colors.blue
+                                      ? const Color(0xFF123EBC)
                                       : Colors.grey,
                                 ),
 

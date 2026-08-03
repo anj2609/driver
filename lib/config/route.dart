@@ -22,6 +22,7 @@ import 'package:myridedriverapp/screens/home/notification_screen.dart';
 import 'package:myridedriverapp/screens/profile/account_screen.dart';
 import 'package:myridedriverapp/screens/profile/add_bank_screen.dart';
 import 'package:myridedriverapp/screens/profile/chat_screen.dart';
+import 'package:myridedriverapp/screens/profile/coupon_history_screen.dart';
 import 'package:myridedriverapp/screens/profile/edit_profile.dart';
 import 'package:myridedriverapp/screens/profile/vehicles_screen.dart';
 import 'package:myridedriverapp/screens/profile/edit_address_screen.dart';
@@ -57,6 +58,7 @@ class RouteHelper {
   static const String erningMainActivityscreen = '/erningMainActivityscreen';
   static const String mainActivityTripDetails = '/mainActivityTripDetails';
   static const String vehiclesScreen = '/vehiclesScreen';
+  static const String couponHistoryScreen = '/couponHistoryScreen';
   static const String accountDocumentsScreen = '/accountDocumentsScreen';
   static const String manageAccountScreen = '/manageAccountScreen';
   static const String editAddressScreen = '/editAddressScreen';
@@ -110,6 +112,7 @@ class RouteHelper {
   // }
 
   static getvehiclesScreen() => vehiclesScreen;
+  static getcouponHistoryScreen() => couponHistoryScreen;
   static getaccountDocumentsScreen() => accountDocumentsScreen;
   static getmanageAccountScreen() => manageAccountScreen;
   static geteditAddressScreen() => editAddressScreen;
@@ -305,6 +308,15 @@ class RouteHelper {
     GetPage(
       name: vehiclesScreen,
       page: () => VehiclesScreen(),
+      transitionDuration: Duration(
+        milliseconds: ApiConstants.screenTransitionTime,
+      ),
+
+      transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: couponHistoryScreen,
+      page: () => const CouponHistoryScreen(),
       transitionDuration: Duration(
         milliseconds: ApiConstants.screenTransitionTime,
       ),

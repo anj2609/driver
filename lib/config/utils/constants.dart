@@ -89,6 +89,10 @@ class ApiConstants {
   static const String getBankInfo = 'get-bank-info';
   ///// get-bank-info
 
+  static const String validateCoupon = 'validate-coupon';
+  static const String redeemCoupon = 'redeem-coupon';
+  static const String couponHistory = 'coupon-history';
+
   ///////========= local store data ====================================//////////
 
   static const String otpapi = 'subscription-add';
@@ -115,6 +119,12 @@ class ApiConstants {
   static String userIdSocial = "";
   static String userTokenSocial = "";
   static const String isDocumentSaved = 'isDocumentsavedKey';
+  // Set exactly once — right when the final vehicle-document upload
+  // succeeds. Unlike isPersonalSavedStatus/verification_status (which get
+  // written at other points too, including with backend-default values for
+  // brand-new accounts), this is the one unambiguous "registration fully
+  // submitted, now under review" signal splash routing can trust.
+  static const String docsSubmittedForReview = 'docs_submitted_for_review';
   static String socialtoken = "";
   static String gmailAddres = "";
   static String userName = "";
@@ -132,4 +142,11 @@ class ApiConstants {
 dynamic driverLatitude;
 dynamic driverLongitude;
 dynamic driverId;
+
+/// Kicked off in main() without being awaited, so Flutter can paint its
+/// first frame (and dismiss Android's mandatory native splash) immediately
+/// instead of waiting on Firebase/DI setup. Anything that needs Firebase or
+/// GetX bindings ready (FCM listeners, Get.find calls) should await this
+/// first.
+Future<void>? appInitialization;
 dynamic driverprofileStatus;

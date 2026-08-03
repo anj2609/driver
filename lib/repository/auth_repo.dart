@@ -62,6 +62,28 @@ class AuthRepo extends GetxService {
     );
   }
 
+  Future<Response> validateCoupon({
+    required String userId,
+    required String code,
+  }) async {
+    return apiClient.postData(ApiConstants.validateCoupon, {
+      'user_id': userId,
+      'code': code,
+      'user_type': ApiConstants.driverLogin,
+    });
+  }
+
+  Future<Response> redeemCoupon({
+    required String userId,
+    required String code,
+  }) async {
+    return apiClient.postData(ApiConstants.redeemCoupon, {
+      'user_id': userId,
+      'code': code,
+      'user_type': ApiConstants.driverLogin,
+    });
+  }
+
   Future<Response> driverdocument() async {
     return apiClient.getApi(
       ApiConstants.driverDocument + ApiConstants.driverLogin,
@@ -80,6 +102,7 @@ class AuthRepo extends GetxService {
 
   Future<Response> vehicaleInfo({
     String? vehicalid,
+    String? vehicleId,
     String? vehicalnumber,
     String? brand,
     String? model,
@@ -91,6 +114,10 @@ class AuthRepo extends GetxService {
   }) async {
     return apiClient.postdrivervehicale(ApiConstants.vehicalInfo, {
       "vehicle_type_id": vehicalid,
+      // Identifies the existing vehicle record being edited (as opposed
+      // to creating a new one) — omitted entirely during signup, where
+      // there's no existing vehicle yet.
+      if (vehicleId != null && vehicleId.isNotEmpty) "vehicle_id": vehicleId,
       "vehicle_number": vehicalnumber,
       "brand": brand,
       "model": model,

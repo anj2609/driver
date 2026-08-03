@@ -41,9 +41,19 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
     _init();
   }
 
+  // The controller's own list is the source of truth — widget.trips is only
+  // the snapshot at the moment this screen was first pushed. Reading from
+  // the controller here means the "Accept"/"X" buttons and any new booking
+  // the poll adds while this screen is open are reflected immediately,
+  // instead of the screen staying frozen on its original snapshot.
+  List<NewBookingNearByModel> get _trips => controller.incomingTrips;
+
+  int get _safeIndex =>
+      _trips.isEmpty ? 0 : currentIndex.clamp(0, _trips.length - 1);
+
   Future<void> _init() async {
     await getCurrentLocation();
-    await _updateMap();
+    if (_trips.isNotEmpty) await _updateMap();
   }
 
   Future<void> getCurrentLocation() async {
@@ -58,7 +68,8 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   }
 
   Future<void> _updateMap() async {
-    final trip = widget.trips[currentIndex];
+    if (_trips.isEmpty) return;
+    final trip = _trips[_safeIndex];
 
     markers.clear();
     polylines.clear();
@@ -124,7 +135,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
     polylines.add(
       Polyline(
         polylineId: const PolylineId("route"),
-        color: Colors.blue,
+        color: const Color(0xFF123EBC),
         width: 6,
         points: routePoints,
       ),
@@ -165,65 +176,88 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final trip = widget.trips[currentIndex];
+    return GetBuilder<HomeController>(
+      builder: (_) {
+        final trips = _trips;
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          /// 🔵 GOOGLE MAP
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: LatLng(
-                widget.trips[currentIndex].pickupLat!,
-                widget.trips[currentIndex].pickupLng!,
-              ),
-              zoom: 14,
-            ),
-            onMapCreated: (controller) {
-              mapController = controller;
-              _updateMap();
-            },
-            markers: markers,
-            polylines: polylines,
-            myLocationEnabled: true,
-            zoomControlsEnabled: false,
-          ),
+        if (trips.isEmpty) {
+          // The last remaining request was rejected/accepted elsewhere —
+          // close this screen instead of rendering with nothing to show.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            controller.stopRingtone();
+            if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+          });
+          return const Scaffold(body: SizedBox.shrink());
+        }
 
-          Positioned(
-            top: 50,
-            right: 20,
-            child: CircleAvatar(
-              backgroundColor: ColorResources.whiteColor,
-              child: IconButton(
-                icon: Icon(Icons.close),
-                onPressed: () {
-                  controller.rejectTrip(trip);
-                },
-              ),
-            ),
-          ),
+        final safeIndex = _safeIndex;
+        final trip = trips[safeIndex];
 
-          Positioned(
-            bottom: MediaQuery.of(context).padding.bottom,
-            left: 0,
-            right: 0,
-            child: SizedBox(
-              height: 300,
-              child: PageView.builder(
-                controller: PageController(viewportFraction: 0.92),
-                itemCount: widget.trips.length,
-                onPageChanged: (index) {
-                  currentIndex = index;
+        return Scaffold(
+          body: Stack(
+            children: [
+              /// 🔵 GOOGLE MAP
+              GoogleMap(
+                initialCameraPosition: CameraPosition(
+                  target: LatLng(trip.pickupLat!, trip.pickupLng!),
+                  zoom: 14,
+                ),
+                onMapCreated: (controller) {
+                  mapController = controller;
                   _updateMap();
                 },
-                itemBuilder: (context, index) {
-                  return _rideCard(widget.trips[index]);
-                },
+                markers: markers,
+                polylines: polylines,
+                myLocationEnabled: true,
+                zoomControlsEnabled: false,
               ),
-            ),
+
+              Positioned(
+                top: 50,
+                right: 20,
+                child: CircleAvatar(
+                  backgroundColor: ColorResources.whiteColor,
+                  child: IconButton(
+                    icon: Icon(Icons.close),
+                    onPressed: () {
+                      controller.rejectTrip(trip);
+                    },
+                  ),
+                ),
+              ),
+
+              Positioned(
+                bottom: MediaQuery.of(context).padding.bottom,
+                left: 0,
+                right: 0,
+                child: SizedBox(
+                  height: 300,
+                  // Re-keying on the trip list forces the PageView (and its
+                  // internal controller/scroll position) to reset cleanly
+                  // whenever a request is rejected or a new one arrives,
+                  // instead of holding onto a stale page index.
+                  child: PageView.builder(
+                    key: ValueKey(trips.length),
+                    controller: PageController(
+                      viewportFraction: 0.92,
+                      initialPage: safeIndex,
+                    ),
+                    itemCount: trips.length,
+                    onPageChanged: (index) {
+                      currentIndex = index;
+                      _updateMap();
+                    },
+                    itemBuilder: (context, index) {
+                      return _rideCard(trips[index]);
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
