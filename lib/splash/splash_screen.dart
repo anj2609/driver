@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:video_player/video_player.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
@@ -23,53 +22,94 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   bool _hasNavigated = false;
-  Timer? _timer;
+  Timer? _frameTimer;
   Timer? _fallbackTimer;
 
-  // Sampled directly from the video's own background (top/bottom corner
-  // pixels of its frames) so the letterboxed area above/below the video
-  // (its aspect ratio is wider than any portrait screen) blends into it
-  // seamlessly instead of showing a mismatched or default color.
-  static const Color _videoTopColor = Color(0xFF161C91);
-  static const Color _videoBottomColor = Color(0xFF0B0FAB);
+  // Page-wide gradient (the animated icon itself has a transparent
+  // background — no video codec Flutter can play supports alpha
+  // compositing, so the icon is a PNG frame sequence layered on top of
+  // this gradient instead of a video).
+  static const Color _gradientStart = Color(0xFF292B84);
+  static const Color _gradientEnd = Color(0xFF0004CF);
 
-  late final VideoPlayerController _videoController;
-  bool _videoReady = false;
+  // Source clip ("transparent final.mov") exported at 20fps/5s as a
+  // transparent PNG sequence — video_player can't decode its ProRes+alpha
+  // codec, and Flutter's video widgets don't composite alpha even when a
+  // codec can be decoded, so a frame sequence is the reliable option.
+  static const int _frameCount = 100;
+  static const Duration _frameInterval = Duration(milliseconds: 50); // 20fps
+
+  late final List<String> _framePaths = List.generate(
+    _frameCount,
+    (i) =>
+        'assets/images/splash_frames/frame_${(i + 1).toString().padLeft(3, '0')}.png',
+  );
+
+  int _currentFrame = 0;
+  bool _framesReady = false;
+
+  bool _hasStartedLoading = false;
 
   @override
   void initState() {
     super.initState();
 
-    _videoController =
-        VideoPlayerController.asset('assets/images/nride_gif_cropped.mp4')
-          ..setLooping(true)
-          ..setVolume(0)
-          ..initialize().then((_) {
-            if (!mounted) return;
-            setState(() => _videoReady = true);
-            _videoController.play();
-
-            // Start the navigation countdown only once the video is
-            // actually playing, timed to its real duration — a fixed
-            // delay from initState() was firing before initialization
-            // (which can take a noticeable moment, especially on a cold
-            // start alongside Firebase/DI setup) finished, cutting the
-            // video off partway through instead of letting it finish.
-            _fallbackTimer?.cancel();
-            final playDuration =
-                _videoController.value.duration + const Duration(milliseconds: 300);
-            _timer = Timer(playDuration, _navigateAfterDelay);
-          });
-
-    // Safety fallback in case video initialization stalls entirely
-    // (e.g. a corrupt/missing asset) — never get stuck on the splash.
+    // Safety fallback in case frame precaching stalls entirely — never get
+    // stuck on the splash.
     _fallbackTimer = Timer(const Duration(seconds: 10), _navigateAfterDelay);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // precacheImage() needs MediaQuery (via createLocalImageConfiguration),
+    // which isn't available yet inside initState() — calling it there threw
+    // on every frame and silently killed the animation before it ever
+    // started. didChangeDependencies() is the correct place for this.
+    if (_hasStartedLoading) return;
+    _hasStartedLoading = true;
+    _loadFramesAndPlay();
+  }
+
+  Future<void> _loadFramesAndPlay() async {
+    // Precache every frame before starting playback so the full animation
+    // plays smoothly from frame one instead of janking while assets decode
+    // mid-playback. Guarded so a single bad/missing frame can't silently
+    // strand the splash on just the gradient until the fallback timer.
+    try {
+      await Future.wait(
+        _framePaths.map((path) => precacheImage(AssetImage(path), context)),
+      );
+    } catch (e) {
+      debugPrint('[Splash] frame precache failed: $e');
+    }
+
+    if (!mounted) return;
+
+    setState(() => _framesReady = true);
+
+    _frameTimer = Timer.periodic(_frameInterval, (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      if (_currentFrame >= _frameCount - 1) {
+        timer.cancel();
+        // Hold on the final revealed frame briefly before navigating.
+        Future.delayed(const Duration(milliseconds: 400), _navigateAfterDelay);
+        return;
+      }
+
+      setState(() => _currentFrame++);
+    });
   }
 
   Future<void> _navigateAfterDelay() async {
     if (_hasNavigated) return;
     _hasNavigated = true;
-    _timer?.cancel();
+    _frameTimer?.cancel();
     _fallbackTimer?.cancel();
 
     // Firebase/DI are kicked off in main() without being awaited so the
@@ -176,9 +216,8 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _frameTimer?.cancel();
     _fallbackTimer?.cancel();
-    _videoController.dispose();
     super.dispose();
   }
 
@@ -188,22 +227,17 @@ class _SplashScreenState extends State<SplashScreen> {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [_videoTopColor, _videoBottomColor],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [_gradientStart, _gradientEnd],
           ),
         ),
-        child: _videoReady
+        child: _framesReady
             ? Center(
-                child: SizedBox.expand(
-                  child: FittedBox(
-                    fit: BoxFit.contain,
-                    child: SizedBox(
-                      width: _videoController.value.size.width,
-                      height: _videoController.value.size.height,
-                      child: VideoPlayer(_videoController),
-                    ),
-                  ),
+                child: Image.asset(
+                  _framePaths[_currentFrame],
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
                 ),
               )
             : const SizedBox.expand(),
