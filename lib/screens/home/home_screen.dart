@@ -346,6 +346,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               builder: (controller) {
                 return OnlineToggleButton(
                   isOnline: controller.isOnline,
+                  isLoading: controller.isTogglingOnline,
                   onTap: () {
                     controller.toggleOnline(controller.isOnline, context);
                   },

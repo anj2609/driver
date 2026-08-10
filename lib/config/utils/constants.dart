@@ -1,7 +1,7 @@
 class ApiConstants {
   //==== base url =====
 
-  static const String baseUrl = 'https://myride.infinititechsolution.com/api/';
+  static const String baseUrl = 'https://app.nride.in/api/';
 
   ////========= api End Point ==================================
   static const String sendOtpUrl = 'send-otp';

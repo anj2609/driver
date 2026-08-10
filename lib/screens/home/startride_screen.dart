@@ -239,6 +239,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: OnlineToggleButton(
         isOnline: controller.isOnline,
+        isLoading: controller.isTogglingOnline,
         onTap: () => controller.toggleOnline(controller.isOnline, context),
       ),
     );

@@ -1,37 +1,31 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 
-class OnlineToggleButton extends StatefulWidget {
+class OnlineToggleButton extends StatelessWidget {
   final bool isOnline;
+
+  /// Drives the disabled/loading look off the *actual* in-flight request
+  /// (HomeController.isLoading) rather than a fixed cosmetic timer. A fixed
+  /// timer (the old approach) re-enables the button before a slow request
+  /// has actually finished, so a tap during that window gets silently
+  /// swallowed by the controller's isLoading guard with zero visual
+  /// feedback — which reads to the driver as "the toggle doesn't respond",
+  /// while the earlier tap's toast/state-change lands late and looks
+  /// disconnected from whatever they were doing by then.
+  final bool isLoading;
   final VoidCallback onTap;
 
   const OnlineToggleButton({
     super.key,
     required this.isOnline,
+    required this.isLoading,
     required this.onTap,
   });
-
-  @override
-  State<OnlineToggleButton> createState() => _OnlineToggleButtonState();
-}
-
-class _OnlineToggleButtonState extends State<OnlineToggleButton> {
-  bool _isCooldown = false;
-
-  void _handleTap() {
-    if (_isCooldown) return;
-    setState(() => _isCooldown = true);
-    widget.onTap();
-    Timer(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _isCooldown = false);
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: GestureDetector(
-        onTap: _isCooldown ? null : _handleTap,
+        onTap: isLoading ? null : onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeInOut,
@@ -41,22 +35,22 @@ class _OnlineToggleButtonState extends State<OnlineToggleButton> {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: widget.isOnline
+              colors: isOnline
                   ? [Colors.green, Colors.green]
                   : [Colors.red, Colors.red],
             ),
             borderRadius: BorderRadius.circular(40),
             boxShadow: [
               BoxShadow(
-                color: (widget.isOnline ? Colors.green : Colors.red)
-                    .withValues(alpha: _isCooldown ? 0.2 : 0.5),
+                color: (isOnline ? Colors.green : Colors.red)
+                    .withValues(alpha: isLoading ? 0.2 : 0.5),
                 blurRadius: 15,
                 offset: const Offset(0, 6),
               ),
             ],
           ),
           child: Opacity(
-            opacity: _isCooldown ? 0.6 : 1.0,
+            opacity: isLoading ? 0.6 : 1.0,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -64,20 +58,30 @@ class _OnlineToggleButtonState extends State<OnlineToggleButton> {
                   duration: const Duration(milliseconds: 300),
                   transitionBuilder: (child, animation) =>
                       FadeTransition(opacity: animation, child: child),
-                  child: Text(
-                    widget.isOnline ? "Online" : "Offline",
-                    key: ValueKey(widget.isOnline),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          key: ValueKey('loading'),
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor: AlwaysStoppedAnimation(Colors.white),
+                          ),
+                        )
+                      : Text(
+                          isOnline ? "Online" : "Offline",
+                          key: ValueKey(isOnline),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                 ),
                 AnimatedAlign(
                   duration: const Duration(milliseconds: 400),
-                  alignment: widget.isOnline
+                  alignment: isOnline
                       ? Alignment.centerRight
                       : Alignment.centerLeft,
                   child: Container(
@@ -89,9 +93,7 @@ class _OnlineToggleButtonState extends State<OnlineToggleButton> {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      widget.isOnline
-                          ? Icons.power_settings_new
-                          : Icons.double_arrow,
+                      isOnline ? Icons.power_settings_new : Icons.double_arrow,
                       color: const Color(0xFF123EBC),
                     ),
                   ),

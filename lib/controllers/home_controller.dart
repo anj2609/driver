@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:geolocator/geolocator.dart';
@@ -27,6 +29,8 @@ import 'package:myridedriverapp/model/trinpdetails_model.dart';
 import 'package:myridedriverapp/model/qr_payment_model.dart';
 import 'package:myridedriverapp/repository/home_repo.dart';
 import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
+import 'package:myridedriverapp/services/geo_utils.dart';
+import 'package:myridedriverapp/services/location_health_tracker.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_popup.dart';
 import 'package:http/http.dart' as http;
@@ -82,6 +86,31 @@ class HomeController extends GetxController {
   StreamSubscription<Position>? positionStreams;
   GoogleMapController? mapController;
 
+  // ==================== Location pipeline health ====================
+  //
+  // Tracks whether the location updates we're SENDING are actually landing
+  // on the backend — GPS can look perfectly fine locally while every
+  // transmission attempt silently fails (dead token, dropped connection,
+  // OS suspending the app in the background). Without this, a driver can
+  // sit "online" indefinitely while invisible to every rider, with no
+  // indication anything is wrong.
+  final LocationHealthTracker locationHealth = LocationHealthTracker();
+  Timer? _stalenessWatchdog;
+  bool _autoOfflineTriggered = false;
+
+  // How long the backend's copy of our location can go without a confirmed
+  // refresh before we stop trusting ourselves to be "visible" and take
+  // action. The heartbeat fires every ~5s, so this tolerates a handful of
+  // missed beats (e.g. a brief network blip) before reacting.
+  static const Duration staleLocationThreshold = Duration(seconds: 40);
+
+  // A "nearby" result whose pickup is farther than this from our current
+  // position is almost certainly a backend bug (wrong coordinate order,
+  // degrees/radians mix-up, wrong table) rather than a legitimately large
+  // search radius — logged as a loud warning so it's debuggable without
+  // guesswork instead of just quietly rendering a marker in the wrong spot.
+  static const double suspiciousMatchDistanceKm = 100;
+
   bool _isInitialized = false;
 
   @override
@@ -92,6 +121,7 @@ class HomeController extends GetxController {
 
     startLocationUpdates();
     startAutoUpdate();
+    _startStalenessWatchdog();
     loadCustomMarker();
     loadUserMarker();
     // Online status is restored from SharedPreferences via loadSavedStatus() below
@@ -106,6 +136,7 @@ class HomeController extends GetxController {
     _autoUpdateTimer?.cancel();
     positionStream?.cancel();
     _locationRetryTimer?.cancel();
+    _stalenessWatchdog?.cancel();
     _dummyTimer?.cancel();
     _ringtoneTimer?.cancel();
     positionStreams?.cancel();
@@ -114,6 +145,74 @@ class HomeController extends GetxController {
       _player.dispose();
     } catch (_) {}
     super.onClose();
+  }
+
+  /// Runs independently of the heartbeat itself, checking whether the
+  /// backend's copy of our location has gone stale — e.g. because
+  /// [driverUpdateLocation] has been failing silently, or the OS suspended
+  /// the app in the background and the heartbeat timer simply stopped
+  /// firing. If we're still marked "online" when that happens, the driver
+  /// is invisible to riders without knowing it — so we take ourselves
+  /// offline and say why, instead of leaving that state undetected.
+  void _startStalenessWatchdog() {
+    _stalenessWatchdog?.cancel();
+    _stalenessWatchdog = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!isOnline) return;
+
+      if (locationHealth.isStale(threshold: staleLocationThreshold)) {
+        _handleLocationStale();
+      }
+    });
+  }
+
+  /// Takes the driver offline (locally immediately, and best-effort on the
+  /// backend) when their location hasn't been confirmed-stored recently
+  /// enough to trust that riders can actually find them. Only fires once
+  /// per stale episode — [toggleOnline] resets the flag the next time the
+  /// driver deliberately goes online again.
+  Future<void> _handleLocationStale() async {
+    if (_autoOfflineTriggered) return;
+    _autoOfflineTriggered = true;
+
+    final staleFor = locationHealth.timeSinceLastSuccess();
+    debugPrint(
+      '[LocationPipeline] STALE — no confirmed location update in '
+      '${staleFor?.inSeconds ?? "∞"}s while online. Taking driver offline '
+      'so stale-location matching can\'t happen silently.',
+    );
+
+    // Reflect reality in this app immediately — don't wait on the network
+    // call below, since the driver's own UI showing "online" while we
+    // already know the backend copy is stale would itself be misleading.
+    isOnline = false;
+    stopListeningBookings();
+    await saveOnlineStatus(false);
+    update();
+
+    if (Get.context != null) {
+      AnimatedTopToast.show(
+        context: Get.context!,
+        message:
+            "You've been set offline — your location hasn't reached us "
+            "recently, so nearby riders couldn't find you. Check your "
+            "connection/GPS and go online again when ready.",
+        backgroundColor: Colors.orange,
+        icon: Icons.location_off_rounded,
+      );
+    }
+
+    // Best-effort: also tell the backend, so its own record reflects
+    // offline rather than relying solely on it independently detecting
+    // staleness (which we can't verify from the client).
+    try {
+      final response = await homeRepo.driverStatusModeApi();
+      debugPrint(
+        '[LocationPipeline] auto-offline server sync: '
+        '${response.statusCode} ${response.body}',
+      );
+    } catch (e) {
+      debugPrint('[LocationPipeline] auto-offline server sync failed: $e');
+    }
   }
 
   Future<void> loadOnlineStatus() async {
@@ -162,15 +261,37 @@ class HomeController extends GetxController {
 
   void startAutoUpdate() {
     _autoUpdateTimer?.cancel();
-    _autoUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (latitude != null && longitude != null) {
-        driverUpdateLocation(lat: latitude!, lng: longitude!);
+    _autoUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (latitude == null || longitude == null) return;
+
+      // Previously fire-and-forget: driverUpdateLocation() was called
+      // without awaiting or catching, so persistent failures (expired
+      // token, timeout, etc.) became unhandled Future errors — logged by
+      // the zone handler at best, otherwise invisible — with no retry
+      // strategy beyond "hope the next blind tick works." Awaiting +
+      // catching here means every attempt's outcome is now observed and
+      // recorded via driverUpdateLocation() itself.
+      try {
+        await driverUpdateLocation(lat: latitude!, lng: longitude!);
+      } catch (e) {
+        debugPrint('[LocationPipeline] heartbeat update failed: $e');
       }
     });
   }
 
   bool isOnline = false;
   bool isLoading = false;
+
+  // Dedicated to the online/offline toggle specifically — NOT the same as
+  // `isLoading` above, which is a general-purpose flag shared by several
+  // unrelated calls elsewhere in this controller (e.g. nweBookingNearByMeApi).
+  // Sharing one flag meant those other calls could reset it out from under
+  // an in-flight toggle request (or vice versa), un-disabling the toggle
+  // button — and re-opening the tap guard — before the toggle's own
+  // request had actually finished. That's what caused the toggle to look
+  // idle/tappable again mid-request and let a second real tap slip through,
+  // producing a toast/button state that looked one step out of sync.
+  bool isTogglingOnline = false;
   static const String isOnlineKey = "isOnline";
   static const String saveRideStatus = "pending";
   Future<void> saveOnlineStatus(bool status) async {
@@ -185,37 +306,60 @@ class HomeController extends GetxController {
   }
 
   Future<void> toggleOnline(bool value, BuildContext context) async {
-    if (isLoading) return;
+    if (isTogglingOnline) return;
 
-    // Going offline is always allowed. Going online is strictly gated on
-    // document approval — a driver whose documents aren't approved must
-    // never be able to take a ride.
-    if (!isOnline) {
-      final authController = Get.find<AuthController>();
-      final bool isApproved = await authController.fetchDocumentStatus();
-      if (!isApproved) {
-        final status =
-            (authController.isAnyDriverRejected ||
-                authController.isAnyVehicleRejected)
-            ? "rejected"
-            : "pending";
-
-        Get.dialog(
-          CustomPopup(
-            status: status,
-            buttonLabel: "Edit Documents",
-            showCloseButton: true,
-          ),
-          barrierDismissible: true,
-        );
-        return;
-      }
-    }
-
-    isLoading = true;
+    // Locked in synchronously, before any `await` below, so a second tap
+    // that lands while the document-approval check (or the status API
+    // call) is still in flight can't slip past the guard above and fire an
+    // overlapping toggle request — that race was why the toggle used to
+    // need several taps to reliably register. Uses its own dedicated flag
+    // rather than the general-purpose `isLoading` (which other, unrelated
+    // calls elsewhere in this controller also set/clear) — sharing one
+    // flag meant those other calls could reset it mid-toggle-request,
+    // un-disabling the button and re-opening this guard before the
+    // toggle's own request had actually finished.
+    isTogglingOnline = true;
     update();
 
     try {
+      // Going offline is always allowed. Going online is strictly gated on
+      // document approval — a driver whose documents aren't approved must
+      // never be able to take a ride.
+      if (!isOnline) {
+        final authController = Get.find<AuthController>();
+        // navigateOnApproved: false — we're already on the Home screen
+        // (that's where the toggle lives). The default `true` fires
+        // Get.offAllNamed(home) as a side effect of a plain approval
+        // check, which tears down and remounts this very screen (and,
+        // being fenix-managed, the HomeController itself) mid-tap. The
+        // rest of this function then keeps running against the disposed
+        // controller instance — its update()s land on nobody, so the
+        // toggle stops visually reflecting isOnline, while the toast
+        // (an Overlay call, independent of GetBuilder) still fires and
+        // reports whatever that orphaned instance computed. That's what
+        // made the toggle and toast look one tap out of sync.
+        final bool isApproved = await authController.fetchDocumentStatus(
+          navigateOnApproved: false,
+        );
+        if (!isApproved) {
+          final status =
+              (authController.isAnyDriverRejected ||
+                  authController.isAnyVehicleRejected)
+              ? "rejected"
+              : "pending";
+
+          Get.dialog(
+            CustomPopup(
+              status: status,
+              buttonLabel: "Edit Documents",
+              showCloseButton: true,
+            ),
+            barrierDismissible: true,
+          );
+          return;
+        }
+      }
+
       Response res = await driverStatusOnlineOffline(context: context);
 
       if (res.statusCode == 200 && res.body['code'] == "200") {
@@ -233,22 +377,70 @@ class HomeController extends GetxController {
 
         isOnline = workStatus == 1;
 
+        // Push this out immediately, as its own explicit rebuild request,
+        // rather than leaving the toggle button to pick it up whenever the
+        // isLoading-driven update() at the bottom of this function happens
+        // to land.
+        update();
+
+        // update() only *schedules* GetBuilder's rebuild for the next
+        // frame — it doesn't force one to happen synchronously. The toast
+        // below shows via Overlay.insert(), which the compositor can paint
+        // almost immediately, so without waiting here the toast could
+        // render a full frame (or more) before the toggle button's own
+        // scheduled rebuild has actually been painted — making the toast
+        // and the button look out of sync for a moment right on the very
+        // first tap of a session. Waiting for the next actual frame here
+        // guarantees the button has repainted before the toast appears.
+        await SchedulerBinding.instance.endOfFrame;
+
         await saveOnlineStatus(isOnline);
 
+        // Fresh online session: don't let a staleness reading (or trigger)
+        // from a previous session immediately fire again before the new
+        // session's first heartbeat has even had a chance to land.
+        locationHealth.reset();
+        _autoOfflineTriggered = false;
+
+        // Use Get.context (GetX's always-current root context) rather than
+        // the context passed into this function — this call spans several
+        // `await`s and `update()`s (from location updates/booking polls
+        // firing concurrently), so by the time execution gets here the
+        // originally-captured context can already be deactivated, which
+        // throws "Looking up a deactivated widget's ancestor is unsafe" and
+        // gets caught below as a spurious "Failed to change availability"
+        // even though the toggle itself already succeeded.
         if (isOnline) {
           startListeningBookings();
+          if (Get.context != null) {
+            AnimatedTopToast.show(
+              context: Get.context!,
+              message: "You're Online — sharing your location with nearby riders.",
+              backgroundColor: Colors.green,
+              icon: Icons.wifi_tethering_rounded,
+            );
+          }
         } else {
           stopListeningBookings();
+          if (Get.context != null) {
+            AnimatedTopToast.show(
+              context: Get.context!,
+              message: "You're Offline — location sharing stopped.",
+              backgroundColor: Colors.grey.shade700,
+              icon: Icons.location_off_rounded,
+            );
+          }
         }
       } else {
         Get.snackbar("Error", "Could not update availability status. Please try again.");
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('[ToggleOnline] ERROR: $e\n$st');
       Get.snackbar("Error", "Failed to change availability. Please check your connection.");
+    } finally {
+      isTogglingOnline = false;
+      update();
     }
-
-    isLoading = false;
-    update();
   }
 
   Timer? _locationRetryTimer;
@@ -277,10 +469,7 @@ class HomeController extends GetxController {
         return;
       }
 
-      const LocationSettings locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
-      );
+      final LocationSettings locationSettings = _buildLocationSettings();
 
       // Get an immediate fix so the first update isn't stuck waiting on the
       // device to physically move by distanceFilter meters.
@@ -292,6 +481,10 @@ class HomeController extends GetxController {
         longitude = position.longitude;
         driverLatitude = position.latitude;
         driverLongitude = position.longitude;
+        debugPrint(
+          '[LocationPipeline] location received (initial fix) '
+          'lat=$latitude lng=$longitude',
+        );
         update();
       } catch (e) {
         debugPrint('❌ Could not get initial position: $e');
@@ -305,7 +498,10 @@ class HomeController extends GetxController {
               driverLatitude = position.latitude;
               driverLongitude = position.longitude;
 
-              print("Lat: $latitude, Lng: $longitude");
+              debugPrint(
+                '[LocationPipeline] location received lat=$latitude '
+                'lng=$longitude accuracy=${position.accuracy}m',
+              );
 
               update();
             },
@@ -318,6 +514,44 @@ class HomeController extends GetxController {
       debugPrint('❌ startLocationUpdates error: $e — retrying shortly');
       _scheduleLocationRetry();
     }
+  }
+
+  /// On Android, runs location updates as a foreground service (persistent
+  /// notification) so the OS treats the app as actively in use and is far
+  /// less likely to suspend it when the driver briefly switches to another
+  /// app (e.g. external navigation) — the single biggest cause of drivers
+  /// silently going invisible mid-shift.
+  ///
+  /// This is a real improvement but not a guarantee: per geolocator's own
+  /// docs, a foreground notification raises priority, it does not prevent
+  /// the OS from killing the process outright (screen off for a long
+  /// period, aggressive OEM battery management, app swiped away, etc.).
+  /// Surviving *that* would need a separate always-on background-service
+  /// architecture (a new Dart isolate/plugin, its own permissions and
+  /// Play Store review) — a bigger call intentionally left for a follow-up
+  /// rather than bundled in here. [_startStalenessWatchdog] is the safety
+  /// net for whenever this still isn't enough: it detects the resulting
+  /// staleness and takes the driver visibly offline instead of leaving
+  /// them silently unreachable.
+  LocationSettings _buildLocationSettings() {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+        intervalDuration: const Duration(seconds: 5),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Nride driver — Online',
+          notificationText: 'Sharing your location so nearby riders can find you',
+          notificationChannelName: 'Driver location sharing',
+          setOngoing: true,
+        ),
+      );
+    }
+
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 5,
+    );
   }
 
   /// Retries silently (no user-facing error) so location uploads — and
@@ -355,6 +589,10 @@ class HomeController extends GetxController {
     }
 
     try {
+      debugPrint(
+        '[LocationPipeline] match query run (new-booking-list) '
+        'driverLat=$latitude driverLng=$longitude',
+      );
       Response response = await homeRepo.newBookingNearByMe();
 
       if (response.statusCode == 200 && response.body['code'] == "200") {
@@ -363,6 +601,12 @@ class HomeController extends GetxController {
         List<NewBookingNearByModel> apiTrips = data
             .map((trip) => NewBookingNearByModel.fromJson(trip))
             .toList();
+
+        debugPrint(
+          '[LocationPipeline] match query returned ${apiTrips.length} '
+          'nearby trip(s)',
+        );
+        _logSuspiciouslyDistantMatches(apiTrips);
 
         incomingTrips.clear();
         incomingTrips.addAll(apiTrips);
@@ -392,6 +636,38 @@ class HomeController extends GetxController {
       }
     } catch (e) {
       debugPrint("Booking fetch error: $e");
+    }
+  }
+
+  /// Client-side sanity check on what the backend calls "nearby" — this
+  /// repo has no visibility into the actual matching query (radius,
+  /// coordinate order, units), so a wrong-but-200-OK response would
+  /// otherwise be indistinguishable from a correct one. A "nearby" pickup
+  /// that's absurdly far from the driver's own current position is a
+  /// strong signal of a server-side bug (lat/lng swapped, degrees/radians
+  /// mixed up, wrong table queried) — logged loudly so it's debuggable
+  /// without guesswork instead of just quietly misplacing a marker.
+  void _logSuspiciouslyDistantMatches(List<NewBookingNearByModel> trips) {
+    if (latitude == null || longitude == null) return;
+
+    for (final trip in trips) {
+      if (trip.pickupLat == null || trip.pickupLng == null) continue;
+
+      final distanceKm = haversineDistanceKm(
+        latitude!,
+        longitude!,
+        trip.pickupLat!,
+        trip.pickupLng!,
+      );
+
+      if (distanceKm > suspiciousMatchDistanceKm) {
+        debugPrint(
+          '[LocationPipeline] ⚠️ SUSPICIOUS MATCH: trip ${trip.id} pickup '
+          'is ${distanceKm.toStringAsFixed(1)}km from driver '
+          '(driver=$latitude,$longitude pickup=${trip.pickupLat},'
+          '${trip.pickupLng}) — check backend coordinate order/units/radius',
+        );
+      }
     }
   }
 
@@ -517,24 +793,39 @@ class HomeController extends GetxController {
   }) async {
     update();
     try {
+      // Was a 60s timeout against a 5s heartbeat — a single hung request
+      // could sit in flight through a dozen more ticks before ever failing.
+      // 15s still comfortably covers a slow network without blocking that
+      // many cycles behind it.
       Response response = await homeRepo
           .driverLocationUpdate(lat: lat, lng: lng)
-          .timeout(Duration(seconds: 60));
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200 &&
           response.body != null &&
           response.body['code'] == '200') {
-        print('update location driver ${response.body}');
-
-        //driverlatitude driverlongitude
+        locationHealth.recordSuccess();
+        debugPrint(
+          '[LocationPipeline] location stored lat=$lat lng=$lng '
+          '(confirmed by backend)',
+        );
         update();
         return response;
       } else {
-        print('not update location driver Something went wrong');
-
+        locationHealth.recordFailure();
+        debugPrint(
+          '[LocationPipeline] location update REJECTED status='
+          '${response.statusCode} body=${response.body} '
+          '(consecutiveFailures=${locationHealth.consecutiveFailures})',
+        );
         return response;
       }
     } catch (e) {
+      locationHealth.recordFailure();
+      debugPrint(
+        '[LocationPipeline] location update FAILED: $e '
+        '(consecutiveFailures=${locationHealth.consecutiveFailures})',
+      );
       rethrow;
     }
   }

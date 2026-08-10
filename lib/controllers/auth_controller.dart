@@ -585,7 +585,30 @@ class AuthController extends GetxController implements GetxService {
       return;
     }
 
-    // Register failed — number may already be registered; try login.
+    // Register failed. Only fall back to a login OTP when the backend says
+    // this exact number is already registered (code 401, "already in use");
+    // any other failure is a real error and should be shown as-is instead
+    // of being silently retried as a login attempt.
+    final registerMessage = (registerResponse.body?["message"] ?? '')
+        .toString();
+    final phoneAlreadyInUse =
+        registerResponse.body?["code"] == "401" &&
+        registerMessage.toLowerCase().contains("already in use");
+
+    if (!phoneAlreadyInUse) {
+      if (Get.isDialogOpen ?? false) Get.back();
+      AnimatedTopToast.show(
+        context: context,
+        message: registerMessage.isNotEmpty
+            ? registerMessage
+            : "Failed to send OTP. Please check your number and try again.",
+        backgroundColor: Colors.red,
+        icon: Icons.error_rounded,
+      );
+      return;
+    }
+
+    // Number is already registered — automatically retry as a login OTP.
     final loginResponse = await authRepo.sendOtpApi(
       phone: mobileNumber,
       type: ApiConstants.UserLogin,

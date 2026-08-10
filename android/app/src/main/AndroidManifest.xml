@@ -5,6 +5,17 @@
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <uses-permission android:name="android.permission.CALL_PHONE"/>
 <uses-permission android:name="android.permission.CAMERA"/>
+<!-- Lets Geolocator run location updates as a foreground service (with a
+     persistent "Sharing your location" notification) while the driver is
+     online, so Android is far less likely to suspend the app the moment
+     it's backgrounded (e.g. driver switches to an external navigation
+     app). Deliberately not requesting ACCESS_BACKGROUND_LOCATION — that's
+     only needed for location access outside of an active foreground
+     service/activity, which doesn't apply here, and requesting it would
+     reintroduce the extra Play Store review scrutiny this app previously
+     removed it to avoid (see git history). -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
 <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <application
