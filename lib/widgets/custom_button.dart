@@ -121,15 +121,25 @@ class CustomSocialButton extends StatelessWidget {
 class CustomPrimaryButton extends StatelessWidget {
   final String text;
   final VoidCallback onTap;
+  // Defaults to false so every existing call site (14+ across the app)
+  // keeps working unchanged. When true: disables the tap (so a slow
+  // request can't be fired twice by an impatient double-tap) and shows a
+  // spinner instead of the label, so the user sees the request is in
+  // flight rather than staring at a button that looks dead while it waits.
+  final bool isLoading;
 
-  const CustomPrimaryButton({Key? key, required this.text, required this.onTap})
-    : super(key: key);
+  const CustomPrimaryButton({
+    Key? key,
+    required this.text,
+    required this.onTap,
+    this.isLoading = false,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(30),
-      onTap: onTap,
+      onTap: isLoading ? null : onTap,
       child: Container(
         height: MediaQuery.of(context).size.height * 0.06,
         width: double.infinity,
@@ -142,10 +152,19 @@ class CustomPrimaryButton extends StatelessWidget {
           ),
           borderRadius: BorderRadius.circular(30),
         ),
-        child: Text(
-          text,
-          style: PoppinsSemiBold.copyWith(color: ColorResources.buttonColors),
-        ),
+        child: isLoading
+            ? SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  valueColor: AlwaysStoppedAnimation(ColorResources.buttonColors),
+                ),
+              )
+            : Text(
+                text,
+                style: PoppinsSemiBold.copyWith(color: ColorResources.buttonColors),
+              ),
       ),
     );
   }

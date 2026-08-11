@@ -904,9 +904,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _buildNextButton() {
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: CustomPrimaryButton(
-        text: currentStep == 3 ? "Submit" : "Save & Continue",
-        onTap: () async {
+      // Reactive to AuthController.isSubmittingVehicleInfo so the button
+      // visibly disables + spins for the vehicle-info save specifically —
+      // the step most exposed to a slow multipart image upload — instead
+      // of staying tappable (and looking idle) for the whole round trip.
+      child: GetBuilder<AuthController>(
+        builder: (authController) => CustomPrimaryButton(
+          text: currentStep == 3 ? "Submit" : "Save & Continue",
+          isLoading: currentStep == 1 && authController.isSubmittingVehicleInfo,
+          onTap: () async {
           if (currentStep == 0) {
             if (!_formKey.currentState!.validate()) return;
 
@@ -1072,7 +1078,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
               const SnackBar(content: Text("Form Submitted Successfully")),
             );
           }
-        },
+          },
+        ),
       ),
     );
 
@@ -1698,6 +1705,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 padding: const EdgeInsets.all(16),
                 child: CustomPrimaryButton(
                   text: "Save",
+                  // `controller` here is the GetBuilder's own builder
+                  // param (this whole step already rebuilds on its
+                  // update()), so this reflects isSubmittingDriverDocs
+                  // live without needing a second GetBuilder.
+                  isLoading: controller.isSubmittingDriverDocs,
                   onTap: () async {
                     final controller = Get.find<AuthController>();
 

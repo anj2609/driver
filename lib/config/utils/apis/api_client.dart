@@ -269,7 +269,15 @@ class ApiClient extends GetxService {
         : (sharedPreferences.getString(ApiConstants.token) ?? ""),
       });
 
-      var streamedResponse = await request.send();
+      // Without a bound, a hung connection (dead Wi-Fi, server not
+      // answering) leaves request.send() waiting on the OS's own socket
+      // timeout — which can be minutes, not seconds. That's the "Save &
+      // Continue" button looking dead for a very long time before ever
+      // reaching the catch below. Bounding it here means a bad connection
+      // fails fast and predictably instead of just hanging.
+      var streamedResponse = await request
+          .send()
+          .timeout(Duration(seconds: timeoutInSeconds));
       var response = await http.Response.fromStream(streamedResponse);
 
       return handleResponse(response, uri);
@@ -331,7 +339,13 @@ class ApiClient extends GetxService {
         debugPrint("ID: ${request.fields["documents[$i][document_id]"]}");
       }
 
-      var streamedResponse = await request.send();
+      // Bounded for the same reason as postdrivervehicale() above — a
+      // hung connection should fail predictably in ~timeoutInSeconds,
+      // not leave the Save button looking dead for however long the OS
+      // socket timeout happens to be.
+      var streamedResponse = await request
+          .send()
+          .timeout(Duration(seconds: timeoutInSeconds));
       var response = await http.Response.fromStream(streamedResponse);
       debugPrint('testing  |||||||||| $response');
       return handleResponse(response, uri);

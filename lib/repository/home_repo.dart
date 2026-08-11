@@ -50,10 +50,19 @@ class HomeRepo extends GetxService {
 
 ////// ======== Complete Ride ======================/////
 
-Future<Response> completeRide({String? bookingid, String source = 'offline'}) async {
+Future<Response> completeRide({
+    String? bookingid,
+    String source = 'offline',
+    // Backend rejects complete-ride with "The actual distance field is
+    // required." without this — every cash/wallet completion was failing
+    // silently from the rider's point of view (stuck on the ongoing-ride
+    // screen) because this field was never sent.
+    required String actualDistance,
+  }) async {
     return apiClient.myridepostData(ApiConstants.completeRideUrl, {
       "booking_id": bookingid.toString(),
       "source": source,
+      "actual_distance": actualDistance,
     });
   }
 

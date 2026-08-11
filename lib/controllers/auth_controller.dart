@@ -62,6 +62,15 @@ class AuthController extends GetxController implements GetxService {
   bool isUpdatingVehicleDocs = false;
   bool isDriverDocsFetching = false;
   bool isVehicleDocsFetching = false;
+
+  // Guards uploadDocumentDriver()/vehicaleInfoApi() (the signup-flow
+  // submit calls) against a second tap landing while the first request is
+  // still in flight — the screen's own button already disables itself via
+  // this flag (CustomPrimaryButton's isLoading), this is the belt-and-
+  // suspenders backstop in case that ever doesn't happen (e.g. rapid
+  // double-tap before the first frame with the disabled state paints).
+  bool isSubmittingDriverDocs = false;
+  bool isSubmittingVehicleInfo = false;
   // final GoogleSignIn _googleSignIn = GoogleSignIn();
   final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email']);
 
@@ -1196,9 +1205,35 @@ else {
     required BuildContext context,
     required List<DriverDocumentDataModel> documents,
   }) async {
+    if (isSubmittingDriverDocs) {
+      return Response(statusCode: 0, body: {'code': 'busy'});
+    }
+    isSubmittingDriverDocs = true;
     update();
 
     try {
+      // A picked image's temp file can go missing before the driver taps
+      // Save (OS reclaiming cache, app backgrounded long enough to be
+      // trimmed) — MultipartFile.fromPath() would only discover that deep
+      // inside the HTTP layer and surface it as an opaque network
+      // failure. Checking here first turns that into a precise, actionable
+      // message instead of a generic "check your connection" toast, and
+      // skips wasting a request (and the driver's data) on a doomed upload.
+      for (final doc in documents) {
+        final file = doc.imageFile;
+        if (file != null && !await file.exists()) {
+          AnimatedTopToast.show(
+            context: context,
+            message:
+                "The image for \"${doc.name ?? 'a document'}\" is no longer "
+                "available — please re-select it and save again.",
+            backgroundColor: Colors.red,
+            icon: Icons.image_not_supported_rounded,
+          );
+          return Response(statusCode: 0, body: {'code': 'missing_file'});
+        }
+      }
+
       List<DriverDocumentUploadModel> documentList = documents.map((doc) {
         return DriverDocumentUploadModel(
           documentId: doc.id.toString(),
@@ -1218,7 +1253,18 @@ else {
 
       await EasyLoading.dismiss();
 
-      if (response.body["code"] == "200") {
+      // A network failure/timeout is caught inside postDriverDocuments()
+      // and comes back as a Response with a null body — indexing straight
+      // into it (the old code) threw here, which the catch below already
+      // caught and toasted for... but then rethrew anyway, leaving an
+      // unhandled exception for the "Save & Continue" button's bare
+      // onTap to silently swallow. Checking the body's type up front means
+      // this same failure is handled once, in one place, without needing
+      // the catch block below at all for this particular case.
+      final responseBody = response.body;
+      final code = responseBody is Map ? responseBody['code']?.toString() : null;
+
+      if (code == "200") {
         // Populate editDriverDocumentList so they appear immediately in My Documents
         editDriverDocumentList.clear();
         for (int i = 0; i < documents.length; i++) {
@@ -1261,6 +1307,7 @@ else {
       return response;
     } catch (e) {
       // await EasyLoading.dismiss();
+      debugPrint('uploadDocumentDriver error: $e');
       AnimatedTopToast.show(
         context: context,
         message: "Failed to upload documents. Please try again.",
@@ -1269,7 +1316,17 @@ else {
       );
 
       update();
-      rethrow;
+      // Was `rethrow` — the toast above already told the driver what
+      // happened, but rethrowing past that meant the "Save & Continue"
+      // button's own onTap (which has no try/catch) was left holding an
+      // unhandled exception that a release build swallows silently. A
+      // non-'200' body lets the button's own success check safely stay
+      // false — correctly leaving the driver on this step to retry —
+      // without a second, redundant crash on top of the toast.
+      return Response(statusCode: 0, body: {'code': 'error'});
+    } finally {
+      isSubmittingDriverDocs = false;
+      update();
     }
   }
 
@@ -1571,52 +1628,112 @@ else {
     String? manufactureyear,
     List<File>? vehicaleimages,
   }) async {
+    if (isSubmittingVehicleInfo) {
+      return Response(statusCode: 0, body: {'code': 'busy'});
+    }
+    isSubmittingVehicleInfo = true;
     // EasyLoading.show(status: "Please wait...");
     update();
 
-    Response response = await authRepo.vehicaleInfo(
-      vehicalid: vehicalid,
-      vehicleId: vehicleId,
-      vehicalnumber: vehicalnumber,
-      brand: brand,
-      model: model,
-      color: color,
-      chassisnumber: chassisnumber,
-      enginenumber: enginenumber,
-      manufactureyear: manufactureyear,
-      images: vehicaleimages,
-    );
+    try {
+      // Same reasoning as the per-document check in uploadDocumentDriver()
+      // — a picked vehicle image's temp file can disappear before Save is
+      // tapped, and catching that here gives a precise, actionable message
+      // instead of a generic network-failure toast surfacing from deep
+      // inside the multipart upload.
+      if (vehicaleimages != null) {
+        for (final file in vehicaleimages) {
+          if (!await file.exists()) {
+            AnimatedTopToast.show(
+              context: context,
+              message:
+                  "One of the selected vehicle images is no longer "
+                  "available — please re-select it and save again.",
+              backgroundColor: ColorResources.redbuttoncolor,
+              icon: Icons.image_not_supported_rounded,
+            );
+            return Response(statusCode: 0, body: {'code': 'missing_file'});
+          }
+        }
+      }
 
-    if (response.body["code"] == "200") {
-      // await EasyLoading.dismiss();
-      vehicleStoreId = response.body['data']['id'].toString();
-
-      AnimatedTopToast.show(
-        context: context,
-        message: "Vehicle information saved successfully.",
-        backgroundColor: ColorResources.blueeebutton,
-        icon: Icons.check_circle_rounded,
+      Response response = await authRepo.vehicaleInfo(
+        vehicalid: vehicalid,
+        vehicleId: vehicleId,
+        vehicalnumber: vehicalnumber,
+        brand: brand,
+        model: model,
+        color: color,
+        chassisnumber: chassisnumber,
+        enginenumber: enginenumber,
+        manufactureyear: manufactureyear,
+        images: vehicaleimages,
       );
-      await Future.delayed(const Duration(milliseconds: 500));
-    } else if (response.body['data'] == "401") {
+
+      // A network failure (timeout, no connectivity, or a picked vehicle
+      // image whose temp file path the OS has since cleared — MultipartFile
+      // .fromPath throws on a missing file) is caught inside
+      // postdrivervehicale() and comes back as a Response with a *null*
+      // body. The old code indexed straight into `response.body["code"]`
+      // with no try/catch here and none in the "Save & Continue" button
+      // either — that threw, and in a release build an uncaught exception
+      // from a button's onTap just dies silently: no toast, no state
+      // change, isDriverDocSaved never flips. The button looked dead and
+      // the driver was stuck on the vehicle-selection screen with zero
+      // indication why. This now always resolves to a toast plus a safe,
+      // non-null Map body the caller can check without crashing.
+      final body = response.body;
+      final code = body is Map ? body['code']?.toString() : null;
+
+      if (code == "200") {
+        // await EasyLoading.dismiss();
+        final data = body['data'];
+        vehicleStoreId = data is Map ? (data['id']?.toString() ?? '') : '';
+
+        AnimatedTopToast.show(
+          context: context,
+          message: "Vehicle information saved successfully.",
+          backgroundColor: ColorResources.blueeebutton,
+          icon: Icons.check_circle_rounded,
+        );
+        await Future.delayed(const Duration(milliseconds: 500));
+      } else if (body is Map && body['data'] == "401") {
+        AnimatedTopToast.show(
+          context: context,
+          message: "Unauthorized. Please log in again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: 'Unable to save vehicle information. Please try again.',
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+        // await EasyLoading.dismiss();
+      }
+
+      update();
+      return response;
+    } catch (e) {
+      debugPrint('vehicaleInfoApi error: $e');
       AnimatedTopToast.show(
         context: context,
-        message: "Unauthorized. Please log in again.",
+        message: 'Unable to save vehicle information. Please check your connection and try again.',
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
-    } else {
-      AnimatedTopToast.show(
-        context: context,
-        message: 'Unable to save vehicle information. Please try again.',
-        backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.error_rounded,
-      );
-      // await EasyLoading.dismiss();
+      update();
+      // Non-null, non-'200' body so the "Save & Continue" button's own
+      // `response.body['code'] == '200'` check stays false (correctly
+      // leaving the driver on this step to retry) instead of crashing a
+      // second time on a null body.
+      return Response(statusCode: 0, body: {'code': 'error'});
+    } finally {
+      isSubmittingVehicleInfo = false;
+      update();
     }
-
-    update();
-    return response;
   }
 
   ///postdrivervehical

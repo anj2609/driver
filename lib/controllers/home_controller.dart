@@ -45,8 +45,23 @@ class HomeController extends GetxController {
   bool isActiveLoading = false;
   bool isRingtonePlaying = false;
   bool hasActiveRide = false;
-  // true once the ringtone has played for the current ride batch; resets when trips clear
-  bool _rideRingtoneHasPlayed = false;
+
+  // IDs of nearby trips that have already triggered the ringtone this
+  // online session. A single "has it rung yet" boolean (the old approach)
+  // only fires on the empty→non-empty transition — a second rider's
+  // request arriving while the first is still sitting on screen silently
+  // joins the list with no alert at all. Tracking per-id means a genuinely
+  // new request always rings, even while others are already pending.
+  final Set<int> _ringedTripIds = {};
+
+  // IDs the driver has explicitly declined via rejectTrip(). There is no
+  // backend "decline this booking" endpoint — rejection is purely local —
+  // and the nearby-booking poll below re-fetches the full "still
+  // unassigned" list from the backend every ~3s. Without this filter, a
+  // rejected request reappears on the very next poll looking exactly like
+  // a brand new one (fresh ringtone, screen pops back open), making the
+  // reject button effectively a ~3-second snooze instead of a decline.
+  final Set<int> _rejectedTripIds = {};
 
   StreamSubscription<Position>? positionStream;
   NewBookingNearByListModel? newBookingNearByModel;
@@ -186,6 +201,8 @@ class HomeController extends GetxController {
     // already know the backend copy is stale would itself be misleading.
     isOnline = false;
     stopListeningBookings();
+    _ringedTripIds.clear();
+    _rejectedTripIds.clear();
     await saveOnlineStatus(false);
     update();
 
@@ -422,6 +439,11 @@ class HomeController extends GetxController {
           }
         } else {
           stopListeningBookings();
+          // A new shift (next time they go online) should start with a
+          // clean slate rather than carrying forward ids rung/declined
+          // during this now-ended one.
+          _ringedTripIds.clear();
+          _rejectedTripIds.clear();
           if (Get.context != null) {
             AnimatedTopToast.show(
               context: Get.context!,
@@ -569,73 +591,104 @@ class HomeController extends GetxController {
     _dummyTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollNearbyBookings());
   }
 
+  // A poll cycle occasionally takes longer than the 3s timer interval (slow
+  // network on the profile/nearby-list calls). Timer.periodic doesn't wait
+  // for the previous tick to finish, so without this guard a slow cycle
+  // and the next scheduled one can run concurrently — both independently
+  // reading isIncomingScreenOpen as false at the same instant and each
+  // calling Get.to(), pushing the incoming-booking screen twice. That's
+  // exactly the kind of overlap a genuine multiple-simultaneous-riders
+  // moment is most likely to expose, since a bigger response and a
+  // screen that's mid-render are what make a cycle run long in the first
+  // place.
+  bool _isPollingNearbyBookings = false;
+
   Future<void> _pollNearbyBookings() async {
     if (!isOnline) return;
-
-    // Do not search if the driver is busy with an accepted/ongoing ride
-    try {
-      final profileRes = await homeRepo.getDriverProfile();
-      if (profileRes.statusCode == 200 && profileRes.body != null) {
-        final profileData = profileRes.body['data'];
-        final isBusy = profileData?['is_busy'];
-        if (isBusy == true || isBusy == 1 || isBusy?.toString() == '1') {
-          debugPrint('Driver is_busy — skipping new-booking-list poll');
-          return;
-        }
-      }
-    } catch (_) {
-      // Profile check failed — skip poll to be safe
-      return;
-    }
+    if (_isPollingNearbyBookings) return;
+    _isPollingNearbyBookings = true;
 
     try {
-      debugPrint(
-        '[LocationPipeline] match query run (new-booking-list) '
-        'driverLat=$latitude driverLng=$longitude',
-      );
-      Response response = await homeRepo.newBookingNearByMe();
-
-      if (response.statusCode == 200 && response.body['code'] == "200") {
-        List data = response.body['data'] ?? [];
-
-        List<NewBookingNearByModel> apiTrips = data
-            .map((trip) => NewBookingNearByModel.fromJson(trip))
-            .toList();
-
-        debugPrint(
-          '[LocationPipeline] match query returned ${apiTrips.length} '
-          'nearby trip(s)',
-        );
-        _logSuspiciouslyDistantMatches(apiTrips);
-
-        incomingTrips.clear();
-        incomingTrips.addAll(apiTrips);
-
-        if (incomingTrips.isNotEmpty) {
-          if (!_rideRingtoneHasPlayed) {
-            _rideRingtoneHasPlayed = true;
-            playRingtone();
+      // Do not search if the driver is busy with an accepted/ongoing ride
+      try {
+        final profileRes = await homeRepo.getDriverProfile();
+        if (profileRes.statusCode == 200 && profileRes.body != null) {
+          final profileData = profileRes.body['data'];
+          final isBusy = profileData?['is_busy'];
+          if (isBusy == true || isBusy == 1 || isBusy?.toString() == '1') {
+            debugPrint('Driver is_busy — skipping new-booking-list poll');
+            return;
           }
-        } else {
-          _rideRingtoneHasPlayed = false;
-          stopRingtone();
-          isIncomingScreenOpen = false;
         }
-
-        if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
-          isIncomingScreenOpen = true;
-          Get.to(
-            () => IncomingBookingScreen(trips: incomingTrips),
-          )?.then((_) {
-            isIncomingScreenOpen = false;
-            stopRingtone();
-          });
-        }
-
-        update();
+      } catch (_) {
+        // Profile check failed — skip poll to be safe
+        return;
       }
-    } catch (e) {
-      debugPrint("Booking fetch error: $e");
+
+      try {
+        debugPrint(
+          '[LocationPipeline] match query run (new-booking-list) '
+          'driverLat=$latitude driverLng=$longitude',
+        );
+        Response response = await homeRepo.newBookingNearByMe();
+
+        if (response.statusCode == 200 && response.body['code'] == "200") {
+          List data = response.body['data'] ?? [];
+
+          List<NewBookingNearByModel> apiTrips = data
+              .map((trip) => NewBookingNearByModel.fromJson(trip))
+              // Drop anything this driver already declined this session —
+              // the backend has no decline endpoint to exclude it for us,
+              // so without this it would resurface on the very next poll.
+              .where((trip) => trip.id == null || !_rejectedTripIds.contains(trip.id))
+              .toList();
+
+          debugPrint(
+            '[LocationPipeline] match query returned ${apiTrips.length} '
+            'nearby trip(s)',
+          );
+          _logSuspiciouslyDistantMatches(apiTrips);
+
+          incomingTrips.clear();
+          incomingTrips.addAll(apiTrips);
+
+          if (incomingTrips.isNotEmpty) {
+            // Ring again whenever a request with an id we haven't already
+            // rung for shows up — covers a second/third rider's request
+            // landing while an earlier one is still pending on screen, not
+            // just the first-ever arrival.
+            final newTripIds = incomingTrips
+                .map((t) => t.id)
+                .whereType<int>()
+                .where((id) => !_ringedTripIds.contains(id))
+                .toSet();
+            if (newTripIds.isNotEmpty) {
+              _ringedTripIds.addAll(newTripIds);
+              playRingtone();
+            }
+          } else {
+            _ringedTripIds.clear();
+            stopRingtone();
+            isIncomingScreenOpen = false;
+          }
+
+          if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
+            isIncomingScreenOpen = true;
+            Get.to(
+              () => IncomingBookingScreen(trips: incomingTrips),
+            )?.then((_) {
+              isIncomingScreenOpen = false;
+              stopRingtone();
+            });
+          }
+
+          update();
+        }
+      } catch (e) {
+        debugPrint("Booking fetch error: $e");
+      }
+    } finally {
+      _isPollingNearbyBookings = false;
     }
   }
 
@@ -674,7 +727,8 @@ class HomeController extends GetxController {
   ////////acceptRideUrl
 
   void resetRideState() {
-    _rideRingtoneHasPlayed = false;
+    _ringedTripIds.clear();
+    _rejectedTripIds.clear();
     incomingTrips.clear();
     stopRingtone();
   }
@@ -724,7 +778,7 @@ class HomeController extends GetxController {
   }
 
   void acceptTrip(NewBookingNearByModel trip) async {
-    _rideRingtoneHasPlayed = false;
+    _ringedTripIds.clear();
     stopRingtone();
     acceptedTrip.clear();
     acceptedTrip.add(trip);
@@ -743,9 +797,10 @@ class HomeController extends GetxController {
 
   void rejectTrip(NewBookingNearByModel trip) {
     incomingTrips.remove(trip);
+    if (trip.id != null) _rejectedTripIds.add(trip.id!);
 
     if (incomingTrips.isEmpty) {
-      _rideRingtoneHasPlayed = false;
+      _ringedTripIds.clear();
       stopRingtone();
       isIncomingScreenOpen = false;
 
@@ -906,6 +961,10 @@ class HomeController extends GetxController {
 
         incomingTrips.clear();
         isIncomingScreenOpen = false;
+        // So the next request — after this ride finishes and listening
+        // resumes — is guaranteed to ring, instead of possibly inheriting
+        // a stale "already rung" id from before this ride.
+        _ringedTripIds.clear();
 
         stopListeningBookings();
 
@@ -1325,7 +1384,21 @@ class HomeController extends GetxController {
     update();
 
     try {
-      Response response = await homeRepo.completeRide(bookingid: bookingId, source: source);
+      // computedDistance is this trip's tracked distance (Google Directions
+      // pickup→drop, refreshed throughout the ride by trackbookingRide/
+      // calculateETA, with a Haversine fallback) — the closest thing this
+      // app has to an "actual distance driven" figure. Falls back to
+      // totaldestance, then '0', so the request never omits/empties a
+      // field the backend requires.
+      final String actualDistance = computedDistance.isNotEmpty
+          ? computedDistance
+          : (totaldestance?.isNotEmpty == true ? totaldestance! : '0');
+
+      Response response = await homeRepo.completeRide(
+        bookingid: bookingId,
+        source: source,
+        actualDistance: actualDistance,
+      );
       print('testing mode for completeRide ${response.body['code']}');
 
       if (response.statusCode == 200 &&
