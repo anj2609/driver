@@ -46,6 +46,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
   }
 
+  /// Dismisses a loader dialog, tolerating a context whose element is already
+  /// gone.
+  ///
+  /// Every handler below captures the dialog's context before an await and
+  /// uses it after — and completing a ride runs returnToExistingHome(), which
+  /// replaces the entire route stack via Get.offAllNamed(). The captured
+  /// context is defunct by then, and Navigator.of() on a defunct context
+  /// throws. The old code did that from inside `finally`, so the throw
+  /// skipped the pop entirely and left this barrier-blocking loader stranded
+  /// on top of the new Home screen — the spinner that never goes away after a
+  /// ride completes.
+  void _closeLoader(BuildContext? ctx) {
+    if (ctx == null || !ctx.mounted) return;
+    final navigator = Navigator.maybeOf(ctx);
+    if (navigator != null && navigator.canPop()) navigator.pop();
+  }
+
   Future<void> _handleOnlinePayment() async {
     if (_isProcessing || _bookingId.isEmpty) return;
 
@@ -87,11 +104,29 @@ class _PaymentScreenState extends State<PaymentScreen> {
         bookingId: _bookingId,
       );
 
-      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
-        Navigator.of(dialogContext!).pop();
+      _closeLoader(dialogContext);
+
+      if (qrData == null) {
+        // generateOnlineQr() returns null for every non-success — a rejected
+        // request, a malformed body, a dropped connection — and deliberately
+        // shows nothing itself ("post-accept ride flow is toast-free"). That
+        // left the driver tapping "Proceed Online Payment", watching a
+        // spinner, and then getting nothing at all with no reason given.
+        // There is no affordance to retry other than tapping again, so the
+        // failure has to be visible.
+        if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: "Couldn't create the payment QR. Please check your "
+                "connection and try again.",
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
+        return;
       }
 
-      if (qrData != null && context.mounted) {
+      if (context.mounted) {
         await showModalBottomSheet(
           context: context,
           isScrollControlled: true,
@@ -105,10 +140,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
         );
       }
     } catch (e) {
-      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
-        Navigator.of(dialogContext!).pop();
-      }
+      _closeLoader(dialogContext);
       debugPrint('Online payment error: $e');
+      if (context.mounted) {
+        AnimatedTopToast.show(
+          context: context,
+          message: "Couldn't start the online payment. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -197,9 +238,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       debugPrint('Cash payment error: $e');
     } finally {
-      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
-        Navigator.of(dialogContext!).pop();
-      }
+      _closeLoader(dialogContext);
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -231,9 +270,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       debugPrint('Wallet payment error: $e');
     } finally {
-      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
-        Navigator.of(dialogContext!).pop();
-      }
+      _closeLoader(dialogContext);
       if (mounted) setState(() => _isProcessing = false);
     }
   }
