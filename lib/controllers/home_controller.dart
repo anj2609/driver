@@ -2289,12 +2289,23 @@ class HomeController extends GetxController {
   String estimateDuration = '';
 
   /// Fetch ride estimate (price, distance, time) from backend
+  // Guards against piling up identical estimate requests. Like trip-detail,
+  // this is called from addPostFrameCallback blocks registered during build(),
+  // gated only on `estimatePrice.isEmpty` — so every unrelated rebuild (the 5s
+  // location heartbeat, the 3s poll, each GPS fix) fires another one for as
+  // long as the estimate fails to populate, and for a ride the backend won't
+  // price it never does.
+  bool _isFetchingEstimate = false;
+
   Future<void> fetchEstimateRideData({
     required double pickupLat,
     required double pickupLng,
     required double dropLat,
     required double dropLng,
   }) async {
+    if (_isFetchingEstimate) return;
+    _isFetchingEstimate = true;
+
     try {
       final response = await homeRepo.estimateRideList(
         pickupLat: pickupLat.toString(),
@@ -2320,6 +2331,8 @@ class HomeController extends GetxController {
       }
     } catch (e) {
       debugPrint('fetchEstimateRideData error: $e');
+    } finally {
+      _isFetchingEstimate = false;
     }
   }
 

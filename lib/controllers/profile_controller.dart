@@ -1114,14 +1114,43 @@ class ProfileController extends GetxController implements GetxService {
     }
   }
 
+  // trip-detail requests currently in flight, keyed by booking id.
+  //
+  // This endpoint is called from several screens, and some of those calls sit
+  // in an addPostFrameCallback registered during build(). Because the old code
+  // also called update() *before* awaiting, one such call synchronously
+  // rebuilt every GetBuilder watching this controller, which re-registered the
+  // callback, which called this again — an unbounded loop that fired requests
+  // far faster than responses came back. A device log showed dozens of
+  // identical `trip-detail {booking_id: 99}` calls back to back, saturating the
+  // main thread and starving the renderer ("Unable to acquire a buffer item").
+  //
+  // De-duplicating here fixes it for every caller at once, rather than relying
+  // on each screen to guard its own build path correctly.
+  final Map<String, Future<Response>> _tripDetailInFlight =
+      <String, Future<Response>>{};
+
   Future<Response> tripRideDetailsApi({
     required BuildContext context,
     required String? bookingid,
-  }) async {
-    update();
+  }) {
+    final String key = bookingid.toString();
 
+    // Join the existing request rather than starting a second one. Callers
+    // still get a Future that completes with the same response.
+    final Future<Response>? pending = _tripDetailInFlight[key];
+    if (pending != null) return pending;
+
+    final Future<Response> request = _tripRideDetailsRequest(key);
+    _tripDetailInFlight[key] = request;
+    return request.whenComplete(() => _tripDetailInFlight.remove(key));
+  }
+
+  Future<Response> _tripRideDetailsRequest(String bookingid) async {
+    // No update() before the request: nothing has changed yet, and calling it
+    // here is what let a build-time caller re-enter this method synchronously.
     Response response = await profileRepo.tripDetailsRideApi(
-      bookingId: bookingid.toString(),
+      bookingId: bookingid,
     );
 
     if (response.statusCode == 200) {
