@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
-
-import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 
 class IncomingBookingScreen extends StatefulWidget {
@@ -22,31 +18,14 @@ class IncomingBookingScreen extends StatefulWidget {
 
 class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   final HomeController controller = Get.find();
-  GoogleMapController? mapController;
-
-  Set<Marker> markers = {};
-  Set<Polyline> polylines = {};
 
   int currentIndex = 0;
-  double? currentDriverLat;
-  double? currentDriverLng;
 
   // Guards the Accept button against a second tap while one accept is
   // already in flight (belt-and-suspenders alongside the controller-level
   // guard in acceptRidesTrip) — see the onTap handler in _rideCard() for
   // the full story on why this mattered.
   bool _isAcceptingTrip = false;
-
-  // @override
-  // void initState() {
-  //   super.initState();
-  //   _updateMap();
-  // }
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
 
   // The controller's own list is the source of truth — widget.trips is only
   // the snapshot at the moment this screen was first pushed. Reading from
@@ -58,134 +37,6 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   int get _safeIndex =>
       _trips.isEmpty ? 0 : currentIndex.clamp(0, _trips.length - 1);
 
-  Future<void> _init() async {
-    await getCurrentLocation();
-    if (_trips.isNotEmpty) await _updateMap();
-  }
-
-  Future<void> getCurrentLocation() async {
-    await Geolocator.requestPermission();
-
-    Position position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
-
-    currentDriverLat = position.latitude;
-    currentDriverLng = position.longitude;
-  }
-
-  Future<void> _updateMap() async {
-    if (_trips.isEmpty) return;
-    final trip = _trips[_safeIndex];
-
-    markers.clear();
-    polylines.clear();
-
-    /// 🔥 Load Custom Icons
-    final pickupIcon = await getCustomIcon(
-      "assets/images/Vehiclelocation.png",
-      200,
-    );
-    final dropIcon = await getCustomIcon("assets/images/location.png", 200);
-    // Was assets/images/profile.png — a circular headshot-style icon for
-    // the *driver's own* marker, which is what showed up looking like a
-    // person's photo pinned on the map. Reusing the car icon already used
-    // for "this is the driver" everywhere else in the app (home screen
-    // toggle map, in-app navigation) instead of a face.
-    final driverIcon = controller.carIcon ??
-        await getCustomIcon("assets/images/ridecar.png", 100);
-
-    markers.add(
-      Marker(
-        markerId: const MarkerId("pickup"),
-        position: LatLng(trip.pickupLat!, trip.pickupLng!),
-        icon: pickupIcon,
-      ),
-    );
-
-    /// 🔴 Drop Marker
-    markers.add(
-      Marker(
-        markerId: const MarkerId("drop"),
-        position: LatLng(trip.dropLat!, trip.dropLng!),
-        icon: dropIcon,
-      ),
-    );
-
-    /// 👤 Driver Marker (Null Safe)
-    if (currentDriverLat != null && currentDriverLng != null) {
-      markers.add(
-        Marker(
-          markerId: const MarkerId("driver"),
-          position: LatLng(currentDriverLat!, currentDriverLng!),
-          icon: driverIcon,
-          anchor: const Offset(0.5, 0.5),
-        ),
-      );
-    }
-
-    PolylinePoints polylinePoints = PolylinePoints(
-      apiKey: "AIzaSyBNHiJLxFa2qcs079P5TaYrB770_CVMldU",
-    );
-
-    PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
-      request: PolylineRequest(
-        origin: PointLatLng(trip.pickupLat!, trip.pickupLng!),
-        destination: PointLatLng(trip.dropLat!, trip.dropLng!),
-        mode: TravelMode.driving,
-      ),
-    );
-
-    List<LatLng> routePoints = [];
-
-    if (result.points.isNotEmpty) {
-      for (var point in result.points) {
-        routePoints.add(LatLng(point.latitude, point.longitude));
-      }
-    }
-
-    /// 🔵 Curved Polyline
-    polylines.add(
-      Polyline(
-        polylineId: const PolylineId("route"),
-        color: const Color(0xFF123EBC),
-        width: 6,
-        points: routePoints,
-      ),
-    );
-
-    /// 🎯 Auto Fit Camera (Driver + Pickup + Drop)
-    LatLngBounds bounds = LatLngBounds(
-      southwest: LatLng(
-        [
-          trip.pickupLat!,
-          trip.dropLat!,
-          currentDriverLat ?? trip.pickupLat!,
-        ].reduce((a, b) => a < b ? a : b),
-        [
-          trip.pickupLng!,
-          trip.dropLng!,
-          currentDriverLng ?? trip.pickupLng!,
-        ].reduce((a, b) => a < b ? a : b),
-      ),
-      northeast: LatLng(
-        [
-          trip.pickupLat!,
-          trip.dropLat!,
-          currentDriverLat ?? trip.pickupLat!,
-        ].reduce((a, b) => a > b ? a : b),
-        [
-          trip.pickupLng!,
-          trip.dropLng!,
-          currentDriverLng ?? trip.pickupLng!,
-        ].reduce((a, b) => a > b ? a : b),
-      ),
-    );
-
-    mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100));
-
-    setState(() {});
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -201,31 +52,31 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
             controller.stopRingtone();
             if (Navigator.of(context).canPop()) Navigator.of(context).pop();
           });
-          return const Scaffold(body: SizedBox.shrink());
+          return const Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SizedBox.shrink(),
+          );
         }
 
         final safeIndex = _safeIndex;
         final trip = trips[safeIndex];
 
+        // Transparent, and pushed with opaque:false, so the home screen's map
+        // keeps rendering underneath — the request arrives as a card floating
+        // over the map the driver is already looking at.
+        //
+        // This screen used to own a second full-screen GoogleMap, which is
+        // what made the map appear to vanish when a request came in: the home
+        // map wasn't gone, it was covered by another one. Two live map
+        // surfaces also cost real memory and GPU on low-end hardware (the
+        // device log showed ImageReader "Unable to acquire a buffer item"
+        // warnings while this screen was up). Dropping it also removes a
+        // blocking high-accuracy GPS fix and a Directions API call that ran
+        // on every open and every card swipe just to draw that preview.
         return Scaffold(
+          backgroundColor: Colors.transparent,
           body: Stack(
             children: [
-              /// 🔵 GOOGLE MAP
-              GoogleMap(
-                initialCameraPosition: CameraPosition(
-                  target: LatLng(trip.pickupLat!, trip.pickupLng!),
-                  zoom: 14,
-                ),
-                onMapCreated: (controller) {
-                  mapController = controller;
-                  _updateMap();
-                },
-                markers: markers,
-                polylines: polylines,
-                myLocationEnabled: true,
-                zoomControlsEnabled: false,
-              ),
-
               Positioned(
                 top: 50,
                 right: 20,
@@ -258,8 +109,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                     ),
                     itemCount: trips.length,
                     onPageChanged: (index) {
-                      currentIndex = index;
-                      _updateMap();
+                      setState(() => currentIndex = index);
                     },
                     itemBuilder: (context, index) {
                       return _rideCard(trips[index]);

@@ -824,8 +824,15 @@ class HomeController extends GetxController {
             // mid-transition or while backgrounded); setting the flag before
             // the call meant a null return latched it true with no callback
             // ever attached to clear it.
+            // opaque:false keeps the route underneath (the home screen and its
+            // map) mounted and painting, so the request arrives as a card over
+            // the live map instead of replacing the view. The screen itself is
+            // a transparent Scaffold; both halves are required — a transparent
+            // Scaffold pushed on an opaque route just shows black behind it,
+            // because Flutter stops painting the route below.
             final pushed = Get.to(
               () => IncomingBookingScreen(trips: incomingTrips),
+              opaque: false,
             );
             if (pushed == null) {
               debugPrint(
