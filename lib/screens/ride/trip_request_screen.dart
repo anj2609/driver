@@ -48,6 +48,20 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   int get _safeIndex =>
       _trips.isEmpty ? 0 : currentIndex.clamp(0, _trips.length - 1);
 
+  /// Dismisses the accept-loading dialog, tolerating the case where its
+  /// element is already gone.
+  ///
+  /// [ctx] is captured before an await and used after it, and accepting a ride
+  /// replaces the whole route stack — so by the time this runs the dialog may
+  /// have been torn down with everything else. Calling Navigator.of() on a
+  /// defunct context throws, and the old code did exactly that from inside a
+  /// catch block, where nothing was left to catch it.
+  void _closeLoader(BuildContext? ctx) {
+    if (ctx == null || !ctx.mounted) return;
+    final navigator = Navigator.maybeOf(ctx);
+    if (navigator != null && navigator.canPop()) navigator.pop();
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +111,15 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                     ),
                     itemCount: trips.length,
                     onPageChanged: (index) {
+                      // onPageChanged is a scroll-settle callback, so it can
+                      // still fire after this State is gone — the card now
+                      // lives inside the home screen, and the ride flow
+                      // replaces that screen wholesale (returnToExistingHome()
+                      // → Get.offAllNamed) while a swipe may still be
+                      // animating. Back when this was its own route it stayed
+                      // mounted for its whole life and the guard wasn't
+                      // needed; now it is.
+                      if (!mounted) return;
                       setState(() => currentIndex = index);
                     },
                     itemBuilder: (context, index) {
@@ -207,17 +230,10 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                       final code = body is Map ? body['code']?.toString() : null;
                       final alreadyNavigatedAway = code == '200';
 
-                      if (!alreadyNavigatedAway &&
-                          dialogContext != null &&
-                          Navigator.of(dialogContext!).canPop()) {
-                        Navigator.of(dialogContext!).pop();
-                      }
+                      if (!alreadyNavigatedAway) _closeLoader(dialogContext);
                     } catch (e) {
                       debugPrint('acceptRidesTrip Error: $e');
-                      if (dialogContext != null &&
-                          Navigator.of(dialogContext!).canPop()) {
-                        Navigator.of(dialogContext!).pop();
-                      }
+                      _closeLoader(dialogContext);
                     } finally {
                       _isAcceptingTrip = false;
                     }
