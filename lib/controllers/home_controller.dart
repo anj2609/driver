@@ -80,7 +80,18 @@ class HomeController extends GetxController {
   List<NewBookingNearByModel> incomingTrips = [];
   List<NewBookingNearByModel> acceptedTrip = [];
   DriverBookingActives? driverBookingActivesModel;
-  final AudioPlayer _player = AudioPlayer();
+  // Lazily created and recreatable — deliberately not a `final` player built
+  // once at construction. onClose() disposes it, but this controller is
+  // registered fenix:true and in practice outlives its own onClose (a device
+  // log showed the nearby-bookings poll still running for minutes after
+  // disposal). An AudioPlayer cannot be revived once disposed, so from that
+  // moment every playRingtone()/stopRingtone() threw "Player has not yet been
+  // created or has already been disposed" — swallowed by their own catch
+  // blocks — and the driver got a completely silent incoming-ride card for the
+  // rest of the session. Routing all access through this getter means a
+  // disposal is recoverable instead of permanent.
+  AudioPlayer? _playerInstance;
+  AudioPlayer get _player => _playerInstance ??= AudioPlayer();
   NewBookingNearByModel? savedTripData;
   AcceptRideModel? savedAcceptData;
 
@@ -89,6 +100,13 @@ class HomeController extends GetxController {
   Timer? _ringtoneTimer;
   ////driverlatitude driverlongitude
   bool isIncomingScreenOpen = false;
+
+  // Get.to(() => IncomingBookingScreen(...)) is pushed without an explicit
+  // routeName, so GetX derives one from the widget's runtime type — this
+  // string. Used to reconcile isIncomingScreenOpen against the real route
+  // stack in _pollNearbyBookings; keep it in sync if that screen is renamed
+  // or given an explicit routeName.
+  static const String _incomingBookingRoute = '/IncomingBookingScreen';
   dynamic workStatus;
   AcceptRideModel? trackRideModel;
   DateTime? lastUpdateTime;
@@ -172,8 +190,11 @@ class HomeController extends GetxController {
     positionStreams?.cancel();
     isRingtonePlaying = false;
     try {
-      _player.dispose();
+      _playerInstance?.dispose();
     } catch (_) {}
+    // Cleared so the getter rebuilds a fresh player if this controller is used
+    // again after onClose — disposal must not be a one-way door.
+    _playerInstance = null;
     super.onClose();
   }
 
@@ -743,8 +764,14 @@ class HomeController extends GetxController {
           );
           _logSuspiciouslyDistantMatches(apiTrips);
 
-          incomingTrips.clear();
-          incomingTrips.addAll(apiTrips);
+          // Assigned as a whole new list rather than clear()+addAll() on the
+          // live one. IncomingBookingScreen renders straight off
+          // controller.incomingTrips, and its build() has an empty-guard that
+          // pops the screen (and calls stopRingtone) the moment it sees an
+          // empty list — so mutating the same instance in place gave that
+          // guard a window to observe the emptied intermediate state and tear
+          // down a card that was about to be refilled with the very same trip.
+          incomingTrips = apiTrips;
 
           if (incomingTrips.isNotEmpty) {
             // Ring again whenever a request with an id we haven't already
@@ -766,14 +793,54 @@ class HomeController extends GetxController {
             isIncomingScreenOpen = false;
           }
 
+          // Reconcile the flag against the real route stack before trusting
+          // it. isIncomingScreenOpen was only ever cleared by the pop callback
+          // below, which does not fire when the route is torn down by an
+          // offAll/offNamedUntil elsewhere in the ride flow — or when Get.to()
+          // returns null and the callback is never attached in the first
+          // place. Either case latched the flag true permanently, and since
+          // it's the sole gate on showing a card, every subsequent poll then
+          // found trips and silently dropped them: "backend keeps returning
+          // the ride, no card ever appears". Reconciling here means an
+          // unforeseen teardown self-heals on the next 3s tick instead of
+          // ending dispatch for the life of this controller.
+          if (isIncomingScreenOpen &&
+              Get.currentRoute != _incomingBookingRoute) {
+            debugPrint(
+              '[LocationPipeline] card gate was stuck open (route is '
+              '${Get.currentRoute}) — resetting',
+            );
+            isIncomingScreenOpen = false;
+          }
+
+          debugPrint(
+            '[LocationPipeline] card gate: trips=${incomingTrips.length} '
+            'isIncomingScreenOpen=$isIncomingScreenOpen',
+          );
+
           if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
-            isIncomingScreenOpen = true;
-            Get.to(() => IncomingBookingScreen(trips: incomingTrips))?.then((
-              _,
-            ) {
-              isIncomingScreenOpen = false;
-              stopRingtone();
-            });
+            // Set only after a confirmed push. Get.to() returns null when the
+            // navigator isn't ready (this runs from a Timer, so it can fire
+            // mid-transition or while backgrounded); setting the flag before
+            // the call meant a null return latched it true with no callback
+            // ever attached to clear it.
+            final pushed = Get.to(
+              () => IncomingBookingScreen(trips: incomingTrips),
+            );
+            if (pushed == null) {
+              debugPrint(
+                '[LocationPipeline] card push failed — navigator not ready, '
+                'leaving gate open to retry next tick',
+              );
+            } else {
+              isIncomingScreenOpen = true;
+              // whenComplete rather than then: fires on every completion path,
+              // including a pop that carries no result.
+              pushed.whenComplete(() {
+                isIncomingScreenOpen = false;
+                stopRingtone();
+              });
+            }
           }
 
           update();
@@ -901,19 +968,25 @@ class HomeController extends GetxController {
     isRingtonePlaying = true;
 
     try {
-      // Stop and release any existing player first
-      try {
-        await _player.stop();
-        await _player.release();
-      } catch (_) {}
-
-      await _player.setReleaseMode(ReleaseMode.release);
-      await _player.play(AssetSource('sound/ringtone.mp3'));
+      await _playRingtoneOnce();
     } catch (e) {
-      debugPrint('playRingtone error: $e');
-      // Reset flag so next attempt can try again
-      isRingtonePlaying = false;
-      return;
+      // A dead player throws on every call and can never recover by itself,
+      // so retrying against the same instance is pointless — rebuild it once
+      // and try again. Without this, one bad disposal silences every future
+      // ride request for the life of the session.
+      debugPrint('playRingtone error: $e — rebuilding player and retrying');
+      try {
+        try {
+          _playerInstance?.dispose();
+        } catch (_) {}
+        _playerInstance = null;
+        await _playRingtoneOnce();
+      } catch (e2) {
+        debugPrint('playRingtone retry failed: $e2');
+        // Reset flag so next attempt can try again
+        isRingtonePlaying = false;
+        return;
+      }
     }
 
     // Auto-stop after 3 seconds
@@ -923,12 +996,29 @@ class HomeController extends GetxController {
     });
   }
 
+  /// One attempt at starting the ringtone. Separated out so [playRingtone] can
+  /// run it a second time against a freshly built player without duplicating
+  /// the sequence.
+  Future<void> _playRingtoneOnce() async {
+    // Best-effort cleanup of whatever the player was last doing — a fresh
+    // instance has nothing to stop, so failures here are expected and ignored.
+    try {
+      await _player.stop();
+      await _player.release();
+    } catch (_) {}
+
+    await _player.setReleaseMode(ReleaseMode.release);
+    await _player.play(AssetSource('sound/ringtone.mp3'));
+  }
+
   void stopRingtone() async {
     _ringtoneTimer?.cancel();
     _ringtoneTimer = null;
     isRingtonePlaying = false;
     try {
-      await _player.stop();
+      // Deliberately the nullable field, not the getter — stopping should
+      // never construct a player that didn't already exist.
+      await _playerInstance?.stop();
     } catch (e) {
       debugPrint('stopRingtone error: $e');
     }
