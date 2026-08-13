@@ -1799,6 +1799,16 @@ class HomeController extends GetxController {
       final response = await homeRepo.generateQrCode(bookingId: bookingId);
       final body = response.body;
       final isSuccess = _isSuccessResponse(response);
+
+      // Every failure path below returns a bare null, and the caller can only
+      // tell "no QR" — not why. That made "the QR sheet just doesn't appear"
+      // impossible to diagnose from a device log, so log the raw response and
+      // say which branch bailed out.
+      debugPrint(
+        '[Payment] generate-qr-payment bookingId=$bookingId '
+        'statusCode=${response.statusCode} isSuccess=$isSuccess raw=$body',
+      );
+
       if (isSuccess) {
         final model = QrPaymentModel.fromJson(response.body);
         if (model.data != null) return model.data;
@@ -1810,14 +1820,22 @@ class HomeController extends GetxController {
               (directData.qrId ?? '').isNotEmpty) {
             return directData;
           }
+          debugPrint(
+            '[Payment] backend reported success but no QR fields were found — '
+            'checked data.*, then top-level image_url/qr_code/qr_id. '
+            'Keys present: ${body.keys.toList()}',
+          );
         }
         return null;
       } else {
-        // No toast — post-accept ride flow is toast-free by design.
+        debugPrint(
+          '[Payment] generate-qr-payment rejected: '
+          '${body is Map ? body['message'] : body}',
+        );
         return null;
       }
-    } catch (e) {
-      debugPrint('generateOnlineQr error: $e');
+    } catch (e, st) {
+      debugPrint('generateOnlineQr error: $e\n$st');
       return null;
     }
   }

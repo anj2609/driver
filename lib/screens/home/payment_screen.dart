@@ -6,7 +6,6 @@ import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/model/acceptride_details_model.dart';
 import 'package:myridedriverapp/model/qr_payment_model.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
-import 'package:myridedriverapp/widgets/custom_loader.dart';
 import 'package:myridedriverapp/widgets/online_payment_sheet.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
 
@@ -46,65 +45,36 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
   }
 
-  /// Dismisses a loader dialog, tolerating a context whose element is already
-  /// gone.
-  ///
-  /// Every handler below captures the dialog's context before an await and
-  /// uses it after — and completing a ride runs returnToExistingHome(), which
-  /// replaces the entire route stack via Get.offAllNamed(). The captured
-  /// context is defunct by then, and Navigator.of() on a defunct context
-  /// throws. The old code did that from inside `finally`, so the throw
-  /// skipped the pop entirely and left this barrier-blocking loader stranded
-  /// on top of the new Home screen — the spinner that never goes away after a
-  /// ride completes.
-  void _closeLoader(BuildContext? ctx) {
-    if (ctx == null || !ctx.mounted) return;
-    final navigator = Navigator.maybeOf(ctx);
-    if (navigator != null && navigator.canPop()) navigator.pop();
-  }
 
   Future<void> _handleOnlinePayment() async {
     if (_isProcessing || _bookingId.isEmpty) return;
 
     setState(() => _isProcessing = true);
 
-    // Captures the loader dialog's own BuildContext so it can be dismissed
-    // unambiguously via Navigator.of(dialogContext), regardless of what
-    // else happens to the navigation stack in between — same fix already
-    // applied to the Accept-ride dialog in trip_request_screen.dart.
-    // Get.dialog() pushes onto GetX's own dialog/overlay stack, which is
-    // *separate* from the main route stack Get.offAllNamed()/Get.offAll()
-    // operate on. generateOnlineQr() itself doesn't navigate, but a
-    // completed payment inside OnlinePaymentSheet below eventually calls
-    // rideCompletedMarked(), which replaces the whole route stack with
-    // Home via returnToExistingHome() — that call does not know or care
-    // that this loader dialog is still open, so relying on
-    // `Get.isDialogOpen`/`Get.back()` after the fact could pop the wrong
-    // thing (or, since Get.offAllNamed() never touches the dialog stack at
-    // all, leave this barrier-blocking loader stranded on top of the new
-    // Home screen forever — indistinguishable from an infinite loading
-    // state).
-    BuildContext? dialogContext;
+    // No Get.dialog() barrier loader here any more — _isProcessing above
+    // already drives a spinner in this screen's own build(), so the dialog was
+    // a second, redundant loader whose only real contribution was getting
+    // stuck.
+    //
+    // It stranded itself two different ways. Get.dialog() schedules its route,
+    // and the Builder that captured its context only ran when the dialog
+    // actually built — so if the request finished quickly, the dismissal in
+    // `finally` ran while that context was still null, dismissed nothing, and
+    // the dialog then built on top of whatever screen came next. And on the
+    // cash/wallet paths, completing a ride runs Get.offAllNamed(), after which
+    // the captured context is defunct and Navigator.of() on it throws — from
+    // inside `finally`, so the pop was skipped entirely. Either way the driver
+    // was left staring at a non-dismissible spinner with no way out but
+    // restarting the app.
     try {
       final controller = Get.find<HomeController>();
-
-      // Show loader
-      Get.dialog(
-        Builder(
-          builder: (dCtx) {
-            dialogContext = dCtx;
-            return const Center(child: PremiumBlurLoader());
-          },
-        ),
-        barrierDismissible: false,
-      );
 
       final QrPaymentData? qrData = await controller.generateOnlineQr(
         context: context,
         bookingId: _bookingId,
       );
 
-      _closeLoader(dialogContext);
+
 
       if (qrData == null) {
         // generateOnlineQr() returns null for every non-success — a rejected
@@ -140,7 +110,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         );
       }
     } catch (e) {
-      _closeLoader(dialogContext);
+
       debugPrint('Online payment error: $e');
       if (context.mounted) {
         AnimatedTopToast.show(
@@ -205,31 +175,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     setState(() => _isProcessing = true);
 
-    // Same fix as _handleOnlinePayment above: capture the loader dialog's
-    // own BuildContext so it can be dismissed via Navigator.of(dialogContext)
-    // regardless of what else happens to the navigation stack. This is the
-    // exact case that mattered most — on success, rideCompletedMarked()
-    // calls returnToExistingHome(), which replaces the *entire* route
-    // stack with Home via Get.offAllNamed(). That call has no idea this
-    // loader dialog (pushed via Get.dialog(), onto GetX's separate
-    // dialog/overlay stack) is still open, and never closes it — so the
-    // old code's `if (Get.isDialogOpen ?? false) Get.back()` in finally
-    // was racing a dialog stack that offAllNamed() never touched at all.
-    // The barrier is non-dismissible, so once stranded there's no way out
-    // except restarting the app — indistinguishable from an infinite
-    // loading state, which is exactly what was reported.
-    BuildContext? dialogContext;
+    // This is the path where the stranded barrier hurt most: on success
+    // rideCompletedMarked() runs returnToExistingHome(), which replaces the
+    // whole route stack via Get.offAllNamed(). The dialog's captured context
+    // is defunct straight after that, so dismissing it threw from inside
+    // `finally` and the pop never happened — a non-dismissible spinner left
+    // sitting over the map with no way out but restarting the app. See
+    // _handleOnlinePayment for the full note; _isProcessing covers the
+    // loading state on its own.
     try {
-      Get.dialog(
-        Builder(
-          builder: (dCtx) {
-            dialogContext = dCtx;
-            return const Center(child: PremiumBlurLoader());
-          },
-        ),
-        barrierDismissible: false,
-      );
-
       await Get.find<HomeController>().rideCompletedMarked(
         context: context,
         bookingId: _bookingId,
@@ -238,7 +192,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       debugPrint('Cash payment error: $e');
     } finally {
-      _closeLoader(dialogContext);
+
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -248,20 +202,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     setState(() => _isProcessing = true);
 
-    // Same dialog-stranding fix as _handleCashPayment/_handleOnlinePayment
-    // above.
-    BuildContext? dialogContext;
+    // Barrier dialog removed here too, for the same reason as the cash path
+    // above — _isProcessing already drives this screen's loading state.
     try {
-      Get.dialog(
-        Builder(
-          builder: (dCtx) {
-            dialogContext = dCtx;
-            return const Center(child: PremiumBlurLoader());
-          },
-        ),
-        barrierDismissible: false,
-      );
-
       await Get.find<HomeController>().rideCompletedMarked(
         context: context,
         bookingId: _bookingId,
@@ -270,7 +213,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } catch (e) {
       debugPrint('Wallet payment error: $e');
     } finally {
-      _closeLoader(dialogContext);
+
       if (mounted) setState(() => _isProcessing = false);
     }
   }
