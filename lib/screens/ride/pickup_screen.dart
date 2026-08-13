@@ -676,6 +676,25 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   int? _liveEtaSeconds;
   double? _liveDistanceMeters;
 
+  // Booking ids we've already kicked off an estimate/trip-detail fetch for.
+  //
+  // The fetch below runs from an addPostFrameCallback registered inside
+  // build(), and it was gated only on `estimatePrice.isEmpty`. Both calls it
+  // makes — tripRideDetailsApi() and fetchEstimateRideData() — end in
+  // update(), which rebuilds this GetBuilder, which registers the callback
+  // again. That closes the loop the moment the guard fails to clear: if the
+  // estimate never lands (backend rejects it, no usable drop coordinates,
+  // request fails), estimatePrice stays empty and trip-detail fires
+  // continuously — a device log showed dozens of identical
+  // `trip-detail {booking_id: 98}` calls back to back, which is what starved
+  // the renderer ("Unable to acquire a buffer item") and left the screen
+  // spinning forever.
+  //
+  // Latching on the booking id makes the request fire at most once per ride
+  // regardless of whether it succeeds, so a failed estimate degrades to a
+  // missing estimate instead of a request storm.
+  final Set<String> _estimateRequestedFor = <String>{};
+
   Timer? _timer;
   StreamSubscription<Position>? positionStream;
 
@@ -850,9 +869,21 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
               userLng: rideData.lng,
             );
 
-            // Fetch estimate ride data (distance, time, price) from API
+            // Fetch estimate ride data (distance, time, price) from API.
+            //
+            // Latched on the booking id, not just estimatePrice.isEmpty. Both
+            // calls below end in update(), which rebuilds this GetBuilder and
+            // re-registers this very callback — so gating purely on the
+            // estimate being empty meant a fetch that never populated it
+            // looped forever. See _estimateRequestedFor.
+            final String estimateBookingId =
+                rideData.bookingId?.toString() ?? '';
             if (controller.estimatePrice.isEmpty &&
-                rideData.lat != null && rideData.lng != null) {
+                rideData.lat != null &&
+                rideData.lng != null &&
+                estimateBookingId.isNotEmpty &&
+                !_estimateRequestedFor.contains(estimateBookingId)) {
+              _estimateRequestedFor.add(estimateBookingId);
               // Drop coordinates come from trip-detail API (ProfileController), not track-booking-ride
               try {
                 final profileCtrl = Get.find<ProfileController>();
@@ -866,23 +897,29 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                   );
                 } else {
                   // Trip details not loaded yet — fetch them first, then estimate
-                  final bookingId = rideData.bookingId?.toString() ?? '';
-                  if (bookingId.isNotEmpty) {
-                    profileCtrl.tripRideDetailsApi(
-                      context: context,
-                      bookingid: bookingId,
-                    ).then((_) {
-                      final td = profileCtrl.tripDetailsModel?.data;
-                      if (td?.dropLat != null && td?.dropLng != null) {
-                        controller.fetchEstimateRideData(
-                          pickupLat: rideData.lat!,
-                          pickupLng: rideData.lng!,
-                          dropLat: td!.dropLat!,
-                          dropLng: td.dropLng!,
-                        );
-                      }
-                    });
-                  }
+                  profileCtrl.tripRideDetailsApi(
+                    context: context,
+                    bookingid: estimateBookingId,
+                  ).then((_) {
+                    if (!mounted) return;
+                    final td = profileCtrl.tripDetailsModel?.data;
+                    if (td?.dropLat != null && td?.dropLng != null) {
+                      controller.fetchEstimateRideData(
+                        pickupLat: rideData.lat!,
+                        pickupLng: rideData.lng!,
+                        dropLat: td!.dropLat!,
+                        dropLng: td.dropLng!,
+                      );
+                    } else {
+                      debugPrint(
+                        '[Estimate] trip-detail for booking '
+                        '$estimateBookingId returned no drop coordinates — '
+                        'skipping estimate rather than retrying',
+                      );
+                    }
+                  }).catchError((e) {
+                    debugPrint('[Estimate] trip-detail failed: $e');
+                  });
                 }
               } catch (_) {}
             }
