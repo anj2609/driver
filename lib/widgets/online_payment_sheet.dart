@@ -165,7 +165,6 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
       widget.homeController.trackRideModel = null;
       widget.homeController.driverBookingActivesModel = null;
       widget.homeController.hasActiveRide = false;
-      widget.homeController.isIncomingScreenOpen = false;
       widget.homeController.computedDistance = '';
       widget.homeController.computedDuration = '';
       widget.homeController.estimatePrice = '';

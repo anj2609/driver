@@ -28,7 +28,7 @@ import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
 import 'package:myridedriverapp/model/trinpdetails_model.dart';
 import 'package:myridedriverapp/model/qr_payment_model.dart';
 import 'package:myridedriverapp/repository/home_repo.dart';
-import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
+
 import 'package:myridedriverapp/services/geo_utils.dart';
 import 'package:myridedriverapp/services/location_health_tracker.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
@@ -99,14 +99,10 @@ class HomeController extends GetxController {
   Timer? _dummyTimer;
   Timer? _ringtoneTimer;
   ////driverlatitude driverlongitude
-  bool isIncomingScreenOpen = false;
-
-  // Get.to(() => IncomingBookingScreen(...)) is pushed without an explicit
-  // routeName, so GetX derives one from the widget's runtime type — this
-  // string. Used to reconcile isIncomingScreenOpen against the real route
-  // stack in _pollNearbyBookings; keep it in sync if that screen is renamed
-  // or given an explicit routeName.
-  static const String _incomingBookingRoute = '/IncomingBookingScreen';
+  // (isIncomingScreenOpen and its route-name constant used to live here. The
+  // request card is no longer a route, so there is no open/closed state to
+  // track — it renders whenever incomingTrips is non-empty. That flag latching
+  // true was what silently suppressed every ride card.)
   dynamic workStatus;
   AcceptRideModel? trackRideModel;
   DateTime? lastUpdateTime;
@@ -790,65 +786,24 @@ class HomeController extends GetxController {
           } else {
             _ringedTripIds.clear();
             stopRingtone();
-            isIncomingScreenOpen = false;
           }
 
-          // Reconcile the flag against the real route stack before trusting
-          // it. isIncomingScreenOpen was only ever cleared by the pop callback
-          // below, which does not fire when the route is torn down by an
-          // offAll/offNamedUntil elsewhere in the ride flow — or when Get.to()
-          // returns null and the callback is never attached in the first
-          // place. Either case latched the flag true permanently, and since
-          // it's the sole gate on showing a card, every subsequent poll then
-          // found trips and silently dropped them: "backend keeps returning
-          // the ride, no card ever appears". Reconciling here means an
-          // unforeseen teardown self-heals on the next 3s tick instead of
-          // ending dispatch for the life of this controller.
-          if (isIncomingScreenOpen &&
-              Get.currentRoute != _incomingBookingRoute) {
-            debugPrint(
-              '[LocationPipeline] card gate was stuck open (route is '
-              '${Get.currentRoute}) — resetting',
-            );
-            isIncomingScreenOpen = false;
-          }
-
+          // No navigation here any more. The request card lives inside the
+          // home screen's own Stack and shows itself whenever incomingTrips is
+          // non-empty, so this update() *is* the "show the card" step.
+          //
+          // Pushing it as a route was the source of two separate outages: the
+          // isIncomingScreenOpen flag latched true whenever the route was torn
+          // down without its pop callback firing (an offAll/offNamedUntil from
+          // the ride flow, or Get.to() returning null when the navigator
+          // wasn't ready), after which every poll found trips and silently
+          // dropped them — and pushing transparently over the map didn't work
+          // either, because the map is an Android platform view and those
+          // don't composite under a non-opaque route.
           debugPrint(
-            '[LocationPipeline] card gate: trips=${incomingTrips.length} '
-            'isIncomingScreenOpen=$isIncomingScreenOpen',
+            '[LocationPipeline] rendering ${incomingTrips.length} request '
+            'card(s) over the map',
           );
-
-          if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
-            // Set only after a confirmed push. Get.to() returns null when the
-            // navigator isn't ready (this runs from a Timer, so it can fire
-            // mid-transition or while backgrounded); setting the flag before
-            // the call meant a null return latched it true with no callback
-            // ever attached to clear it.
-            // opaque:false keeps the route underneath (the home screen and its
-            // map) mounted and painting, so the request arrives as a card over
-            // the live map instead of replacing the view. The screen itself is
-            // a transparent Scaffold; both halves are required — a transparent
-            // Scaffold pushed on an opaque route just shows black behind it,
-            // because Flutter stops painting the route below.
-            final pushed = Get.to(
-              () => IncomingBookingScreen(trips: incomingTrips),
-              opaque: false,
-            );
-            if (pushed == null) {
-              debugPrint(
-                '[LocationPipeline] card push failed — navigator not ready, '
-                'leaving gate open to retry next tick',
-              );
-            } else {
-              isIncomingScreenOpen = true;
-              // whenComplete rather than then: fires on every completion path,
-              // including a pop that carries no result.
-              pushed.whenComplete(() {
-                isIncomingScreenOpen = false;
-                stopRingtone();
-              });
-            }
-          }
 
           update();
         }
@@ -1043,9 +998,15 @@ class HomeController extends GetxController {
     );
 
     incomingTrips.clear();
-    isIncomingScreenOpen = false;
 
     stopListeningBookings();
+
+    // Required now that the card is part of the home screen rather than a
+    // route that gets popped. offNamedUntil keeps home mounted underneath the
+    // pickup screen, and stopListeningBookings() means no further poll will
+    // fire an update() — so without this the accepted request would still be
+    // sitting on the home map when the driver returns to it after the ride.
+    update();
   }
 
   void rejectTrip(NewBookingNearByModel trip) {
@@ -1055,11 +1016,11 @@ class HomeController extends GetxController {
     if (incomingTrips.isEmpty) {
       _ringedTripIds.clear();
       stopRingtone();
-      isIncomingScreenOpen = false;
-
-      if (Get.currentRoute != "/") {
-        Get.back();
-      }
+      // No Get.back() here any more. The card used to be its own route, so
+      // dismissing the last request meant popping it; now that it's a widget
+      // inside the home screen, that same pop would tear down the *home
+      // screen* instead. Emptying the list is all that's needed — the card
+      // renders nothing when there's nothing pending.
     }
 
     update();
@@ -1252,7 +1213,6 @@ class HomeController extends GetxController {
         }
 
         incomingTrips.clear();
-        isIncomingScreenOpen = false;
         // So the next request — after this ride finishes and listening
         // resumes — is guaranteed to ring, instead of possibly inheriting
         // a stale "already rung" id from before this ride.
@@ -1400,7 +1360,6 @@ class HomeController extends GetxController {
           trackRideModel = null;
           driverBookingActivesModel = null;
           hasActiveRide = false;
-          isIncomingScreenOpen = false;
           computedDistance = '';
           computedDuration = '';
           estimatePrice = '';
@@ -1744,7 +1703,6 @@ class HomeController extends GetxController {
         trackRideModel = null;
         driverBookingActivesModel = null;
         hasActiveRide = false;
-        isIncomingScreenOpen = false;
         computedDistance = '';
         computedDuration = '';
         estimatePrice = '';

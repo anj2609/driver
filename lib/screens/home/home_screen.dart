@@ -13,6 +13,7 @@ import 'package:myridedriverapp/model/acceptride_details_model.dart';
 import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
 
 import 'package:myridedriverapp/model/trip_model.dart';
+import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 
 import 'package:myridedriverapp/widgets/custum_header.dart';
@@ -506,6 +507,20 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               },
             ),
           ),
+
+          /// 🔔 INCOMING RIDE REQUEST — a card painted over the live map.
+          ///
+          /// Mounted here as a sibling rather than pushed as a route on
+          /// purpose. The map above is an Android platform view, and platform
+          /// views don't composite underneath a non-opaque route — pushing the
+          /// request transparently left the driver looking at a blank space
+          /// where the map should be. Sitting in this Stack, it just paints on
+          /// top of the map that's already there.
+          ///
+          /// Renders nothing at all when there's no pending request, and its
+          /// visibility follows HomeController.incomingTrips directly, so
+          /// there's no route lifecycle or open/closed flag to drift.
+          const Positioned.fill(child: IncomingBookingScreen()),
 
           /// 🔥 FULL SCREEN LOADER
           GetBuilder<HomeController>(

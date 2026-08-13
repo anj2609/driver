@@ -7,10 +7,21 @@ import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 
+/// The incoming-ride request card. Mounted as a child of the home screen's
+/// own Stack — deliberately NOT pushed as a route.
+///
+/// It used to be a full-screen route carrying its own GoogleMap, which is why
+/// the map "disappeared" when a request arrived. Pushing it transparently
+/// (opaque:false) over the home map didn't work either: on Android a
+/// GoogleMap is a platform view, and platform views don't composite reliably
+/// underneath a non-opaque route — the map goes blank. Living inside the home
+/// screen's widget tree sidesteps the problem entirely: one route, one map,
+/// and this is just a sibling painted above it.
+///
+/// It also means there's no route to track, so no open/closed flag to get out
+/// of sync — visibility follows [HomeController.incomingTrips] directly.
 class IncomingBookingScreen extends StatefulWidget {
-  final List<NewBookingNearByModel> trips;
-
-  const IncomingBookingScreen({super.key, required this.trips});
+  const IncomingBookingScreen({super.key});
 
   @override
   State<IncomingBookingScreen> createState() => _IncomingBookingScreenState();
@@ -44,39 +55,16 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
       builder: (_) {
         final trips = _trips;
 
-        if (trips.isEmpty) {
-          // The last remaining request was rejected/accepted elsewhere —
-          // close this screen instead of rendering with nothing to show.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            controller.stopRingtone();
-            if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-          });
-          return const Scaffold(
-            backgroundColor: Colors.transparent,
-            body: SizedBox.shrink(),
-          );
-        }
+        // No request pending — render nothing at all, leaving the home map
+        // completely untouched. Nothing to pop or dismiss, because this was
+        // never a route.
+        if (trips.isEmpty) return const SizedBox.shrink();
 
         final safeIndex = _safeIndex;
         final trip = trips[safeIndex];
 
-        // Transparent, and pushed with opaque:false, so the home screen's map
-        // keeps rendering underneath — the request arrives as a card floating
-        // over the map the driver is already looking at.
-        //
-        // This screen used to own a second full-screen GoogleMap, which is
-        // what made the map appear to vanish when a request came in: the home
-        // map wasn't gone, it was covered by another one. Two live map
-        // surfaces also cost real memory and GPU on low-end hardware (the
-        // device log showed ImageReader "Unable to acquire a buffer item"
-        // warnings while this screen was up). Dropping it also removes a
-        // blocking high-accuracy GPS fix and a Directions API call that ran
-        // on every open and every card swipe just to draw that preview.
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Stack(
-            children: [
+        return Stack(
+          children: [
               Positioned(
                 top: 50,
                 right: 20,
@@ -117,8 +105,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                   ),
                 ),
               ),
-            ],
-          ),
+          ],
         );
       },
     );
