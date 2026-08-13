@@ -61,8 +61,20 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   // instead of the screen staying frozen on its original snapshot.
   List<NewBookingNearByModel> get _trips => controller.incomingTrips;
 
-  int get _safeIndex =>
-      _trips.isEmpty ? 0 : currentIndex.clamp(0, _trips.length - 1);
+  /// Index of the request currently on screen, clamped to the live list.
+  ///
+  /// Reads the PageView's own position when it has one, falling back to the
+  /// last reported page. Deliberately derived on demand instead of held in
+  /// State: nothing here needs a rebuild when the driver swipes, which is what
+  /// let the setState() call go away entirely.
+  int get _visibleIndex {
+    final int count = _trips.length;
+    if (count == 0) return 0;
+    final double? page =
+        _pageController.hasClients ? _pageController.page : null;
+    final int index = page?.round() ?? currentIndex;
+    return index.clamp(0, count - 1);
+  }
 
   /// Dismisses the accept-loading dialog, tolerating the case where its
   /// element is already gone.
@@ -90,9 +102,6 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
         // never a route.
         if (trips.isEmpty) return const SizedBox.shrink();
 
-        final safeIndex = _safeIndex;
-        final trip = trips[safeIndex];
-
         return Stack(
           children: [
               Positioned(
@@ -102,8 +111,15 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                   backgroundColor: ColorResources.whiteColor,
                   child: IconButton(
                     icon: Icon(Icons.close),
+                    // Resolves which request to dismiss at tap time from the
+                    // PageView's own live position, rather than from an index
+                    // captured during build. That is what let this button stop
+                    // needing a rebuild — and therefore stop needing setState —
+                    // when the driver swipes between requests.
                     onPressed: () {
-                      controller.rejectTrip(trip);
+                      final current = _trips;
+                      if (current.isEmpty) return;
+                      controller.rejectTrip(current[_visibleIndex]);
                     },
                   ),
                 ),
@@ -124,18 +140,20 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                   child: PageView.builder(
                     controller: _pageController,
                     itemCount: trips.length,
-                    onPageChanged: (index) {
-                      // onPageChanged is a scroll-settle callback, so it can
-                      // still fire after this State is gone — the card now
-                      // lives inside the home screen, and the ride flow
-                      // replaces that screen wholesale (returnToExistingHome()
-                      // → Get.offAllNamed) while a swipe may still be
-                      // animating. Back when this was its own route it stayed
-                      // mounted for its whole life and the guard wasn't
-                      // needed; now it is.
-                      if (!mounted) return;
-                      setState(() => currentIndex = index);
-                    },
+                    // Plain assignment — deliberately not setState().
+                    //
+                    // onPageChanged is a scroll-settle callback, so it can fire
+                    // after this State is gone: the card lives inside the home
+                    // screen, and the ride flow replaces that screen wholesale
+                    // (returnToExistingHome() → Get.offAllNamed) while a swipe
+                    // may still be animating. Disposing _pageController here
+                    // can itself trigger a final settle. A `mounted` guard
+                    // narrows that window but doesn't close it, because
+                    // `mounted` is still true while dispose() is running.
+                    // Nothing in this widget needs to rebuild on a swipe — the
+                    // close button resolves the visible request at tap time —
+                    // so there is simply no setState to misfire.
+                    onPageChanged: (index) => currentIndex = index,
                     itemBuilder: (context, index) {
                       return _rideCard(trips[index]);
                     },
