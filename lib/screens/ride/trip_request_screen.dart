@@ -38,6 +38,22 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   // the full story on why this mattered.
   bool _isAcceptingTrip = false;
 
+  // Owned by the State and disposed with it. This used to be constructed
+  // inline in build() — and this widget is a GetBuilder<HomeController>, so it
+  // rebuilds on every HomeController.update(): the 3s booking poll, the 5s
+  // location heartbeat, and every location-stream event (distanceFilter is
+  // 5m, so continuously while the driver is moving). That allocated a fresh
+  // PageController, each holding a ScrollPosition attached to the viewport,
+  // on every one of those — and never disposed any of them. The leak grew for
+  // exactly as long as the request card stayed on screen.
+  final PageController _pageController = PageController(viewportFraction: 0.92);
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   // The controller's own list is the source of truth — widget.trips is only
   // the snapshot at the moment this screen was first pushed. Reading from
   // the controller here means the "Accept"/"X" buttons and any new booking
@@ -99,16 +115,14 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 right: 0,
                 child: SizedBox(
                   height: 300,
-                  // Re-keying on the trip list forces the PageView (and its
-                  // internal controller/scroll position) to reset cleanly
-                  // whenever a request is rejected or a new one arrives,
-                  // instead of holding onto a stale page index.
+                  // No ValueKey on the trip count any more. It forced a full
+                  // PageView teardown/rebuild every time a request arrived or
+                  // was dismissed, which with a State-owned controller risks
+                  // attaching one ScrollController to two positions at once.
+                  // PageView.builder already handles itemCount changing, and
+                  // _safeIndex keeps the index in range.
                   child: PageView.builder(
-                    key: ValueKey(trips.length),
-                    controller: PageController(
-                      viewportFraction: 0.92,
-                      initialPage: safeIndex,
-                    ),
+                    controller: _pageController,
                     itemCount: trips.length,
                     onPageChanged: (index) {
                       // onPageChanged is a scroll-settle callback, so it can
