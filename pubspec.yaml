@@ -2,7 +2,7 @@ name: myridedriverapp
 description: "NRide Driver - Accept rides, navigate to passengers, and manage your earnings."
 publish_to: 'none'
 
-version: 1.0.13+14
+version: 1.0.14+15
 
 environment:
   sdk: ^3.9.0
