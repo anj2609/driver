@@ -992,9 +992,16 @@ class ProfileController extends GetxController implements GetxService {
     }
   }
 
+  /// Currently unreachable — the live online-payment flow runs through
+  /// HomeController.generateOnlineQr(). [actualDistance] is required rather
+  /// than defaulted because the backend rejects generate-qr-payment without
+  /// it, and this controller has no view of the ride's distance; whoever wires
+  /// this up must pass HomeController's value (see _actualDistanceForBackend
+  /// there) instead of guessing one here.
   Future<Response> genrateQRCodeForPayment({
     required BuildContext context,
     required String id,
+    required String actualDistance,
   }) async {
    // EasyLoading.show(status: "Generating QR...");
     isQrLoading = true;
@@ -1003,7 +1010,10 @@ class ProfileController extends GetxController implements GetxService {
     Response response;
 
     try {
-      response = await profileRepo.genrateQrCOde(bookingid: id);
+      response = await profileRepo.genrateQrCOde(
+        bookingid: id,
+        actualDistance: actualDistance,
+      );
     } catch (e) {
     //  EasyLoading.dismiss();
 

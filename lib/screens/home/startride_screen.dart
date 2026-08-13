@@ -8,6 +8,7 @@ import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
+import 'package:myridedriverapp/controllers/profile_controller.dart';
 
 import 'package:myridedriverapp/screens/home/ridedetails_screen.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
@@ -76,6 +77,47 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     } catch (e) {
       debugPrint('[StartRide] Location error: $e');
     }
+  }
+
+  /// Drop-off coordinates for this ride, preferring track-booking-ride's own
+  /// figures and falling back to trip-detail.
+  ///
+  /// track-booking-ride frequently returns the booking without usable drop
+  /// coordinates — HomeController.trackbookingRide() already compensates for
+  /// exactly this when it computes the route, reading ProfileController's
+  /// tripDetailsModel instead. That fallback never reached the map, though:
+  /// InAppNavigationMap was handed trackRideModel's raw dropLat/dropLng, and
+  /// when those are null it builds no engine and no destination, so it returns
+  /// a CircularProgressIndicator that nothing will ever clear. The payment
+  /// buttons around it render normally, which is why this looked like "the map
+  /// area is stuck loading" rather than a missing-data problem.
+  ({double? lat, double? lng}) _resolveDropCoordinates(dynamic rideData) {
+    double? lat = rideData?.dropLat;
+    double? lng = rideData?.dropLng;
+
+    final bool unusable =
+        lat == null || lng == null || (lat == 0.0 && lng == 0.0);
+    if (!unusable) return (lat: lat, lng: lng);
+
+    try {
+      final tripData = Get.find<ProfileController>().tripDetailsModel?.data;
+      final double? fallbackLat = tripData?.dropLat;
+      final double? fallbackLng = tripData?.dropLng;
+      if (fallbackLat != null &&
+          fallbackLng != null &&
+          !(fallbackLat == 0.0 && fallbackLng == 0.0)) {
+        return (lat: fallbackLat, lng: fallbackLng);
+      }
+    } catch (_) {
+      // ProfileController not registered — fall through to the null result
+      // below, which the map now renders as a plain map rather than a spinner.
+    }
+
+    debugPrint(
+      '[StartRide] no usable drop coordinates from track-booking-ride or '
+      'trip-detail — navigation map will show without a route',
+    );
+    return (lat: null, lng: null);
   }
 
   void _fetchRouteForDetailsScreenOnce() {
@@ -316,6 +358,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
 
           final bookingId = data.data!.bookingId.toString();
           final totalFare = data.data?.totalFare?.toString() ?? '0';
+          final drop = _resolveDropCoordinates(data.data);
 
           return Stack(
             children: [
@@ -324,8 +367,8 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
               // existing GPS stream; doesn't start a second one.
               Positioned.fill(
                 child: InAppNavigationMap(
-                  destLat: data.data!.dropLat,
-                  destLng: data.data!.dropLng,
+                  destLat: drop.lat,
+                  destLng: drop.lng,
                   destLabel: 'Drop-off',
                   onArrived: () => debugPrint('[Nav] Arrived at drop-off'),
                   // Leaves room for the address card below, which sits at

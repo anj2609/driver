@@ -106,9 +106,18 @@ Future<Response> completeRide({
 
 ///======= Generate QR Code for Online Payment ===========
 
-  Future<Response> generateQrCode({String? bookingId}) async {
+  Future<Response> generateQrCode({
+    String? bookingId,
+    // Backend rejects generate-qr-payment with code 401 "The actual distance
+    // field is required." without this — exactly like complete-ride below.
+    // Sending only booking_id meant the QR was never generated, so the online
+    // payment sheet never opened and the driver was left with a spinner and no
+    // explanation.
+    required String actualDistance,
+  }) async {
     return apiClient.myridepostData(ApiConstants.genrateQrCode, {
       "booking_id": bookingId.toString(),
+      "actual_distance": actualDistance,
     });
   }
 

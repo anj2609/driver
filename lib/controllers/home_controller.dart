@@ -1677,9 +1677,7 @@ class HomeController extends GetxController {
       // app has to an "actual distance driven" figure. Falls back to
       // totaldestance, then '0', so the request never omits/empties a
       // field the backend requires.
-      final String actualDistance = computedDistance.isNotEmpty
-          ? computedDistance
-          : (totaldestance?.isNotEmpty == true ? totaldestance! : '0');
+      final String actualDistance = _actualDistanceForBackend();
 
       Response response = await homeRepo.completeRide(
         bookingid: bookingId,
@@ -1791,12 +1789,33 @@ class HomeController extends GetxController {
 
   // ======= Online Payment — Generate QR & Verify =======
 
+  /// This trip's tracked distance, in the form the backend expects.
+  ///
+  /// computedDistance is the Google Directions pickup→drop figure refreshed
+  /// throughout the ride (with a Haversine fallback) — the closest thing this
+  /// app has to "actual distance driven". Falls back to totaldestance, then
+  /// '0', so the field is never omitted or empty.
+  ///
+  /// Shared by complete-ride and generate-qr-payment: both reject the request
+  /// with "The actual distance field is required." without it. That was the
+  /// entire reason the online-payment QR never appeared — generate-qr-payment
+  /// was only ever sent booking_id, so the backend returned code 401 and the
+  /// sheet was never shown.
+  String _actualDistanceForBackend() {
+    if (computedDistance.isNotEmpty) return computedDistance;
+    if (totaldestance?.isNotEmpty == true) return totaldestance!;
+    return '0';
+  }
+
   Future<QrPaymentData?> generateOnlineQr({
     required BuildContext context,
     required String bookingId,
   }) async {
     try {
-      final response = await homeRepo.generateQrCode(bookingId: bookingId);
+      final response = await homeRepo.generateQrCode(
+        bookingId: bookingId,
+        actualDistance: _actualDistanceForBackend(),
+      );
       final body = response.body;
       final isSuccess = _isSuccessResponse(response);
 

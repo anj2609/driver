@@ -132,8 +132,25 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
         final lat = controller.latitude;
         final lng = controller.longitude;
 
+        // No destination means no engine, and neither ever arrives on its own
+        // — _ensureEngine() bails out early when destLat/destLng are null, so
+        // returning a spinner here left the map area loading forever while the
+        // rest of the screen rendered normally. That is a missing-data state,
+        // not a loading one: show the driver their own position on a live map
+        // (no route overlay) rather than a progress indicator that will never
+        // resolve.
         if (engine == null || dest == null) {
-          return const Center(child: CircularProgressIndicator());
+          if (lat == null || lng == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: LatLng(lat, lng),
+              zoom: 15,
+            ),
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+          );
         }
 
         if (lat == null || lng == null) {

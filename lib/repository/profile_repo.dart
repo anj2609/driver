@@ -234,9 +234,19 @@ class ProfiileRepo extends GetxService {
      
     });
   }
-    Future<Response> genrateQrCOde({String? bookingid}) async {
+  /// Second, currently unreachable copy of generate-qr-payment (the live flow
+  /// goes through HomeRepo.generateQrCode). Kept in sync deliberately: the
+  /// backend rejects this endpoint with "The actual distance field is
+  /// required." when only booking_id is sent, which is what kept the QR sheet
+  /// from ever opening. Leaving this copy with the old shape would just plant
+  /// the same bug for whoever wires it up next.
+  Future<Response> genrateQrCOde({
+    String? bookingid,
+    required String actualDistance,
+  }) async {
     return apiClient.myridepostData(ApiConstants.genrateQrCode, {
       "booking_id": bookingid.toString(),
+      "actual_distance": actualDistance,
     });
   }
 
