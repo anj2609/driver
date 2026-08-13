@@ -31,9 +31,22 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
   GoogleMapController? mapController;
   List<TripModel> tripList = [];
-  final HomeController controller = Get.put(
-    HomeController(homeRepo: Get.find()),
-  );
+  // Was `Get.put(HomeController(homeRepo: Get.find()))` — every other
+  // screen in the app (payment_screen, startride_screen, pickup_screen,
+  // ridedetails_screen, ...) reaches HomeController via Get.find(),
+  // relying on the fenix-managed registration from get_di.dart's
+  // init() (called once at app startup) to recreate it on demand if it's
+  // ever disposed. Get.put() here re-registered it tied to *this specific
+  // screen's* lifecycle instead — GetX disposes a Get.put()'d instance
+  // once nothing still on screen references it, and once the driver
+  // accepts a ride and navigates away to the pickup screen, nothing left
+  // on screen was still bound to this one. pickup_screen.dart's own
+  // periodic Get.find<HomeController>() calls (e.g. its status-polling
+  // timer, and the Cancel Ride action) would then throw "HomeController
+  // not found" the next time they fired, since the fenix registration
+  // that should have recreated it had been silently overridden the whole
+  // time this screen was ever shown.
+  final HomeController controller = Get.find<HomeController>();
   final DriveController controllerdriver = Get.put(DriveController());
   StreamSubscription<Position>? _positionStream;
 
@@ -41,6 +54,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     target: LatLng(28.6139, 77.2090),
     zoom: 14,
   );
+  // Ensures the one-time auto-center on the driver's real location (see
+  // the GoogleMap builder below) only happens once, so it doesn't fight a
+  // driver who has since panned/zoomed the map themselves.
+  bool _hasCenteredOnDriver = false;
   bool isOnline = false;
   bool isLoading = false;
   Timer? activeRideTimer;
@@ -297,13 +314,69 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       body: Stack(
         children: [
           /// 🔹 Google Map
-          GoogleMap(
-            initialCameraPosition: _initialPosition,
-            onMapCreated: (controller) {
-              mapController = controller;
+          // Was a bare, non-reactive GoogleMap: no marker at all for the
+          // driver's own position (myLocationEnabled only draws the native
+          // blue dot, which is easy to miss and isn't there at all until
+          // the OS/plugin has resolved a fix) and the camera stayed
+          // parked at a hardcoded Delhi coordinate forever — a driver
+          // anywhere else would open the app to a map of a city they
+          // aren't in, with nothing pointing at where they actually are.
+          // Wrapping in GetBuilder<HomeController> lets it react to the
+          // controller's already-tracked latitude/longitude (updated by
+          // the same location stream that drives the heartbeat) and draw
+          // a car marker there, using the same carIcon loaded for the
+          // trip-tracking screens.
+          GetBuilder<HomeController>(
+            builder: (controller) {
+              Set<Marker> markers = {};
+              if (controller.latitude != null && controller.longitude != null) {
+                final driverLatLng = LatLng(
+                  controller.latitude!,
+                  controller.longitude!,
+                );
+                markers.add(
+                  Marker(
+                    markerId: const MarkerId('driver_current_location'),
+                    position: driverLatLng,
+                    icon: controller.carIcon ?? BitmapDescriptor.defaultMarker,
+                    anchor: const Offset(0.5, 0.5),
+                    infoWindow: const InfoWindow(title: 'You'),
+                  ),
+                );
+
+                // Center on the driver's real position the first time it's
+                // available, instead of leaving the camera sitting on the
+                // hardcoded default — but only once, so it doesn't fight a
+                // driver who has since panned/zoomed the map themselves.
+                if (!_hasCenteredOnDriver && mapController != null) {
+                  _hasCenteredOnDriver = true;
+                  mapController!.animateCamera(
+                    CameraUpdate.newLatLngZoom(driverLatLng, 16),
+                  );
+                }
+              }
+
+              return GoogleMap(
+                initialCameraPosition: _initialPosition,
+                onMapCreated: (gmController) {
+                  mapController = gmController;
+                  if (!_hasCenteredOnDriver &&
+                      controller.latitude != null &&
+                      controller.longitude != null) {
+                    _hasCenteredOnDriver = true;
+                    gmController.animateCamera(
+                      CameraUpdate.newLatLngZoom(
+                        LatLng(controller.latitude!, controller.longitude!),
+                        16,
+                      ),
+                    );
+                  }
+                },
+                markers: markers,
+                myLocationEnabled: true,
+                myLocationButtonEnabled: false,
+              );
             },
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
           ),
 
           SafeArea(

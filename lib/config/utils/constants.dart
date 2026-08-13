@@ -83,7 +83,14 @@ class ApiConstants {
   static const String genrateQrCode = 'generate-qr-payment';
   static const String verifyQrPayment = 'verify-qr-payment';
   static const String paymentStatus = 'payment-status';
-  static const String razorpayKeyId = 'rzp_test_T300vQB506EcW8';
+  // Live key_id — safe to ship client-side (that's what key_id is for).
+  // Not currently referenced anywhere: razorpay_flutter is a pubspec
+  // dependency but the app's actual online-payment flow goes through this
+  // app's own generate-qr-payment/verify-qr-payment backend endpoints, not
+  // the Razorpay Checkout SDK directly. RAZORPAY_SECRET must never be added
+  // here or anywhere in this repo — it belongs only in that backend's own
+  // environment/secrets config, never in client code.
+  static const String razorpayKeyId = 'rzp_live_TOTCxhsFSNJuPe';
   static const String driverEarningActivityDetails =
       'driver-earning-activity-list';
   static const String getBankInfo = 'get-bank-info';
@@ -105,6 +112,10 @@ class ApiConstants {
 
   //////======================  User  Static Data ==================================
   static const String userType = 'customer';
+  // Not lowerCamelCase on purpose — auth_controller.dart's whole
+  // register/login type-detection flow references these by this exact
+  // capitalization; a prior lint-driven rename only touched this
+  // declaration, not its usages, which broke the build.
   static const String UserLogin = 'login';
   static const String driverLogin = 'driver';
   static const String UserRegister = 'register';

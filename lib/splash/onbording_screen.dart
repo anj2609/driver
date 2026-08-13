@@ -148,7 +148,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             textAlign: TextAlign.center,
                             style: PoppinsReguler.copyWith(
                               fontSize: width * 0.038,
-                              color: ColorResources.TextColorForGrey,
+                              color: ColorResources.textColorForGrey,
                               height: 1.5,
                             ),
                           ),

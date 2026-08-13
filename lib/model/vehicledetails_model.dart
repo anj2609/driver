@@ -21,6 +21,7 @@ class VehicleDetailsData {
   dynamic chassisNumber;
   dynamic engineNumber;
   dynamic manufactureYear;
+  String? color;
   List<String>? images;
   // The vehicle type category (Car/Bike/etc.) id — still needed by the
   // vehical-info endpoint's payload on every submit, create or edit.
@@ -39,6 +40,7 @@ class VehicleDetailsData {
       this.chassisNumber,
       this.engineNumber,
       this.manufactureYear,
+      this.color,
       this.images,
       this.vehicleTypeId,
       this.vehicleId});
@@ -50,7 +52,18 @@ class VehicleDetailsData {
     chassisNumber = json['chassis_number'];
     engineNumber = json['engine_number'];
     manufactureYear = json['manufacture_year'];
-    images = json['images'].cast<String>();
+    color = json['color']?.toString();
+    // Was `json['images'].cast<String>()` with no null-guard — a vehicle
+    // with no photos yet (or the backend simply omitting the field) sends
+    // `images: null`, and calling .cast() on that throws immediately
+    // inside fromJson(). Since getVehicleDetailsApi() has no try/catch,
+    // that exception fired between isVehicleLoading = true and = false,
+    // leaving it stuck true forever — the Vehicles screen showed a
+    // loading spinner permanently and the details never rendered.
+    final rawImages = json['images'];
+    images = rawImages is List
+        ? rawImages.map((e) => e.toString()).toList()
+        : [];
     vehicleTypeId = json['vehicle_type_id'] ?? json['vehicle_type'];
     vehicleId = json['id'] ?? json['vehicle_id'];
   }

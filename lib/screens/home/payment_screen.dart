@@ -51,12 +51,34 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     setState(() => _isProcessing = true);
 
+    // Captures the loader dialog's own BuildContext so it can be dismissed
+    // unambiguously via Navigator.of(dialogContext), regardless of what
+    // else happens to the navigation stack in between — same fix already
+    // applied to the Accept-ride dialog in trip_request_screen.dart.
+    // Get.dialog() pushes onto GetX's own dialog/overlay stack, which is
+    // *separate* from the main route stack Get.offAllNamed()/Get.offAll()
+    // operate on. generateOnlineQr() itself doesn't navigate, but a
+    // completed payment inside OnlinePaymentSheet below eventually calls
+    // rideCompletedMarked(), which replaces the whole route stack with
+    // Home via returnToExistingHome() — that call does not know or care
+    // that this loader dialog is still open, so relying on
+    // `Get.isDialogOpen`/`Get.back()` after the fact could pop the wrong
+    // thing (or, since Get.offAllNamed() never touches the dialog stack at
+    // all, leave this barrier-blocking loader stranded on top of the new
+    // Home screen forever — indistinguishable from an infinite loading
+    // state).
+    BuildContext? dialogContext;
     try {
       final controller = Get.find<HomeController>();
 
       // Show loader
       Get.dialog(
-        const Center(child: PremiumBlurLoader()),
+        Builder(
+          builder: (dCtx) {
+            dialogContext = dCtx;
+            return const Center(child: PremiumBlurLoader());
+          },
+        ),
         barrierDismissible: false,
       );
 
@@ -65,8 +87,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
         bookingId: _bookingId,
       );
 
-      // Dismiss loader
-      if (Get.isDialogOpen ?? false) Get.back();
+      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
+        Navigator.of(dialogContext!).pop();
+      }
 
       if (qrData != null && context.mounted) {
         await showModalBottomSheet(
@@ -82,16 +105,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         );
       }
     } catch (e) {
-      if (Get.isDialogOpen ?? false) Get.back();
-      debugPrint('Online payment error: $e');
-      if (context.mounted) {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Something went wrong. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
+      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
+        Navigator.of(dialogContext!).pop();
       }
+      debugPrint('Online payment error: $e');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -147,9 +164,28 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     setState(() => _isProcessing = true);
 
+    // Same fix as _handleOnlinePayment above: capture the loader dialog's
+    // own BuildContext so it can be dismissed via Navigator.of(dialogContext)
+    // regardless of what else happens to the navigation stack. This is the
+    // exact case that mattered most — on success, rideCompletedMarked()
+    // calls returnToExistingHome(), which replaces the *entire* route
+    // stack with Home via Get.offAllNamed(). That call has no idea this
+    // loader dialog (pushed via Get.dialog(), onto GetX's separate
+    // dialog/overlay stack) is still open, and never closes it — so the
+    // old code's `if (Get.isDialogOpen ?? false) Get.back()` in finally
+    // was racing a dialog stack that offAllNamed() never touched at all.
+    // The barrier is non-dismissible, so once stranded there's no way out
+    // except restarting the app — indistinguishable from an infinite
+    // loading state, which is exactly what was reported.
+    BuildContext? dialogContext;
     try {
       Get.dialog(
-        const Center(child: PremiumBlurLoader()),
+        Builder(
+          builder: (dCtx) {
+            dialogContext = dCtx;
+            return const Center(child: PremiumBlurLoader());
+          },
+        ),
         barrierDismissible: false,
       );
 
@@ -160,16 +196,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       );
     } catch (e) {
       debugPrint('Cash payment error: $e');
-      if (context.mounted) {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Failed to complete ride. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-      }
     } finally {
-      if (Get.isDialogOpen ?? false) Get.back();
+      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
+        Navigator.of(dialogContext!).pop();
+      }
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -179,9 +209,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     setState(() => _isProcessing = true);
 
+    // Same dialog-stranding fix as _handleCashPayment/_handleOnlinePayment
+    // above.
+    BuildContext? dialogContext;
     try {
       Get.dialog(
-        const Center(child: PremiumBlurLoader()),
+        Builder(
+          builder: (dCtx) {
+            dialogContext = dCtx;
+            return const Center(child: PremiumBlurLoader());
+          },
+        ),
         barrierDismissible: false,
       );
 
@@ -192,16 +230,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
       );
     } catch (e) {
       debugPrint('Wallet payment error: $e');
-      if (context.mounted) {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Wallet payment failed. Please try another method.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-      }
     } finally {
-      if (Get.isDialogOpen ?? false) Get.back();
+      if (dialogContext != null && Navigator.of(dialogContext!).canPop()) {
+        Navigator.of(dialogContext!).pop();
+      }
       if (mounted) setState(() => _isProcessing = false);
     }
   }

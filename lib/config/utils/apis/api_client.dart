@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'package:flutter/foundation.dart' as foundation;
@@ -252,11 +252,31 @@ class ApiClient extends GetxService {
 
       if (images != null && images.isNotEmpty) {
         for (int i = 0; i < images.length; i++) {
+          // Was attached raw (whatever size the camera/gallery produced —
+          // the log showed 4080x3060 originals for this same screen). Every
+          // other multipart endpoint in this file that accepts images
+          // (postMultipartData, postMultipartUpdate) compresses first;
+          // this was the one attaching full-resolution files uncompressed,
+          // and a couple of camera photos together is easily enough to
+          // trip nginx's upload size limit — the backend then rejects the
+          // whole request with a bare "413 Request Entity Too Large" HTML
+          // page before it ever reaches app logic, which surfaced to the
+          // driver as a generic "Unable to save vehicle information" popup
+          // with no indication it was actually a file-size problem.
+          final compressed = await compressImageUnder2MB(images[i]);
           request.files.add(
-            await http.MultipartFile.fromPath("images[]", images[i].path),
+            await http.MultipartFile.fromPath("images[]", compressed.path),
           );
         }
       }
+
+      // Unlike the other endpoints in this file, this request's outgoing
+      // fields (and the raw response) were never logged — there was no
+      // way to tell, from the logs alone, whether a field that shows up
+      // null later (e.g. chassis_number/engine_number/manufacture_year)
+      // was never sent by the client vs. sent correctly but dropped/not
+      // persisted on the backend.
+      debugPrint("postdrivervehicale fields: ${request.fields}");
 
       request.headers.addAll({
         'Accept': 'application/json',
@@ -279,6 +299,9 @@ class ApiClient extends GetxService {
           .send()
           .timeout(Duration(seconds: timeoutInSeconds));
       var response = await http.Response.fromStream(streamedResponse);
+
+      debugPrint("postdrivervehicale STATUS: ${response.statusCode}");
+      debugPrint("postdrivervehicale BODY: ${response.body}");
 
       return handleResponse(response, uri);
     } catch (e, s) {
@@ -487,7 +510,12 @@ class ApiClient extends GetxService {
         debugPrint("ID: ${vehicleDocumentList[i].documentId}");
       }
 
-      var streamedResponse = await request.send();
+      // Same reasoning as postdrivervehicale()/postDriverDocuments() above
+      // — bound the wait so a dead connection fails in ~timeoutInSeconds
+      // instead of hanging on the OS's own socket timeout.
+      var streamedResponse = await request
+          .send()
+          .timeout(Duration(seconds: timeoutInSeconds));
       var response = await http.Response.fromStream(streamedResponse);
 
       debugPrint('Response Status: ${response.statusCode}');
@@ -582,14 +610,20 @@ class ApiClient extends GetxService {
 
     log('testing   $body');
     try {
-      Map<String, String> headers = {'Accept': 'application/json'};
-
+      // Was `{'Accept': 'application/json'}` only — every other multipart
+      // method in this file (postdrivervehicale, postDriverDocuments,
+      // postvehicleDocuments, ...) attaches the same id/authorizationToken
+      // pair as _mainHeadersMain; this was the only one relying solely on
+      // the "user_id" body field for identification instead. If the
+      // backend expects these headers consistently (which the rest of
+      // the app assumes it does), their absence here could itself cause
+      // an otherwise-valid personal-info save to be rejected.
       var request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConstants.baseUrl + uri),
       );
 
-      request.headers.addAll(headers);
+      request.headers.addAll({..._mainHeadersMain, 'Accept': 'application/json'});
 
       request.fields.addAll(body);
 
@@ -599,7 +633,14 @@ class ApiClient extends GetxService {
         );
       }
 
-      var streamedResponse = await request.send();
+      // Same reasoning as the other multipart methods in this file —
+      // bound the wait so a dead connection fails in ~timeoutInSeconds
+      // instead of hanging on the OS's own socket timeout. This is the
+      // personal-details step's own save call, so a hang here is the
+      // very first thing a driver would hit in registration.
+      var streamedResponse = await request
+          .send()
+          .timeout(Duration(seconds: timeoutInSeconds));
       var response = await http.Response.fromStream(streamedResponse);
 
       return handleResponse(response, uri);
@@ -848,13 +889,15 @@ class ApiClient extends GetxService {
   }
 
   Response handleResponse(http.Response response, String uri) {
-    dynamic _body;
+    dynamic body;
     try {
-      _body = jsonDecode(response.body);
-    } catch (e) {}
+      body = jsonDecode(response.body);
+    } catch (e) {
+      // response.body is not valid JSON; body stays null and the raw string is used below
+    }
     Response httpResp = Response(
       // ignore: prefer_if_null_operators
-      body: _body != null ? _body : response.body,
+      body: body != null ? body : response.body,
       bodyString: response.body.toString(),
       request: Request(
         headers: response.request!.headers,

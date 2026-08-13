@@ -66,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       Text(
                         "Please enter your phone number to sign in to your My Ride account.",
                         style: PoppinsMedium.copyWith(
-                          color: ColorResources.TextColorForGrey,
+                          color: ColorResources.textColorForGrey,
                         ),
                       ),
 

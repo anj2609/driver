@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:myridedriverapp/config/route.dart';
 
@@ -28,7 +29,7 @@ class DriveController extends GetxController {
   }
 
   void submitRating() {
-    print("Rating Submitted: ${rating.value}");
+    debugPrint("Rating Submitted: ${rating.value}");
     // Reset state
     rating.value = 0;
     selectedTags.clear();
@@ -52,7 +53,7 @@ class DriveController extends GetxController {
   }
 
   void skipRating() {
-    print("Rating Skipped");
+    debugPrint("Rating Skipped");
     // Reset state
     rating.value = 0;
     selectedTags.clear();

@@ -9,7 +9,7 @@ class ColorResources {
   static Color blueeebutton = const Color(0xFF123EBC); // N Ride Blue
   static Color buttoncolor = const Color(0xFFFFFFFF);
   static Color buttonColors = const Color(0xFFFFFFFF);
-  static Color TextColorForGrey = const Color(0xFF6B7280); // Slate Gray
+  static Color textColorForGrey = const Color(0xFF6B7280); // Slate Gray
   static Color discountColor = const Color(0xFFE78737);
   static Color whiteColor = const Color(0xFFFFFFFF);
   static Color textdetailsColor = const Color(0xFF6B7280); // Slate Gray

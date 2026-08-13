@@ -34,30 +34,32 @@ class ChatController extends GetxController {
         customerId: customerId,
       );
 
-      print("Status Code: ${response.statusCode}");
-      print("Response Body: ${response.body}");
+      debugPrint("Status Code: ${response.statusCode}");
+      debugPrint("Response Body: ${response.body}");
 
+      final startChatCode =
+          response.body is Map ? response.body['code']?.toString() : null;
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          startChatCode == '200') {
         if (response.body['data'] != null &&
             response.body['data']['id'] != null) {
           chatId = response.body['data']['id'].toString();
 
-          print("Created Chat Id: $chatId");
+          debugPrint("Created Chat Id: $chatId");
         }
 
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
-        print("Unauthorized request");
+      } else if (response.body != null && startChatCode == '401') {
+        debugPrint("Unauthorized request");
         return response;
       } else {
-        print("Chat creation failed");
+        debugPrint("Chat creation failed");
         return response;
       }
     } catch (e) {
-      print("Start Chat Error: $e");
+      debugPrint("Start Chat Error: $e");
 
       return Response(statusCode: 500, statusText: e.toString());
     }
@@ -82,21 +84,25 @@ class ChatController extends GetxController {
         messages: message.toString(),
       );
 
+      final sendChatCode =
+          response.body is Map ? response.body['code']?.toString() : null;
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          sendChatCode == '200') {
         var resp = response.body;
 
         chatId = resp['data']['chat_id'];
         senderId = resp['data']['sender_id'];
         messagesDate = resp['data']['created_at'];
         isRead = resp['data']['is_read'];
-        chatessagesList(context: context);
-        
+        if (context.mounted) {
+          chatessagesList(context: context);
+        }
+
 
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null && sendChatCode == '401') {
         return response;
       } else {
         return response;
@@ -176,16 +182,17 @@ class ChatController extends GetxController {
     try {
       Response response = await chatRepo.chatRead(chatId: chatId);
 
-      if (response.statusCode == 200 && response.body['code'] == '200') {
+      if (response.statusCode == 200 &&
+          response.body['code']?.toString() == '200') {
         messagesSeen = true;
         update();
 
-        print("Messages Seen Successfully");
+        debugPrint("Messages Seen Successfully");
       }
 
       return response;
     } catch (e) {
-      print(e);
+      debugPrint(e.toString());
       rethrow;
     }
   }

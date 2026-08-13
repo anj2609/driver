@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
+import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
@@ -29,6 +30,12 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
   int currentIndex = 0;
   double? currentDriverLat;
   double? currentDriverLng;
+
+  // Guards the Accept button against a second tap while one accept is
+  // already in flight (belt-and-suspenders alongside the controller-level
+  // guard in acceptRidesTrip) — see the onTap handler in _rideCard() for
+  // the full story on why this mattered.
+  bool _isAcceptingTrip = false;
 
   // @override
   // void initState() {
@@ -80,7 +87,13 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
       200,
     );
     final dropIcon = await getCustomIcon("assets/images/location.png", 200);
-    final driverIcon = await getCustomIcon("assets/images/profile.png", 100);
+    // Was assets/images/profile.png — a circular headshot-style icon for
+    // the *driver's own* marker, which is what showed up looking like a
+    // person's photo pinned on the map. Reusing the car icon already used
+    // for "this is the driver" everywhere else in the app (home screen
+    // toggle map, in-app navigation) instead of a face.
+    final driverIcon = controller.carIcon ??
+        await getCustomIcon("assets/images/ridecar.png", 100);
 
     markers.add(
       Marker(
@@ -299,30 +312,78 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 ),
                 GestureDetector(
                   onTap: () async {
-                    try {
-                      showDialog(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (_) => PremiumBlurLoader(),
-                      );
+                    // Without this, a second tap while the first accept
+                    // was still in flight (e.g. while the driver was
+                    // waiting for the stuck dialog below to go away) fired
+                    // a second, overlapping acceptRidesTrip() for the same
+                    // booking.
+                    if (_isAcceptingTrip) return;
+                    _isAcceptingTrip = true;
 
-                      await controller.acceptRidesTrip(
+                    // Captures the dialog's own BuildContext so it can be
+                    // dismissed unambiguously via Navigator.of(dialogContext)
+                    // regardless of what else happens to the navigation
+                    // stack in between. The old code showed this dialog
+                    // with plain showDialog() but dismissed it via
+                    // `if (Get.isDialogOpen ?? false) Get.back();` — GetX's
+                    // own dialog-open tracking, which is not guaranteed to
+                    // reflect a dialog that was never opened through
+                    // Get.dialog() in the first place. On top of that,
+                    // acceptRidesTrip() navigates to the pickup screen via
+                    // Get.offAndToNamed() on success *without* closing this
+                    // dialog first, so it could easily be left floating on
+                    // top of the new screen — looking exactly like a loading
+                    // popup that never goes away, with the only way out
+                    // being to back out and land back here to try again.
+                    BuildContext? dialogContext;
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (dCtx) {
+                        dialogContext = dCtx;
+                        return const PremiumBlurLoader();
+                      },
+                    );
+
+                    try {
+                      final response = await controller.acceptRidesTrip(
                         context: context,
                         bookingId: trip.id.toString(),
                         trips: trip,
                       );
+
+                      // acceptRidesTrip() itself calls Get.offAndToNamed()
+                      // on success — which is Navigator.popAndPushNamed()
+                      // under the hood, i.e. it pops whatever is currently
+                      // on top (at that point, this loading dialog, not
+                      // this screen) and pushes the pickup screen in its
+                      // place. So on success the dialog is *already gone*
+                      // by the time we get here — popping it again via
+                      // dialogContext would pop the pickup screen that
+                      // just replaced it instead, since Navigator.of()
+                      // resolves to the same navigator either way. Only
+                      // the non-success paths (busy/401/rejected/error —
+                      // none of which navigate anywhere) still have the
+                      // dialog sitting on top and actually need it closed
+                      // here.
+                      final body = response.body;
+                      final code = body is Map ? body['code']?.toString() : null;
+                      final alreadyNavigatedAway = code == '200';
+
+                      if (!alreadyNavigatedAway &&
+                          dialogContext != null &&
+                          Navigator.of(dialogContext!).canPop()) {
+                        Navigator.of(dialogContext!).pop();
+                      }
                     } catch (e) {
                       debugPrint('acceptRidesTrip Error: $e');
-                    } finally {
-                      if (Get.isDialogOpen ?? false) {
-                        Get.back();
+                      if (dialogContext != null &&
+                          Navigator.of(dialogContext!).canPop()) {
+                        Navigator.of(dialogContext!).pop();
                       }
+                    } finally {
+                      _isAcceptingTrip = false;
                     }
-                    // controller.acceptRidesTrip(
-                    //   context: context,
-                    //   bookingId: trip.id.toString(),
-                    //   trips: trip,
-                    // );
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -362,16 +423,28 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
               children: [
                 Row(
                   children: [
-                    const CircleAvatar(
+                    // Was a hardcoded local asset — the model never parsed
+                    // a customer image at all, so nothing the backend sent
+                    // could ever have shown up here regardless.
+                    CircleAvatar(
                       radius: 22,
-                      backgroundImage: AssetImage("assets/images/profile.png"),
+                      backgroundImage:
+                          (trip.customerImage != null && trip.customerImage!.isNotEmpty)
+                              ? NetworkImage(ApiConstants.imageurl + trip.customerImage!)
+                                  as ImageProvider
+                              : const AssetImage("assets/images/profile.png"),
                     ),
                     const SizedBox(width: 10),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Was a hardcoded "Customer" label for the same
+                        // reason — the name was never parsed from the
+                        // response.
                         Text(
-                          "Customer",
+                          trip.customerName?.isNotEmpty == true
+                              ? trip.customerName!
+                              : "Customer",
                           style: PoppinsBold.copyWith(
                             color: ColorResources.blackcolor,
                           ),
@@ -390,6 +463,35 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                   ],
                 ),
 
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Fare was never shown at all — same root cause, the
+                    // model had nowhere to hold it.
+                    if (trip.fare != null && trip.fare!.isNotEmpty)
+                      Text(
+                        "₹${trip.fare}",
+                        style: PoppinsBold.copyWith(
+                          color: ColorResources.appColor,
+                          fontSize: 16,
+                        ),
+                      ),
+                    // Same gap as fare — the model never parsed a time
+                    // field either, so there was nothing to show here
+                    // regardless of what the backend sent.
+                    if (trip.time != null && trip.time!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          trip.time!,
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.textColorForGrey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
 
@@ -432,7 +534,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                       Text(
                         "Pickup",
                         style: PoppinsReguler.copyWith(
-                          color: ColorResources.TextColorForGrey,
+                          color: ColorResources.textColorForGrey,
                         ),
                       ),
                       Text(trip.pickupAddress ?? "N/A", style: PoppinsReguler),
@@ -448,7 +550,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                       Text(
                         trip.dropAddress ?? "N/A",
                         style: PoppinsReguler.copyWith(
-                          color: ColorResources.TextColorForGrey,
+                          color: ColorResources.textColorForGrey,
                         ),
                       ),
                     ],

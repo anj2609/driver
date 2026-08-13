@@ -70,6 +70,12 @@ class HomeController extends GetxController {
   List<CancleReasonListModel> cancleReasonModelList = [];
   double? latitude;
   double? longitude;
+  // GPS course, degrees 0-360 — populated by the same position stream as
+  // latitude/longitude below. Only meaningful while actually moving; only
+  // real live consumer today is in-app turn-by-turn navigation, which
+  // falls back to computing bearing from consecutive fixes when this is
+  // null/stale (parked, or a device that doesn't report it).
+  double? heading;
 
   List<NewBookingNearByModel> incomingTrips = [];
   List<NewBookingNearByModel> acceptedTrip = [];
@@ -113,11 +119,20 @@ class HomeController extends GetxController {
   Timer? _stalenessWatchdog;
   bool _autoOfflineTriggered = false;
 
+  // Guards driverArrived() against a second call landing while the first
+  // is still in flight (fast double-tap) or after arrival was already
+  // confirmed — the "Arrived" button hides itself once tapped, but that's
+  // a UI-side setState racing the same frame as the tap, not a hard
+  // guarantee. Without this, a second call reaches the backend, which
+  // rejects it as an invalid/already-arrived ride — surfacing a scary
+  // "invalid ride" toast for what the driver already correctly did once.
+  bool _isMarkingArrived = false;
+
   // How long the backend's copy of our location can go without a confirmed
   // refresh before we stop trusting ourselves to be "visible" and take
   // action. The heartbeat fires every ~5s, so this tolerates a handful of
   // missed beats (e.g. a brief network blip) before reacting.
-  static const Duration staleLocationThreshold = Duration(seconds: 40);
+  static const Duration staleLocationThreshold = Duration(seconds: 90);
 
   // A "nearby" result whose pickup is farther than this from our current
   // position is almost certainly a backend bug (wrong coordinate order,
@@ -206,7 +221,12 @@ class HomeController extends GetxController {
     await saveOnlineStatus(false);
     update();
 
-    if (Get.context != null) {
+    // Don't surface this on the active-ride screen — the driver is mid-way
+    // to (or with) a rider and this toast reads as alarming/irrelevant noise
+    // there; it's still meaningful (and shown) everywhere else, e.g. the
+    // home screen, where "online" is the thing the driver is looking at.
+    final onRideScreen = Get.currentRoute == RouteHelper.goingForPickupScreen;
+    if (Get.context != null && !onRideScreen) {
       AnimatedTopToast.show(
         context: Get.context!,
         message:
@@ -237,10 +257,23 @@ class HomeController extends GetxController {
     isOnline = prefs.getBool("isOnline") ?? false;
     driverBookingActives();
     if (isOnline) {
+      // This restores "online" on app startup from a previous session,
+      // exactly like toggleOnline()'s success path does when the driver
+      // taps the switch — and needs the same grace-period reset. Without
+      // it, a driver who simply reopens the app while already online got
+      // auto-flipped offline by the staleness watchdog within ~10s (its
+      // first tick), before the first heartbeat after restart even had a
+      // chance to land: the tracker had no prior success recorded *and*
+      // no session-start anchor, so isStale() treated that as staleness
+      // immediately. That silently killed nearby-rider polling — the
+      // toggle looked online for a few seconds, then wasn't, with only a
+      // toast (easy to miss) marking the moment.
+      locationHealth.reset();
+      _autoOfflineTriggered = false;
       startListeningBookings();
     }
     update();
-    print('sttsuaaaa:::${isOnline}');
+    debugPrint('sttsuaaaa:::$isOnline');
   }
 
   void stopLiveTracking() {
@@ -278,7 +311,9 @@ class HomeController extends GetxController {
 
   void startAutoUpdate() {
     _autoUpdateTimer?.cancel();
-    _autoUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+    _autoUpdateTimer = Timer.periodic(const Duration(seconds: 5), (
+      timer,
+    ) async {
       if (latitude == null || longitude == null) return;
 
       // Previously fire-and-forget: driverUpdateLocation() was called
@@ -319,7 +354,7 @@ class HomeController extends GetxController {
   Future<void> saveRideBookingStatus(String statusRide) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('booking_id', statusRide);
-    print('testing  booking id ${statusRide}');
+    debugPrint('testing  booking id $statusRide');
   }
 
   Future<void> toggleOnline(bool value, BuildContext context) async {
@@ -377,9 +412,16 @@ class HomeController extends GetxController {
         }
       }
 
+      if (!context.mounted) return;
       Response res = await driverStatusOnlineOffline(context: context);
 
-      if (res.statusCode == 200 && res.body['code'] == "200") {
+      // Same type-tolerance fix as the new-booking-list check below (see
+      // _pollNearbyBookings) — a bare `== "200"` here would silently leave
+      // the driver unable to go online at all if this endpoint's "code"
+      // ever arrives as a JSON number instead of a string.
+      final toggleCode =
+          res.body is Map ? res.body['code']?.toString() : null;
+      if (res.statusCode == 200 && toggleCode == "200") {
         var data = res.body['data'];
 
         var rawStatus = data['work_status'];
@@ -432,7 +474,8 @@ class HomeController extends GetxController {
           if (Get.context != null) {
             AnimatedTopToast.show(
               context: Get.context!,
-              message: "You're Online — sharing your location with nearby riders.",
+              message:
+                  "You're Online — sharing your location with nearby riders.",
               backgroundColor: Colors.green,
               icon: Icons.wifi_tethering_rounded,
             );
@@ -454,11 +497,17 @@ class HomeController extends GetxController {
           }
         }
       } else {
-        Get.snackbar("Error", "Could not update availability status. Please try again.");
+        Get.snackbar(
+          "Error",
+          "Could not update availability status. Please try again.",
+        );
       }
     } catch (e, st) {
       debugPrint('[ToggleOnline] ERROR: $e\n$st');
-      Get.snackbar("Error", "Failed to change availability. Please check your connection.");
+      Get.snackbar(
+        "Error",
+        "Failed to change availability. Please check your connection.",
+      );
     } finally {
       isTogglingOnline = false;
       update();
@@ -501,6 +550,7 @@ class HomeController extends GetxController {
         );
         latitude = position.latitude;
         longitude = position.longitude;
+        heading = position.heading;
         driverLatitude = position.latitude;
         driverLongitude = position.longitude;
         debugPrint(
@@ -513,10 +563,13 @@ class HomeController extends GetxController {
       }
 
       positionStream =
-          Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+          Geolocator.getPositionStream(
+            locationSettings: locationSettings,
+          ).listen(
             (Position position) {
               latitude = position.latitude;
               longitude = position.longitude;
+              heading = position.heading;
               driverLatitude = position.latitude;
               driverLongitude = position.longitude;
 
@@ -563,7 +616,8 @@ class HomeController extends GetxController {
         intervalDuration: const Duration(seconds: 5),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: 'Nride driver — Online',
-          notificationText: 'Sharing your location so nearby riders can find you',
+          notificationText:
+              'Sharing your location so nearby riders can find you',
           notificationChannelName: 'Driver location sharing',
           setOngoing: true,
         ),
@@ -581,14 +635,20 @@ class HomeController extends GetxController {
   /// permission becomes available, without requiring an app restart.
   void _scheduleLocationRetry() {
     _locationRetryTimer?.cancel();
-    _locationRetryTimer = Timer(const Duration(seconds: 15), startLocationUpdates);
+    _locationRetryTimer = Timer(
+      const Duration(seconds: 15),
+      startLocationUpdates,
+    );
   }
 
   void startListeningBookings() {
     stopListeningBookings();
     // Fire immediately so the driver sees nearby rides the moment they go online
     _pollNearbyBookings();
-    _dummyTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollNearbyBookings());
+    _dummyTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _pollNearbyBookings(),
+    );
   }
 
   // A poll cycle occasionally takes longer than the 3s timer interval (slow
@@ -609,7 +669,17 @@ class HomeController extends GetxController {
     _isPollingNearbyBookings = true;
 
     try {
-      // Do not search if the driver is busy with an accepted/ongoing ride
+      // Do not search if the driver is busy with an accepted/ongoing ride.
+      // This is a secondary, best-effort guard (the backend's own
+      // new-booking-list query is what actually has to prevent double
+      // assignment) — so a failure to *determine* busy status must not be
+      // treated the same as *confirmed* busy. It used to `return` here on
+      // any exception (timeout, parse error, dropped connection), which
+      // silently skipped the entire poll cycle — including the actual
+      // new-booking-list fetch below — every single time this call had a
+      // hiccup, with nothing logged to say why. A driver hitting this on
+      // most/every cycle would see their incoming-request card simply never
+      // appear, indistinguishable from there being no nearby riders at all.
       try {
         final profileRes = await homeRepo.getDriverProfile();
         if (profileRes.statusCode == 200 && profileRes.body != null) {
@@ -620,9 +690,11 @@ class HomeController extends GetxController {
             return;
           }
         }
-      } catch (_) {
-        // Profile check failed — skip poll to be safe
-        return;
+      } catch (e) {
+        debugPrint(
+          '[LocationPipeline] is_busy check failed ($e) — proceeding with '
+          'new-booking-list poll anyway instead of silently skipping it',
+        );
       }
 
       try {
@@ -632,7 +704,26 @@ class HomeController extends GetxController {
         );
         Response response = await homeRepo.newBookingNearByMe();
 
-        if (response.statusCode == 200 && response.body['code'] == "200") {
+        // CONFIRMED from a real device log: this endpoint's success key is
+        // "status" ("status":"200"), not "code" like every other endpoint
+        // in this app — {"status":"200","message":"Nearby Booking
+        // List","data":[...]}. The original bug here was assumed to be a
+        // string-vs-number type mismatch on "code" (the fix that pattern
+        // needed everywhere else), but the real cause was simpler: this
+        // response has no "code" key at all, so `response.body['code']`
+        // was always null and the branch below was always skipped — with
+        // real, matching trips sitting right there in `data` every time.
+        // "code" is still checked as a fallback in case the backend is
+        // ever made consistent later; "status" is what it actually sends
+        // today.
+        final responseCode = response.body is Map
+            ? (response.body['status'] ?? response.body['code'])?.toString()
+            : null;
+        debugPrint(
+          '[LocationPipeline] new-booking-list statusCode=${response.statusCode} '
+          'code=$responseCode raw=${response.body}',
+        );
+        if (response.statusCode == 200 && responseCode == "200") {
           List data = response.body['data'] ?? [];
 
           List<NewBookingNearByModel> apiTrips = data
@@ -640,7 +731,10 @@ class HomeController extends GetxController {
               // Drop anything this driver already declined this session —
               // the backend has no decline endpoint to exclude it for us,
               // so without this it would resurface on the very next poll.
-              .where((trip) => trip.id == null || !_rejectedTripIds.contains(trip.id))
+              .where(
+                (trip) =>
+                    trip.id == null || !_rejectedTripIds.contains(trip.id),
+              )
               .toList();
 
           debugPrint(
@@ -674,9 +768,9 @@ class HomeController extends GetxController {
 
           if (incomingTrips.isNotEmpty && !isIncomingScreenOpen) {
             isIncomingScreenOpen = true;
-            Get.to(
-              () => IncomingBookingScreen(trips: incomingTrips),
-            )?.then((_) {
+            Get.to(() => IncomingBookingScreen(trips: incomingTrips))?.then((
+              _,
+            ) {
               isIncomingScreenOpen = false;
               stopRingtone();
             });
@@ -738,6 +832,69 @@ class HomeController extends GetxController {
     _dummyTimer = null;
   }
 
+  void returnToExistingHome() {
+    // Was a manual popUntil(home-or-first-route) with Get.offAllNamed() as
+    // a fallback only when home wasn't found. Home is never actually still
+    // on the stack by the time a ride finishes (accepting a ride clears
+    // down to just that flow), so the popUntil fallback was the branch
+    // that always ran in practice — but getting there first walked the
+    // navigator all the way down to the stack's very first route (e.g.
+    // splash), which could flash briefly before offAllNamed() then
+    // replaced it with Home. Skipping straight to offAllNamed() reaches
+    // the same end state (clean stack, single Home) in one atomic step
+    // instead of two, with no transient wrong screen in between — and
+    // still fixes the original "multiple home screens on the back-stack"
+    // issue this existed for, since offAllNamed() clears everything
+    // either way.
+    Get.offAllNamed(RouteHelper.getHomeScreen());
+  }
+
+  bool _isSuccessResponse(Response response) {
+    final body = response.body;
+    if (response.statusCode != 200 || body == null) return false;
+    if (body is! Map) return false;
+
+    final code = body['code']?.toString().toLowerCase();
+    final status = body['status']?.toString().toLowerCase();
+    final success = body['success']?.toString().toLowerCase();
+
+    return code == '200' ||
+        code == 'success' ||
+        status == 'true' ||
+        status == '200' ||
+        status == 'success' ||
+        success == 'true';
+  }
+
+  String _responseMessage(Response response) {
+    final body = response.body;
+    if (body is Map) {
+      return body['message']?.toString() ?? body['error']?.toString() ?? '';
+    }
+    return '';
+  }
+
+  bool _looksAlreadyHandled(String message) {
+    final lower = message.toLowerCase();
+    // Checking 'invalid' and 'ride'/'booking' independently (not just as
+    // one fixed ordered phrase) since the exact wording/order isn't ours to
+    // control — "invalid ride", "ride is invalid", "invalid ride status"
+    // etc. should all be recognized the same way.
+    final mentionsInvalid = lower.contains('invalid');
+    final mentionsRideOrBooking =
+        lower.contains('ride') || lower.contains('booking');
+    // Deliberately NOT matching on a bare 'status' — this feeds
+    // rideCompletedMarked()/driverArrived() too, where it's used to decide
+    // "treat this as success and navigate away". A genuine failure message
+    // ("payment status not confirmed", "booking status mismatch") very
+    // plausibly contains that word too; wrongly matching it would silently
+    // wave through a real failure as if the ride/payment had completed.
+    // 'not active' is specific enough to keep as its own signal.
+    return lower.contains('already') ||
+        (mentionsInvalid && mentionsRideOrBooking) ||
+        lower.contains('not active');
+  }
+
   Future<void> playRingtone() async {
     if (isRingtonePlaying) return;
 
@@ -782,8 +939,9 @@ class HomeController extends GetxController {
     stopRingtone();
     acceptedTrip.clear();
     acceptedTrip.add(trip);
-    Get.offAndToNamed(
+    Get.offNamedUntil(
       RouteHelper.getgoingForPickupScreen(),
+      (route) => route.settings.name == RouteHelper.getHomeScreen(),
       arguments: {"trips": trip},
     );
 
@@ -791,8 +949,6 @@ class HomeController extends GetxController {
     isIncomingScreenOpen = false;
 
     stopListeningBookings();
-
-
   }
 
   void rejectTrip(NewBookingNearByModel trip) {
@@ -826,10 +982,10 @@ class HomeController extends GetxController {
 
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          response.body['code']?.toString() == '200') {
         var data = response.body['data'];
 
-        print('sttaus::::::${data['work_status']}');
+        debugPrint('sttaus::::::${data['work_status']}');
 
         return response;
       } else {
@@ -837,7 +993,7 @@ class HomeController extends GetxController {
         return response;
       }
     } catch (e) {
-     // EasyLoading.dismiss();
+      // EasyLoading.dismiss();
       rethrow;
     }
   }
@@ -856,9 +1012,25 @@ class HomeController extends GetxController {
           .driverLocationUpdate(lat: lat, lng: lng)
           .timeout(const Duration(seconds: 15));
 
+      // Was a bare `== '200'` — the exact same type-tolerance bug already
+      // fixed in _pollNearbyBookings and the go-online toggle above, but
+      // still present here in the 5s location heartbeat itself. If this
+      // endpoint's "code" ever arrives as the JSON number 200 rather than
+      // the string "200", every single heartbeat gets recorded as a
+      // FAILURE even though the backend actually stored the location —
+      // locationHealth never records a real success, and ~90s later the
+      // staleness watchdog (_handleLocationStale) auto-takes the driver
+      // offline and calls stopListeningBookings(), silently ending the
+      // new-booking-list poll entirely. That's a direct, well-evidenced
+      // explanation for "driver shows online but no ride card ever
+      // appears" — the driver looks online in the UI for a while, then
+      // silently isn't anymore, with only an easy-to-miss toast to say so.
+      final locationCode = response.body is Map
+          ? response.body['code']?.toString()
+          : null;
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          locationCode == '200') {
         locationHealth.recordSuccess();
         debugPrint(
           '[LocationPipeline] location stored lat=$lat lng=$lng '
@@ -885,23 +1057,26 @@ class HomeController extends GetxController {
     }
   }
 
-
-
   /////// ========== Call New Booking Api ==========================
   Future<Response> nweBookingNearByMeApi({
     required BuildContext context,
   }) async {
-   // EasyLoading.show(status: "Please wait...");
+    // EasyLoading.show(status: "Please wait...");
     isLoading = true;
     update();
 
     Response response = await homeRepo.newBookingNearByMe();
 
-   // EasyLoading.dismiss();
+    // EasyLoading.dismiss();
 
-    print("  Newbooking ${response.body}");
+    debugPrint("  Newbooking ${response.body}");
 
-    if (response.statusCode == 200 && response.body['code'] == '200') {
+    // Same fix as _pollNearbyBookings — this endpoint's real success key is
+    // "status", not "code" (see the comment there for the confirmed log).
+    final newBookingCode = response.body is Map
+        ? (response.body['status'] ?? response.body['code'])?.toString()
+        : null;
+    if (response.statusCode == 200 && newBookingCode == '200') {
       newBookingNearByModel = NewBookingNearByListModel.fromJson(response.body);
       newBookingNearByList = newBookingNearByModel!.data ?? [];
 
@@ -926,29 +1101,49 @@ class HomeController extends GetxController {
   ///// ================== Call Accept Ride Api =========================
   ///
 
+  // Guards against a second, overlapping acceptRidesTrip() call for the
+  // same or a different booking while one is already in flight — the
+  // screen has its own local guard on the Accept button too, this is the
+  // controller-level backstop.
+  bool _isAcceptingTrip = false;
+
   Future<Response> acceptRidesTrip({
     required BuildContext context,
     required String bookingId,
     NewBookingNearByModel? trips,
   }) async {
+    if (_isAcceptingTrip) {
+      return Response(statusCode: 0, body: {'code': 'busy'});
+    }
+    _isAcceptingTrip = true;
+
     final prefs = await SharedPreferences.getInstance();
 
-   // EasyLoading.show(status: "Please wait...");
+    // EasyLoading.show(status: "Please wait...");
     update();
     saveRideBookingStatus(bookingId);
 
     try {
       Response response = await homeRepo.acceptRide(bookingid: bookingId);
-     // print('testing mode for accept ride ${response.body['code']}');
-    //  EasyLoading.dismiss();
+      // debugPrint('testing mode for accept ride ${response.body['code']}');
+      //  EasyLoading.dismiss();
+      // Same type-tolerance fix as driverUpdateLocation/_pollNearbyBookings
+      // above — a bare `== '200'` here would make tapping "Accept" silently
+      // do nothing (no navigation, ringtone left playing) if this endpoint's
+      // "code" ever arrives as a number.
+      final acceptCode =
+          response.body is Map ? response.body['code']?.toString() : null;
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          acceptCode == '200') {
         //  tripdata = response.body['data'];
         stopRingtone();
-        trackbookingRide(context: context, bookingId: bookingId);
-        Get.offAndToNamed(
+        if (context.mounted) {
+          trackbookingRide(context: context, bookingId: bookingId);
+        }
+        Get.offNamedUntil(
           RouteHelper.getgoingForPickupScreen(),
+          (route) => route.settings.name == RouteHelper.getHomeScreen(),
           arguments: {"trips": trips},
         );
         if (trips != null) {
@@ -956,7 +1151,7 @@ class HomeController extends GetxController {
 
           await prefs.setString("trip_data", tripJson);
 
-          print("Trip Saved");
+          debugPrint("Trip Saved");
         }
 
         incomingTrips.clear();
@@ -968,37 +1163,71 @@ class HomeController extends GetxController {
 
         stopListeningBookings();
 
-
-      //  Get.snackbar("Success", "Trip Accepted");
+        //  Get.snackbar("Success", "Trip Accepted");
         prefs.setString(ApiConstants.acceptedtrip, jsonEncode(trips!.toJson()));
         await prefs.setString(ApiConstants.bookingid, bookingId);
-        print("Booking ID: ${prefs.get(ApiConstants.bookingid)}");
+        debugPrint("Booking ID: ${prefs.get(ApiConstants.bookingid)}");
 
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null &&
+          response.body['code']?.toString() == '401') {
         hasActiveRide = true;
-        AnimatedTopToast.show(
-          context: context,
-          message: 'You already have an active ride. Please complete it first.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
+        if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: 'You already have an active ride. Please complete it first.',
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
 
         return response;
       } else {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Could not accept this trip. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
+        // Was a hardcoded generic message regardless of why the backend
+        // actually rejected it (e.g. a validation failure specific to this
+        // booking — no fare could be computed, outside a service area,
+        // already taken by another driver, etc). Surfacing the backend's
+        // own message, same as the other accept/save flows fixed earlier
+        // this session, turns "just try again" into an actual reason.
+        final backendMessage = response.body is Map
+            ? response.body['message']?.toString()
+            : null;
+        debugPrint(
+          'acceptRidesTrip rejected: status=${response.statusCode} body=${response.body}',
         );
+        if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: (backendMessage != null && backendMessage.isNotEmpty)
+                ? backendMessage
+                : 'Could not accept this trip. Please try again.',
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
 
         return response;
       }
     } catch (e) {
+      // Was `rethrow` with no toast — the screen's own catch around this
+      // call (trip_request_screen.dart) only debugPrints, so an
+      // exception here (network failure, a null response body, etc.)
+      // reached the driver as literally nothing: no toast, no error, the
+      // Accept button just looked like it did nothing.
+      debugPrint('acceptRidesTrip error: $e');
       EasyLoading.dismiss();
-      rethrow;
+      if (Get.context != null) {
+        AnimatedTopToast.show(
+          context: Get.context!,
+          message: 'Could not accept this trip. Please check your connection and try again.',
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
+      return Response(statusCode: 0, body: {'code': 'error'});
+    } finally {
+      _isAcceptingTrip = false;
     }
   }
 
@@ -1014,16 +1243,17 @@ class HomeController extends GetxController {
 
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          response.body['code']?.toString() == '200') {
         cancleReasonModel = CancleReasonModel.fromJson(response.body);
         cancleReasonModelList.clear();
         cancleReasonModelList.addAll(cancleReasonModel?.data ?? []);
 
-        print('Cancel Ride Reason Data: ${cancleReasonModelList.length}');
+        debugPrint('Cancel Ride Reason Data: ${cancleReasonModelList.length}');
         // isLoading = false;
         update();
         return response;
       } else {
+        debugPrint('Cancel reason response: ${response.body}');
         return response;
       }
     } catch (e) {
@@ -1053,7 +1283,8 @@ class HomeController extends GetxController {
       debugPrint('Cancel ride response: ${response.body}');
 
       if (response.statusCode == 200 && response.body != null) {
-        final code = response.body['code']?.toString() ??
+        final code =
+            response.body['code']?.toString() ??
             response.body['status']?.toString() ??
             '';
 
@@ -1098,35 +1329,15 @@ class HomeController extends GetxController {
           update();
           return response;
         } else {
-          // API returned a non-200 code
-          Get.snackbar(
-            'Cancel Failed',
-            'Unable to cancel ride right now. Please try again.',
-            backgroundColor: ColorResources.redbuttoncolor,
-            colorText: Colors.white,
-            snackPosition: SnackPosition.TOP,
-          );
+          // API returned a non-200 code — no toast (post-accept ride flow
+          // is toast-free by design; the UI itself simply doesn't advance).
           return response;
         }
       } else {
-        Get.snackbar(
-          'Error',
-          'Server error. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          colorText: Colors.white,
-          snackPosition: SnackPosition.TOP,
-        );
         return response;
       }
     } catch (e) {
       debugPrint('cancleRideByDriver error: $e');
-      Get.snackbar(
-        'Error',
-        'Something went wrong. Please try again.',
-        backgroundColor: ColorResources.redbuttoncolor,
-        colorText: Colors.white,
-        snackPosition: SnackPosition.TOP,
-      );
       rethrow;
     }
   }
@@ -1146,7 +1357,7 @@ class HomeController extends GetxController {
     try {
       response = await homeRepo.trackBookingRide(bookingid: bookingId);
 
-      print('API RESPONSE ===> ${response.body}');
+      debugPrint('API RESPONSE ===> ${response.body}');
 
       if (response.statusCode == 200 && response.body != null) {
         trackRideModel = AcceptRideModel.fromJson(response.body);
@@ -1163,14 +1374,17 @@ class HomeController extends GetxController {
           // Fallback: try TripDetailsModel for drop coordinates
           if ((dLat == null || dLng == null) || (dLat == 0.0 && dLng == 0.0)) {
             try {
-              final tripData = Get.find<ProfileController>().tripDetailsModel?.data;
+              final tripData =
+                  Get.find<ProfileController>().tripDetailsModel?.data;
               dLat = tripData?.dropLat;
               dLng = tripData?.dropLng;
             } catch (_) {}
           }
 
-          if (pickupLat != null && pickupLng != null &&
-              dLat != null && dLng != null &&
+          if (pickupLat != null &&
+              pickupLng != null &&
+              dLat != null &&
+              dLng != null &&
               !(pickupLat == 0.0 && pickupLng == 0.0) &&
               !(dLat == 0.0 && dLng == 0.0)) {
             fetchRouteDistanceDuration(
@@ -1182,7 +1396,7 @@ class HomeController extends GetxController {
           }
         } else {
           //  EasyLoading.dismiss();
-          print(trackRideModel?.message ?? "Something went wrong");
+          debugPrint(trackRideModel?.message ?? "Something went wrong");
 
           // Get.snackbar(
           //   '',
@@ -1194,7 +1408,7 @@ class HomeController extends GetxController {
         }
       } else {
         //   EasyLoading.dismiss();
-        print("ERROR ===> Invalid server response");
+        debugPrint("ERROR ===> Invalid server response");
         // Get.snackbar(
         //   '',
         //   "Invalid server response",
@@ -1204,7 +1418,7 @@ class HomeController extends GetxController {
       }
     } catch (e) {
       ///EasyLoading.dismiss();
-      print("ERROR ===> $e");
+      debugPrint("ERROR ===> $e");
 
       // Get.snackbar(
       //   '',
@@ -1227,7 +1441,7 @@ class HomeController extends GetxController {
     try {
       Response response = await homeRepo.driverBookingActive();
 
-      print("ACTIVE RESPONSE => ${response.body}");
+      debugPrint("ACTIVE RESPONSE => ${response.body}");
 
       if (response.statusCode == 200 &&
           response.body != null &&
@@ -1241,8 +1455,8 @@ class HomeController extends GetxController {
         final String status = data?.status?.toString() ?? "";
         final String bookingId = data?.bookingId?.toString() ?? "";
 
-        print("ACTIVE STATUS => $status");
-        print("BOOKING ID => $bookingId");
+        debugPrint("ACTIVE STATUS => $status");
+        debugPrint("BOOKING ID => $bookingId");
 
         ///=============== TRACK RIDE API CALL =================///
         if (bookingId.isNotEmpty) {
@@ -1253,7 +1467,7 @@ class HomeController extends GetxController {
         switch (status) {
           /// DRIVER ACCEPTED RIDE
           case "accepted":
-            print("NAVIGATE => GOING FOR PICKUP");
+            debugPrint("NAVIGATE => GOING FOR PICKUP");
 
             Get.offNamed(
               RouteHelper.getgoingForPickupScreen(),
@@ -1267,7 +1481,7 @@ class HomeController extends GetxController {
 
           /// RIDE STARTED
           case "ongoing":
-            print("NAVIGATE => START DRIVER RIDE");
+            debugPrint("NAVIGATE => START DRIVER RIDE");
 
             Get.offNamed(
               RouteHelper.getstartDriverRideScreen(),
@@ -1281,7 +1495,7 @@ class HomeController extends GetxController {
 
           /// RIDE COMPLETED
           case "completed":
-            print("NAVIGATE => HOME");
+            debugPrint("NAVIGATE => HOME");
 
             /// CLEAR LOCAL MODEL
             savedTripData = null;
@@ -1313,17 +1527,16 @@ class HomeController extends GetxController {
             break;
 
           default:
-            print("NO ACTIVE RIDE FOUND");
+            debugPrint("NO ACTIVE RIDE FOUND");
         }
       }
     } catch (e) {
-      print("ACTIVE RIDE ERROR => $e");
+      debugPrint("ACTIVE RIDE ERROR => $e");
     } finally {
       isActiveLoading = false;
       update();
     }
   }
-
 
   /////////////////// ============================ driver Arrived  ========================/////////////
 
@@ -1331,20 +1544,32 @@ class HomeController extends GetxController {
     required BuildContext context,
     required String bookingId,
   }) async {
-   /// EasyLoading.show(status: "Please wait...");
+    // A second call landing while the first is still in flight — a fast
+    // double-tap on the button before its own setState hides it — used to
+    // reach the backend, which rejects the already-in-progress arrival and
+    // surfaces that as a scary "invalid ride" toast. Blocking it here means
+    // there's nothing left to reject: the backend only ever sees one call
+    // per tap. (Deliberately not also checking arrivedStatusCode — that
+    // field is never reset between rides, so treating "== '200'" as
+    // "already arrived" would silently block arrival on every ride after
+    // the very first one this app instance ever completed.)
+    if (_isMarkingArrived) {
+      return Response(statusCode: 200, body: {'code': '200'});
+    }
+    _isMarkingArrived = true;
+
+    /// EasyLoading.show(status: "Please wait...");
     update();
 
     try {
       Response response = await homeRepo.driverArrivedApi(bookingid: bookingId);
-      print('testing mode for driverArrived body=${response.body}');
-     // EasyLoading.dismiss();
-      if (response.statusCode == 200 &&
-          response.body != null &&
-          (response.body['code'] == '200' || response.body['code'] == 200)) {
-       /// EasyLoading.dismiss();
+      debugPrint('testing mode for driverArrived body=${response.body}');
+      // EasyLoading.dismiss();
+      if (_isSuccessResponse(response)) {
+        /// EasyLoading.dismiss();
         arrivedStatusCode = response.body['code'].toString();
-        print('status code arrived ||||  ${response.body['code']}');
-        print('status code arrived ||||  ${arrivedStatusCode}');
+        debugPrint('status code arrived ||||  ${response.body['code']}');
+        debugPrint('status code arrived ||||  $arrivedStatusCode');
         // Get.snackbar(
         //   '',
         //   response.body['message'],
@@ -1353,26 +1578,32 @@ class HomeController extends GetxController {
         //   snackPosition: SnackPosition.TOP,
         // );
 
-
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null &&
+          response.body['code']?.toString() == '401') {
         hasActiveRide = true;
-
-        AnimatedTopToast.show(
-          context: context,
-          message: 'You already have an active ride. Please complete it first.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-
+        // No toast — post-accept ride flow is toast-free by design.
         return response;
       } else {
+        final message = _responseMessage(response);
+        if (_looksAlreadyHandled(message)) {
+          arrivedStatusCode = '200';
+          update();
+          return Response(
+            statusCode: 200,
+            body: {'code': '200', 'message': message},
+          );
+        }
+        // No toast — post-accept ride flow is toast-free by design; the
+        // Arrived button simply stays available so the driver can retry.
         return response;
       }
     } catch (e) {
-    ////  EasyLoading.dismiss();
+      ////  EasyLoading.dismiss();
       rethrow;
+    } finally {
+      _isMarkingArrived = false;
     }
   }
 
@@ -1399,14 +1630,9 @@ class HomeController extends GetxController {
         source: source,
         actualDistance: actualDistance,
       );
-      print('testing mode for completeRide ${response.body['code']}');
+      debugPrint('testing mode for completeRide ${response.body?['code']}');
 
-      if (response.statusCode == 200 &&
-          response.body != null &&
-          response.body['code']?.toString() == '200') {
-
-
-
+      if (_isSuccessResponse(response)) {
         // Clear saved ride data from SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove(ApiConstants.bookingid);
@@ -1436,8 +1662,7 @@ class HomeController extends GetxController {
         // Stop ringtone if playing
         stopRingtone();
 
-        // Navigate to home screen directly — no bottom sheet
-        Get.offAllNamed(RouteHelper.getHomeScreen());
+        returnToExistingHome();
 
         // Restart listening for new bookings if driver is still online
         if (isOnline) {
@@ -1446,29 +1671,66 @@ class HomeController extends GetxController {
 
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null &&
+          response.body['code']?.toString() == '401') {
         hasActiveRide = true;
-
-        AnimatedTopToast.show(
-          context: context,
-          message: 'You already have an active ride. Please complete it first.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-
+        // No toast — post-accept ride flow is toast-free by design.
         return response;
       } else {
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Unable to complete the ride. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
+        final message = _responseMessage(response);
+        if (_looksAlreadyHandled(message)) {
+          returnToExistingHome();
+          if (isOnline) {
+            startListeningBookings();
+          }
+          update();
+          return Response(
+            statusCode: 200,
+            body: {'code': '200', 'message': message},
+          );
+        }
+        // Was silent ("toast-free by design") — but unlike the 401
+        // "already have an active ride" case above (which has its own
+        // affordance: the button just stays there to retry), a genuine
+        // completion failure (no internet, backend validation reject,
+        // timeout, ...) left the driver staring at the exact same screen
+        // after tapping "Cash Received"/"Confirm" with zero indication
+        // anything went wrong — indistinguishable from the tap having
+        // done nothing at all. Same fix already applied to
+        // acceptRidesTrip(): surface the backend's own message so there's
+        // an actual reason instead of a silent hang.
+        debugPrint(
+          'rideCompletedMarked rejected: status=${response.statusCode} body=${response.body}',
         );
-
+        if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: message.isNotEmpty
+                ? message
+                : 'Could not complete the ride. Please check your connection and try again.',
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
         return response;
       }
     } catch (e) {
-      rethrow;
+      // Was `rethrow` with no toast — homeRepo.completeRide()/apiClient
+      // already swallow network exceptions into a Response(statusCode: 1),
+      // so this catch is mostly for the rare unexpected throw (e.g. a
+      // null-check on a cleared model during the success branch above).
+      // Rethrowing bare left the caller's own catch (startride_screen.dart)
+      // doing nothing but a debugPrint — same silent-hang symptom as above.
+      debugPrint('rideCompletedMarked error: $e');
+      if (context.mounted) {
+        AnimatedTopToast.show(
+          context: context,
+          message: 'Could not complete the ride. Please check your connection and try again.',
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
+      return Response(statusCode: 0, body: {'code': 'error'});
     }
   }
 
@@ -1481,21 +1743,22 @@ class HomeController extends GetxController {
     try {
       final response = await homeRepo.generateQrCode(bookingId: bookingId);
       final body = response.body;
-      final isSuccess = response.statusCode == 200 &&
-          body != null &&
-          (body['code']?.toString() == '200' ||
-              body['status'] == true ||
-              body['status']?.toString() == 'true');
+      final isSuccess = _isSuccessResponse(response);
       if (isSuccess) {
         final model = QrPaymentModel.fromJson(response.body);
-        return model.data;
+        if (model.data != null) return model.data;
+
+        if (body is Map) {
+          final directData = QrPaymentData.fromJson(body.cast<String, dynamic>());
+          if ((directData.imageUrl ?? '').isNotEmpty ||
+              (directData.qrCode ?? '').isNotEmpty ||
+              (directData.qrId ?? '').isNotEmpty) {
+            return directData;
+          }
+        }
+        return null;
       } else {
-        AnimatedTopToast.show(
-          context: context,
-          message: response.body?['message'] ?? 'Failed to generate QR code.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
+        // No toast — post-accept ride flow is toast-free by design.
         return null;
       }
     } catch (e) {
@@ -1516,7 +1779,8 @@ class HomeController extends GetxController {
       debugPrint('verify-qr-payment response: ${response.body}');
       if (response.body == null) return false;
       final data = response.body['data'];
-      final isPaid = data?['is_paid']?.toString() ?? response.body['is_paid']?.toString();
+      final isPaid =
+          data?['is_paid']?.toString() ?? response.body['is_paid']?.toString();
       return isPaid == '1';
     } catch (e) {
       debugPrint('verifyOnlinePayment error: $e');
@@ -1546,7 +1810,7 @@ class HomeController extends GetxController {
     TripDetailsModel? trips,
     AcceptRideModel? acceptData,
   }) async {
-   /// EasyLoading.show(status: "Please wait...");
+    /// EasyLoading.show(status: "Please wait...");
     update();
 
     try {
@@ -1554,42 +1818,29 @@ class HomeController extends GetxController {
         bookingid: bookingId,
         otpnum: otpNumber,
       );
-      print('testing mode for verifyPickupOtp ${response}');
-     /// EasyLoading.dismiss();
+      debugPrint('testing mode for verifyPickupOtp $response');
+
+      /// EasyLoading.dismiss();
       if (response.statusCode == 200 &&
           response.body != null &&
           response.body['code']?.toString() == '200') {
         verifyPickupOtpStatusCode = response.body['code'].toString();
 
-      // EasyLoading.dismiss();
-        AnimatedTopToast.show(
-          context: context,
-          message: 'OTP verified! Ride has started.',
-          backgroundColor: ColorResources.appColor,
-          icon: Icons.check_circle_rounded,
-        );
-
+        // No toast — post-accept ride flow is toast-free by design.
         debugPrint('testing data for Accept Data  $trips $acceptData');
         // Navigation is now handled by the pickup screen itself (shows End Ride button)
 
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null &&
+          response.body['code']?.toString() == '401') {
         hasActiveRide = true;
-
-        AnimatedTopToast.show(
-          context: context,
-          message: 'This ride is no longer available.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
-
         return response;
       } else {
         return response;
       }
     } catch (e) {
-     /// EasyLoading.dismiss();
+      /// EasyLoading.dismiss();
       rethrow;
     }
   }
@@ -1600,7 +1851,7 @@ class HomeController extends GetxController {
     await prefs.remove(ApiConstants.tripKey);
     await prefs.remove(ApiConstants.acceptRideKey);
 
-    print("Ride data cleared");
+    debugPrint("Ride data cleared");
   }
 
   ////// addBankDetails
@@ -1620,7 +1871,18 @@ class HomeController extends GetxController {
 
     final bytes = await frame.image.toByteData(format: ImageByteFormat.png);
 
-    return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
+    // Was BitmapDescriptor.fromBytes() — same reasoning as
+    // getCustomIcon() in custom_loader.dart: deprecated, and on newer
+    // google_maps_flutter_android builds it can produce a descriptor the
+    // native side fails to decode ("Failed to decode image. The provided
+    // image must be a Bitmap."), crashing the instant a marker using it
+    // is added. width/height keep the rendered size the same as the
+    // targetWidth this was already being resized to above.
+    return BitmapDescriptor.bytes(
+      bytes!.buffer.asUint8List(),
+      width: width.toDouble(),
+      height: width.toDouble(),
+    );
   }
 
   Future<void> loadUserMarker() async {
@@ -1637,21 +1899,82 @@ class HomeController extends GetxController {
     if (startLat == null ||
         startLng == null ||
         endLat == null ||
-        endLng == null)
+        endLng == null) {
       return;
+    }
 
-    print("Start:::::: ($startLat, $startLng) → End: ($endLat, $endLng)");
+    debugPrint("Start:::::: ($startLat, $startLng) → End: ($endLat, $endLng)");
+
+    // Was: markers only got added once the Directions call below had
+    // already succeeded — so if that call ever failed (wrong/restricted API
+    // key, Directions API not enabled for it in Google Cloud Console,
+    // ZERO_RESULTS, quota, plain network error — none of which the driver's
+    // network otherwise affects), the in-app map stayed completely blank:
+    // no driver marker, no pickup marker, no route. Adding the markers
+    // immediately — independent of whether the polyline call below
+    // succeeds — means the map always shows *something* useful even when
+    // the route itself can't be drawn, instead of forcing the driver to
+    // fall back on external Google Maps for a route entirely.
+    markers.removeWhere(
+      (m) => m.markerId.value == "pickup" || m.markerId.value == "driver",
+    );
+    markers.add(
+      Marker(
+        markerId: const MarkerId("pickup"),
+        position: LatLng(endLat, endLng),
+        icon: userIcon ?? BitmapDescriptor.defaultMarker,
+        infoWindow: const InfoWindow(title: "Pickup"),
+      ),
+    );
+    markers.add(
+      Marker(
+        markerId: const MarkerId("driver"),
+        position: LatLng(startLat, startLng),
+        icon: carIcon ?? BitmapDescriptor.defaultMarker,
+        rotation: 0,
+        anchor: const Offset(0.5, 0.5),
+        infoWindow: const InfoWindow(title: "Driver"),
+      ),
+    );
+    update();
+
+    if (mapController != null) {
+      LatLngBounds bounds = LatLngBounds(
+        southwest: LatLng(min(startLat, endLat), min(startLng, endLng)),
+        northeast: LatLng(max(startLat, endLat), max(startLng, endLng)),
+      );
+      mapController.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    }
 
     String url =
         "https://maps.googleapis.com/maps/api/directions/json?"
         "origin=$startLat,$startLng&destination=$endLat,$endLng&key=${ApiConstants.apiKey}";
 
-    final response = await http.get(Uri.parse(url));
+    try {
+      final response = await http.get(Uri.parse(url));
 
-    if (response.statusCode == 200) {
+      if (response.statusCode != 200) {
+        debugPrint(
+          '[Route] Directions HTTP ${response.statusCode}: ${response.body}',
+        );
+        return;
+      }
+
       var data = json.decode(response.body);
 
-      if (data['routes'] == null || data['routes'].isEmpty) return;
+      // Google's Directions API returns HTTP 200 even when it can't give a
+      // route — the real outcome is in `status` (REQUEST_DENIED,
+      // ZERO_RESULTS, OVER_QUERY_LIMIT, ...), with detail in
+      // `error_message`. Logging both here is what actually tells us why
+      // the polyline never appeared, instead of a silent no-op.
+      final status = data['status'];
+      if (status != 'OK' || data['routes'] == null || data['routes'].isEmpty) {
+        debugPrint(
+          '[Route] Directions API returned no route — status=$status '
+          'error_message=${data['error_message']}',
+        );
+        return;
+      }
 
       // Extract distance and duration from the route
       try {
@@ -1666,7 +1989,9 @@ class HomeController extends GetxController {
         totaldestance = computedDistance;
         totaltime = computedDuration;
 
-        debugPrint('Route: Distance=$computedDistance km, Duration=$computedDuration min');
+        debugPrint(
+          'Route: Distance=$computedDistance km, Duration=$computedDuration min',
+        );
       } catch (e) {
         debugPrint('Error extracting route data: $e');
       }
@@ -1689,43 +2014,13 @@ class HomeController extends GetxController {
         ),
       );
 
-      /// ✅ MARKERS FIX
-      markers.removeWhere(
-        (m) => m.markerId.value == "pickup" || m.markerId.value == "driver",
-      );
-
-      markers.add(
-        Marker(
-          markerId: const MarkerId("pickup"),
-          position: LatLng(endLat, endLng),
-          icon: userIcon ?? BitmapDescriptor.defaultMarker,
-          infoWindow: const InfoWindow(title: "Pickup"),
-        ),
-      );
-
-      markers.add(
-        Marker(
-          markerId: const MarkerId("driver"),
-          position: LatLng(startLat, startLng),
-          icon: carIcon ?? BitmapDescriptor.defaultMarker,
-          rotation: 0,
-          anchor: const Offset(0.5, 0.5),
-          infoWindow: const InfoWindow(title: "Driver"),
-        ),
-      );
-
-      if (mapController != null) {
-        LatLngBounds bounds = LatLngBounds(
-          southwest: LatLng(min(startLat, endLat), min(startLng, endLng)),
-          northeast: LatLng(max(startLat, endLat), max(startLng, endLng)),
-        );
-
-        mapController.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
-      }
-
       update();
-    } else {
-      throw Exception("Failed to load route");
+    } catch (e) {
+      // Was an uncaught throw on non-200 — every call site invokes this
+      // fire-and-forget (no await), so that exception had nowhere to go
+      // but an unhandled Future error. Markers are already on the map by
+      // this point regardless, so the driver isn't left with nothing.
+      debugPrint('[Route] getRouteCoordinates error: $e');
     }
   }
 
@@ -1860,7 +2155,7 @@ class HomeController extends GetxController {
     latitude = lat;
     longitude = lng;
 
-    print("📍 LOCATION UPDATED: $lat , $lng");
+    debugPrint("📍 LOCATION UPDATED: $lat , $lng");
 
     if (pickupLat != null && pickupLng != null) {
       calculateETA(
@@ -1944,7 +2239,9 @@ class HomeController extends GetxController {
           estimatePrice = first['price']?.toString() ?? '';
           estimateDistance = first['distance_km']?.toString() ?? '';
           estimateDuration = first['estimated_time']?.toString() ?? '';
-          debugPrint('Estimate: price=$estimatePrice, dist=$estimateDistance, time=$estimateDuration');
+          debugPrint(
+            'Estimate: price=$estimatePrice, dist=$estimateDistance, time=$estimateDuration',
+          );
           update();
         }
       }
@@ -1987,7 +2284,9 @@ class HomeController extends GetxController {
           totaldestance = computedDistance;
           totaltime = computedDuration;
 
-          debugPrint('Google Directions: Distance=$computedDistance km, Duration=$computedDuration min');
+          debugPrint(
+            'Google Directions: Distance=$computedDistance km, Duration=$computedDuration min',
+          );
 
           WidgetsBinding.instance.addPostFrameCallback((_) => update());
         }
@@ -2029,8 +2328,24 @@ class HomeController extends GetxController {
 
     double timeMinutes = timeHours * 60;
 
-    totaldestance = distance.toStringAsFixed(1);
-    totaltime = timeMinutes.round().toString();
+    final newDistance = distance.toStringAsFixed(1);
+    final newTime = timeMinutes.round().toString();
+
+    // Guard against a no-op update(): pickup_screen.dart calls calculateETA()
+    // from a postFrameCallback on every single build, and calculateETA used
+    // to call update() unconditionally on every call — that is an infinite
+    // rebuild loop (build -> postFrameCallback -> calculateETA -> update() ->
+    // rebuild -> ...), firing as fast as the frame scheduler allows for as
+    // long as the pickup screen is on screen. That constant full-screen
+    // rebuild (GoogleMap + OTP Pinput + everything else) is why the OTP
+    // boxes needed 2-3 taps before becoming responsive. Only rebuild when
+    // the computed values actually changed.
+    if (newDistance == totaldestance && newTime == totaltime) {
+      return;
+    }
+
+    totaldestance = newDistance;
+    totaltime = newTime;
     computedDistance = totaldestance!;
     computedDuration = totaltime;
     WidgetsBinding.instance.addPostFrameCallback((_) => update());
@@ -2059,8 +2374,6 @@ class HomeController extends GetxController {
       throw 'Could not launch $url';
     }
   }
-
-
 
   void showRatingSheet() {
     showModalBottomSheet(
@@ -2101,7 +2414,7 @@ class HomeController extends GetxController {
                 width: 50,
                 margin: EdgeInsets.only(bottom: Dimensions.hight13),
                 decoration: BoxDecoration(
-                  color: ColorResources.TextColorForGrey,
+                  color: ColorResources.textColorForGrey,
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),

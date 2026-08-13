@@ -103,19 +103,82 @@ void main() {
 
         // Driver goes offline (or the update was mid-flight when they did) —
         // toggleOnline() calls reset() in this exact situation.
-        tracker.reset();
+        final resetAt = longAgo.add(const Duration(minutes: 10));
+        tracker.reset(at: resetAt);
 
         expect(tracker.lastSuccessAt, isNull);
         expect(tracker.consecutiveFailures, 0);
-        // Immediately after reset, staleness is "unknown/no data" rather
-        // than carrying over the old failure streak.
+        // Immediately after reset, staleness is "unknown/no data yet" —
+        // not carrying over the old failure streak, and not instantly
+        // stale either (see the grace-period test below for why).
         expect(
-          tracker.isStale(threshold: const Duration(seconds: 40)),
-          isTrue,
-          reason: 'no data yet is correctly treated as not-fresh, not as '
-              '"still failing from before"',
+          tracker.isStale(threshold: const Duration(seconds: 40), now: resetAt),
+          isFalse,
+          reason: 'a fresh session gets a grace period before "no success '
+              'yet" is treated as staleness',
         );
         expect(tracker.consecutiveFailures, 0);
+      },
+    );
+
+    test(
+      'reset() grants a full grace period before "no success yet" counts '
+      'as stale — going online must not immediately flip back offline',
+      () {
+        final tracker = LocationHealthTracker();
+        final wentOnlineAt = DateTime(2026, 1, 1, 12, 0, 0);
+
+        tracker.reset(at: wentOnlineAt);
+
+        // The staleness watchdog is a Timer.periodic that keeps running
+        // independent of when the driver actually went online — its very
+        // next tick (up to ~10s later in HomeController) must not see this
+        // as stale just because the first heartbeat (needs up to ~5s plus
+        // a network round trip) hasn't landed yet.
+        expect(
+          tracker.isStale(
+            threshold: const Duration(seconds: 40),
+            now: wentOnlineAt.add(const Duration(seconds: 10)),
+          ),
+          isFalse,
+        );
+        expect(
+          tracker.isStale(
+            threshold: const Duration(seconds: 40),
+            now: wentOnlineAt.add(const Duration(seconds: 39)),
+          ),
+          isFalse,
+        );
+
+        // But if the threshold fully elapses with genuinely no success at
+        // all, it must still catch a driver whose location truly never
+        // reached the backend the entire session.
+        expect(
+          tracker.isStale(
+            threshold: const Duration(seconds: 40),
+            now: wentOnlineAt.add(const Duration(seconds: 40)),
+          ),
+          isTrue,
+        );
+
+        // A success landing inside the grace period clears staleness as
+        // normal, measured from the real success from then on.
+        final successAt = wentOnlineAt.add(const Duration(seconds: 8));
+        tracker.recordSuccess(at: successAt);
+        expect(
+          tracker.isStale(
+            threshold: const Duration(seconds: 40),
+            now: successAt.add(const Duration(seconds: 39)),
+          ),
+          isFalse,
+        );
+        expect(
+          tracker.isStale(
+            threshold: const Duration(seconds: 40),
+            now: successAt.add(const Duration(seconds: 40)),
+          ),
+          isTrue,
+        );
       },
     );
   });

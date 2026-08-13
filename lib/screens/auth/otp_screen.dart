@@ -30,6 +30,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
   bool _isResending = false;
   bool _isVerifying = false;
   final TextEditingController _otpController = TextEditingController();
+  final FocusNode _pinFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -39,6 +40,21 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     // Clear any cached SMS autofill value so the field is always fresh on open
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _otpController.clear();
+
+      // Was Pinput's own `autofocus: true`, which requests focus/the
+      // keyboard the instant this screen is first laid out — i.e. while
+      // this route's push transition is still animating in. The platform
+      // can silently drop a show-keyboard request made mid-transition: the
+      // field ends up Flutter-focused but with no keyboard actually shown,
+      // so the very first tap on a pin box looked like it did nothing (the
+      // field was already "focused" as far as Flutter was concerned, so
+      // the tap didn't re-trigger a keyboard request) and only a second
+      // tap — after the transition had settled — brought it up. Requesting
+      // focus explicitly, after the transition's had time to finish, makes
+      // the keyboard reliably appear on the very first interaction.
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (mounted) FocusScope.of(context).requestFocus(_pinFocusNode);
+      });
     });
   }
 
@@ -76,6 +92,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     cancel();
     _timer?.cancel();
     _otpController.dispose();
+    _pinFocusNode.dispose();
     super.dispose();
   }
 
@@ -127,7 +144,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                 "Check your messages! We’ve sent a one-time ${widget.phoneNumber} . Enter the code \nbelow to verify your account and continue",
 
                 style: PoppinsMedium.copyWith(
-                  color: ColorResources.TextColorForGrey,
+                  color: ColorResources.textColorForGrey,
                 ),
               ),
 
@@ -137,8 +154,13 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
               Center(
                 child: Pinput(
                   controller: _otpController,
+                  focusNode: _pinFocusNode,
                   length: 4,
-                  autofocus: true,
+                  // Focus is requested explicitly in initState() once the
+                  // route's push transition has settled instead — see the
+                  // comment there for why autofocus (which fires mid
+                  // transition) made the first tap look unresponsive.
+                  autofocus: false,
                   keyboardType: TextInputType.number,
                   defaultPinTheme: defaultPinTheme,
                   onCompleted: (pin) async {
@@ -400,6 +422,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                             await Get.find<AuthController>().reSendOtp(
                               mobileNumber: widget.phoneNumber.toString(),
                               otpNumber: _otpController.text.trim(),
+                              type: widget.type,
                               context: context,
                             );
 

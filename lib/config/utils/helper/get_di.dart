@@ -15,7 +15,7 @@ Future<Map<String, Map<String, String>>> init() async {
   final sharedPreferences = await SharedPreferences.getInstance();
   Get.lazyPut(() => sharedPreferences, fenix: true);
 
-  Map<String, Map<String, String>> _languages = Map();
+  Map<String, Map<String, String>> languages = {};
   Get.lazyPut(() => AuthController(authRepo: Get.find()));
   Get.lazyPut<ApiClient>(
     () => ApiClient(sharedPreferences: Get.find()),
@@ -39,5 +39,5 @@ Future<Map<String, Map<String, String>>> init() async {
 
   Get.lazyPut(() => ProfiileRepo(apiClient: Get.find()), fenix: true);
   Get.lazyPut(() => ProfileController(profileRepo: Get.find()), fenix: true);
-  return _languages;
+  return languages;
 }

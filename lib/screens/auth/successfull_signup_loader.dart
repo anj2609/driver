@@ -93,7 +93,7 @@ class _RegistrationSuccessScreenState extends State<RegistrationSuccessScreen>
                   "You're all set—start earning from doing ride shares!",
                   textAlign: TextAlign.center,
                   style: PoppinsSemiBold.copyWith(
-                    color: ColorResources.TextColorForGrey,
+                    color: ColorResources.textColorForGrey,
                   ),
                 ),
               ),

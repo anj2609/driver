@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:get/get.dart';
@@ -166,7 +168,7 @@ class ProfileController extends GetxController implements GetxService {
       if (response.statusCode == 200) {
         final body = response.body;
 
-        if (body['code'] == "200") {
+        if (body['code']?.toString() == "200") {
           profile.value = ProfileModels.fromJson(body);
 
           final userData = profile.value.data;
@@ -264,9 +266,8 @@ class ProfileController extends GetxController implements GetxService {
     }
 
     final body = response.body;
-    ;
 
-    if (body["code"] == "200") {
+    if (body["code"]?.toString() == "200") {
       await EasyLoading.dismiss();
       Get.snackbar(
         '',
@@ -276,6 +277,20 @@ class ProfileController extends GetxController implements GetxService {
         snackPosition: SnackPosition.TOP,
         duration: const Duration(seconds: 5),
       );
+
+      // Was missing entirely — a successful update-profile call never
+      // refreshed profileimagee/profile.value (or nameController etc.) from
+      // the server, it only showed a toast and navigated home. Every screen
+      // reading profileimagee (the home profile card, this controller's own
+      // GetBuilder-wrapped avatar) kept showing whatever was loaded at app
+      // start — i.e. a freshly uploaded photo would never appear until the
+      // app was fully restarted and fetchProfile() ran again from onInit().
+      // fetchProfile() is fire-and-forget (declared `void`, not
+      // `Future<void>`) but it calls update() itself once the refetch
+      // lands, so every GetBuilder<ProfileController> picks up the new
+      // image as soon as it resolves, regardless of which screen is on
+      // screen by then.
+      fetchProfile();
 
       await Future.delayed(const Duration(milliseconds: 500));
 
@@ -371,7 +386,7 @@ class ProfileController extends GetxController implements GetxService {
         ifscCode: ifsccode.trim(),
         bankName: bankName.trim(),
       );
-      print('testing mode for verifyPickupOtp ${response}');
+      debugPrint('testing mode for verifyPickupOtp ${response}');
       EasyLoading.dismiss();
       if (response.statusCode == 200 &&
           response.body != null &&
@@ -391,7 +406,8 @@ class ProfileController extends GetxController implements GetxService {
 
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null &&
+          response.body['code']?.toString() == '401') {
         Get.snackbar(
           '',
           response.body['message'] ?? "Something went wrong",
@@ -427,7 +443,7 @@ class ProfileController extends GetxController implements GetxService {
       EasyLoading.dismiss();
       if (response.statusCode == 200 &&
           response.body != null &&
-          response.body['code'] == '200') {
+          response.body['code']?.toString() == '200') {
         EasyLoading.dismiss();
         Get.snackbar(
           '',
@@ -439,7 +455,8 @@ class ProfileController extends GetxController implements GetxService {
         Get.offAllNamed(RouteHelper.gethomescreen());
         update();
         return response;
-      } else if (response.body != null && response.body['code'] == '401') {
+      } else if (response.body != null &&
+          response.body['code']?.toString() == '401') {
         Get.snackbar(
           '',
           response.body['message'] ?? "Something went wrong",
@@ -617,7 +634,8 @@ class ProfileController extends GetxController implements GetxService {
 
     Response response = await profileRepo.getNotifications();
 
-    if (response.statusCode == 200 && response.body['code'] == '200') {
+    if (response.statusCode == 200 &&
+        response.body['code']?.toString() == '200') {
       notificationModel = NotificationModel.fromJson(response.body);
 
       notificationList = notificationModel?.data ?? [];
@@ -803,46 +821,71 @@ class ProfileController extends GetxController implements GetxService {
   }
 
   Future<Response> getVehicleDetailsApi({required BuildContext context}) async {
-   
+
     isVehicleLoading = true;
     update();
 
-    Response response = await profileRepo.getVehicleDetails();
+    try {
+      Response response = await profileRepo.getVehicleDetails();
 
+      if (response.statusCode == 200 &&
+          response.body is Map &&
+          response.body['code'].toString() == '200') {
+        vehicleModel = VehicleModel.fromJson(response.body);
 
-    if (response.statusCode == 200 &&
-        response.body['code'].toString() == '200') {
-      vehicleModel = VehicleModel.fromJson(response.body);
+        vehicleData = vehicleModel?.data;
+        vehicleImages = vehicleData?.images?.cast<String>() ?? [];
 
-      vehicleData = vehicleModel?.data;
-      vehicleImages = vehicleData?.images?.cast<String>() ?? [];
+        debugPrint('store imagess list data $vehicleImages');
 
-      print('store imagess list data $vehicleImages');
-      
+        // debugPrint (not gated behind kDebugMode) runs identically in
+        // release builds and still reaches `adb logcat` — unlike the
+        // "-" shown on screen, this shows the actual raw value AND its
+        // runtime type straight from get-vehicle-info's response, for
+        // exactly the three fields reported as debug-only. That
+        // distinguishes every plausible cause at a glance: key genuinely
+        // absent (null, "field: null (Null)"), present but empty
+        // ("field: \"\" (String)"), or actually populated but something
+        // downstream of this line is the problem instead.
+        debugPrint(
+          '[VehicleDetails] chassis_number: ${vehicleData?.chassisNumber} '
+          '(${vehicleData?.chassisNumber.runtimeType}), '
+          'engine_number: ${vehicleData?.engineNumber} '
+          '(${vehicleData?.engineNumber.runtimeType}), '
+          'manufacture_year: ${vehicleData?.manufactureYear} '
+          '(${vehicleData?.manufactureYear.runtimeType}) '
+          '-- raw data: ${response.body['data']}',
+        );
 
-      isVehicleLoading = false;
-      update();
-    } else {
-       AnimatedTopToast.show(
+        return response;
+      } else {
+        AnimatedTopToast.show(
+          context: context,
+          message: (response.body is Map ? response.body['message'] : null) ??
+              "Unable to load vehicle details. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+        return response;
+      }
+    } catch (e) {
+      // Was uncaught — any parsing failure (a malformed/missing field in
+      // the response, e.g. the images-cast bug above) threw straight out
+      // of this function with isVehicleLoading still true, leaving the
+      // Vehicles screen on its loading spinner forever with no error and
+      // no way to retry.
+      debugPrint('getVehicleDetailsApi error: $e');
+      AnimatedTopToast.show(
         context: context,
-        message:
-            response.body['message'] ?? "Something went wrong",
+        message: "Unable to load vehicle details. Please check your connection and try again.",
         backgroundColor: ColorResources.redbuttoncolor,
-        icon: Icons.check_circle_rounded,
+        icon: Icons.error_rounded,
       );
-      // Get.snackbar(
-      //   '',
-      //   response.body['message'] ?? "Something went wrong",
-      //   backgroundColor: ColorResources.textColorRed,
-      //   colorText: Colors.white,
-      //   snackPosition: SnackPosition.TOP,
-      // );
-
+      return Response(statusCode: 0, body: {'code': 'error'});
+    } finally {
       isVehicleLoading = false;
       update();
     }
-
-    return response;
   }
 
   Future<Response> getCouponHistoryApi({required BuildContext context}) async {
@@ -905,7 +948,7 @@ class ProfileController extends GetxController implements GetxService {
         response = await profileRepo.driverEaringWithOutDate(type: type);
       }
 
-      print('Earning History ${response.body}');
+      debugPrint('Earning History ${response.body}');
 
       if (response.statusCode == 200 &&
           response.body != null &&
@@ -1053,7 +1096,7 @@ class ProfileController extends GetxController implements GetxService {
     try {
       Response response = await profileRepo.getdriverErningActivity();
 
-      print("API RESPONSE => ${response.body}");
+      debugPrint("API RESPONSE => ${response.body}");
 
       if (response.statusCode == 200) {
         earningActivityList.clear();
@@ -1061,10 +1104,10 @@ class ProfileController extends GetxController implements GetxService {
         earningActivityList.addAll(
           EarningActivityModel.fromJson(response.body).data ?? [],
         );
-        print('tttttttttttt ${response.body.data}');
+        debugPrint('tttttttttttt ${response.body.data}');
       }
     } catch (e) {
-      print("ERROR => $e");
+      debugPrint("ERROR => $e");
     } finally {
       isEarningActivityLoading = false;
       update(); // VERY IMPORTANT
@@ -1084,7 +1127,7 @@ class ProfileController extends GetxController implements GetxService {
     if (response.statusCode == 200) {
       final body = response.body;
 
-      if (body['code'] == "200") {
+      if (body['code']?.toString() == "200") {
         tripDetailsModel = TripDetailsModel.fromJson(response.body);
       }
     } else if (response.statusCode == 500) {
@@ -1108,7 +1151,7 @@ class ProfileController extends GetxController implements GetxService {
     try {
       Response response = await profileRepo.getBankInfoDetails();
 
-      print("Bank Info Response => ${response.body}");
+      debugPrint("Bank Info Response => ${response.body}");
 
       if (response.statusCode == 200 &&
           response.body != null &&
@@ -1116,7 +1159,7 @@ class ProfileController extends GetxController implements GetxService {
         if (response.body['data'] != null) {
           bankDetailsData = BankDetailModel.fromJson(response.body);
 
-          print("Holder Name => ${bankDetailsData?.data?.accountHolderName}");
+          debugPrint("Holder Name => ${bankDetailsData?.data?.accountHolderName}");
         } else {
           bankDetailsData = null;
         }
@@ -1143,7 +1186,7 @@ class ProfileController extends GetxController implements GetxService {
 
       return response;
     } catch (e) {
-      print("Bank Info Error => $e");
+      debugPrint("Bank Info Error => $e");
 
       isBankInfoLoading = false;
       bankDetailsData = null;

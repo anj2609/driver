@@ -20,25 +20,30 @@ final opensansRegular = TextStyle(
   fontWeight: FontWeight.w400,
 );
 
-final PoppinsReguler= TextStyle(
+// Not lowerCamelCase on purpose — every call site across the app (100+
+// usages) references these by this exact capitalization. A prior pass
+// renamed just these declarations to satisfy the constant-naming lint
+// without updating any of the usages, which broke the build project-wide.
+// Restoring the original names here (rather than renaming every usage)
+// is the minimal fix.
+final PoppinsReguler = TextStyle(
   fontFamily: 'Poppins',
-  fontWeight: FontWeight.w300
+  fontWeight: FontWeight.w300,
 );
 
-final PoppinsSemiBold= TextStyle(
+final PoppinsSemiBold = TextStyle(
   fontFamily: 'Poppins',
- fontWeight: FontWeight.w600,
+  fontWeight: FontWeight.w600,
 );
-final PoppinsBold= TextStyle(
+final PoppinsBold = TextStyle(
   fontFamily: 'Poppins',
- fontWeight: FontWeight.w700,
+  fontWeight: FontWeight.w700,
 );
-final PoppinsMedium= TextStyle(
+final PoppinsMedium = TextStyle(
   fontFamily: 'Poppins',
- fontWeight: FontWeight.w400,
+  fontWeight: FontWeight.w400,
 );
-final PoppinsExtrabold= TextStyle(
+final PoppinsExtrabold = TextStyle(
   fontFamily: 'Poppins',
- fontWeight: FontWeight.w800,
- 
+  fontWeight: FontWeight.w800,
 );

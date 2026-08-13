@@ -80,7 +80,7 @@ class _MyRideLoginScreenState extends State<MyRideLoginScreen> {
                       Text(
                         "Let's dive in into your account",
                         style: PoppinsMedium.copyWith(
-                          color: ColorResources.TextColorForGrey,
+                          color: ColorResources.textColorForGrey,
                         ),
                       ),
 
@@ -138,19 +138,20 @@ class _MyRideLoginScreenState extends State<MyRideLoginScreen> {
 
                       SizedBox(height: Dimensions.spacingSize10),
 
+                      // Single entry point regardless of whether this
+                      // number has an account yet — no separate Sign
+                      // up/Sign in choice for the driver to get wrong.
+                      // DriverSignInpScreen sends the OTP via
+                      // sendOtpWithTypeDetection(), which tries a
+                      // register-type OTP first and transparently falls
+                      // back to a login-type OTP if the backend reports
+                      // the number is already registered — the backend
+                      // decides new-vs-existing, not a button the driver
+                      // has to pick correctly upfront.
                       CustomPrimaryButton(
-                        text: "Sign up",
+                        text: "Continue with Phone Number",
                         onTap: () {
                           Get.toNamed(RouteHelper.getSignupScreen());
-                        },
-                      ),
-
-                      SizedBox(height: Dimensions.spacingSize16),
-
-                      CustomSecondaryButton(
-                        text: "Sign in",
-                        onTap: () {
-                          Get.toNamed(RouteHelper.getLoginRoute());
                         },
                       ),
                     ],
@@ -173,7 +174,7 @@ class _MyRideLoginScreenState extends State<MyRideLoginScreen> {
                     TextSpan(
                       text: "  •  ",
                       style: PoppinsMedium.copyWith(
-                        color: ColorResources.TextColorForGrey,
+                        color: ColorResources.textColorForGrey,
                       ),
                     ),
                     TextSpan(

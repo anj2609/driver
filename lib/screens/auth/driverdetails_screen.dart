@@ -248,6 +248,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       case 3: return 0;   // driver docs (isPersonalSaved handles sub-view)
       case 4: return 1;   // vehicle type
       case 5: return 2;   // vehicle documents
+      case 6: return 3;   // preview / final submit
       default: return 0;
     }
   }
@@ -259,14 +260,31 @@ class _DetailsScreenState extends State<DetailsScreen> {
     _driverdocCounter++;
   }
 
+  // This is the ONLY resolver used when the screen is reached with no
+  // route arguments — which is the normal case on a cold app start via
+  // splash_screen.dart (Get.offAll(() => DetailsScreen()), no arguments
+  // at all) whenever registration is incomplete. That is the single most
+  // common way a driver returns to registration: close the app mid-way,
+  // reopen later.
+  //
+  // Was shifted by one relative to the canonical profile_status meaning
+  // used everywhere else (_stepFromArg() below, otp_screen.dart,
+  // AuthController.socailLogin()): status "3" means "personal info saved,
+  // now on driver documents" (UI step 0, with isPersonalSaved
+  // distinguishing the sub-view) — the old code sent that driver straight
+  // to UI step 1 (vehicle selection) instead, skipping driver-document
+  // upload entirely. Likewise "4"→vehicle documents (should be vehicle
+  // type) and "5"→preview (should be vehicle documents).
   int getStepFromStatus() {
     switch (driverprofileStatus?.toString()) {
+      case "2":
+        return 0; // personal details
       case "3":
-        return 1;
+        return 0; // driver docs — isPersonalSaved picks the sub-view
       case "4":
-        return 2;
+        return 1; // vehicle type
       case "5":
-        return 3;
+        return 2; // vehicle documents
       default:
         return 0;
     }
@@ -824,9 +842,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _buildSaveButton() {
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: CustomPrimaryButton(
-        text: "Save",
-        onTap: () async {
+      // Reactive to isSubmittingPersonalInfo so this, the very first save
+      // action in registration, gets the same disable+spinner treatment
+      // as the later steps instead of staying tappable for the whole
+      // round trip.
+      child: GetBuilder<AuthController>(
+        builder: (authController) => CustomPrimaryButton(
+          text: "Save",
+          isLoading: authController.isSubmittingPersonalInfo,
+          onTap: () async {
           if (currentStep == 0) {
             if (!_formKey.currentState!.validate()) return;
             final prefs = await SharedPreferences.getInstance();
@@ -854,7 +878,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
             String dob = dobController.text.trim();
 
-            await Get.find<AuthController>().fillPersonalInfoApi(
+            final response = await Get.find<AuthController>().fillPersonalInfoApi(
               name: fullNameController.text.trim(),
               email: emailController.text.trim(),
               gender: selectedGender.toString(),
@@ -862,6 +886,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
               profileimage: profileImage,
               context: context,
             );
+
+            // Was unconditional — this used to advance to the driver-
+            // document step (and persist isPersonalSaved) even when the
+            // save above failed or threw (fillPersonalInfoApi now never
+            // throws, but it can still legitimately fail: bad network,
+            // backend validation). The toast from fillPersonalInfoApi
+            // already told the driver why; advancing anyway meant the
+            // "failure" toast flashed by while the UI moved on as if it
+            // had worked, only to have later steps confused about
+            // whether personal info was actually saved.
+            final body = response.body;
+            final code = body is Map ? body['code']?.toString() : null;
+            if (code != '200') return;
+
             Get.find<AuthController>().driverdocument(context: context);
             Get.find<AuthController>().vehicledoc(context: context);
             setState(() {
@@ -895,7 +933,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
               const SnackBar(content: Text("Form Submitted Successfully")),
             );
           }
-        },
+          },
+        ),
       ),
     );
   }
@@ -911,7 +950,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       child: GetBuilder<AuthController>(
         builder: (authController) => CustomPrimaryButton(
           text: currentStep == 3 ? "Submit" : "Save & Continue",
-          isLoading: currentStep == 1 && authController.isSubmittingVehicleInfo,
+          isLoading: (currentStep == 1 && authController.isSubmittingVehicleInfo) ||
+              (currentStep == 2 && authController.isSubmittingDriverDocs),
           onTap: () async {
           if (currentStep == 0) {
             if (!_formKey.currentState!.validate()) return;
@@ -988,6 +1028,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
               return;
             }
 
+            if (colorController.text.trim().isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Vehicle color is required")),
+              );
+              return;
+            }
+
             if (engineController.text.trim().isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Engine number is required")),
@@ -998,6 +1045,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (chassisController.text.trim().isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Chassis number is required")),
+              );
+              return;
+            }
+
+            if (yearController.text.trim().isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Please select the manufacture year")),
               );
               return;
             }
@@ -1016,14 +1070,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
               vehicalnumber: regController.text.trim(),
               brand: brandController.text.trim(),
               model: modelCOntroller.text.trim(),
-              color: "",
+              color: colorController.text.trim(),
               chassisnumber: chassisController.text.trim(),
               enginenumber: engineController.text.trim(),
               manufactureyear: yearController.text,
               vehicaleimages: uploadedimages,
               context: context,
             );
-            if (response.statusCode == 200 && response.body['code'] == '200') {
+            // Was a bare `== '200'` — if this backend ever sends this
+            // endpoint's "code" as a JSON number instead of a string
+            // (established pattern elsewhere in this app), the vehicle-info
+            // save would silently appear to do nothing: no error shown, but
+            // the wizard also never advances past step 1, since this
+            // condition just stays false. Relevant to any report of
+            // vehicle-info fields (chassis/engine/manufacture year included)
+            // not sticking — a driver retrying here on a false negative
+            // could resubmit and get inconsistent results.
+            if (response.statusCode == 200 &&
+                response.body['code']?.toString() == '200') {
               //Get.find<AuthController>().vehicaleInfoApi(context: context);
               setState(() {
                 currentStep = 2;
@@ -1039,14 +1103,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
             for (var doc in controller.vehicleDocumentList) {
               if (doc.isRequired == true && doc.imageFiles == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${doc.name} image required")),
+                  SnackBar(content: Text("Please upload an image for ${doc.name}")),
                 );
                 return;
               }
 
               if (doc.numberControllers.text.trim().isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${doc.name} number required")),
+                  SnackBar(content: Text("Please enter the ${doc.name} number")),
                 );
                 return;
               }
@@ -1054,7 +1118,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               if (doc.isExpiry == true &&
                   doc.expiryControllers.text.trim().isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${doc.name} expiry required")),
+                  SnackBar(content: Text("Please select the expiry date for ${doc.name}")),
                 );
                 return;
               }
@@ -1065,7 +1129,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               documents: controller.vehicleDocumentList,
             );
 
-            if (response.body["code"] == "200") {
+            if (response.body["code"]?.toString() == "200") {
               setState(() {
                 currentStep = 3;
               });
@@ -1133,6 +1197,34 @@ class _DetailsScreenState extends State<DetailsScreen> {
           builder: (controller) {
             if (controller.isLoading) {
               return Center(child: PremiumBlurLoader());
+            }
+
+            // Was previously an empty GridView with no explanation and no
+            // way to recover if the vehicle-type fetch failed (network
+            // hiccup, timeout) — the driver would just see a blank space
+            // and "Please select vehicle type" kept firing on Save &
+            // Continue with no route forward short of leaving the screen.
+            if (controller.vehicleTypeList.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, size: 40, color: Colors.grey),
+                    const SizedBox(height: 10),
+                    const Text(
+                      "Could not load vehicle types.\nPlease check your connection and retry.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () =>
+                          Get.find<AuthController>().vehicleType(context: context),
+                      child: const Text("Retry"),
+                    ),
+                  ],
+                ),
+              );
             }
 
             return GridView.builder(
@@ -1353,6 +1445,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
           regController,
         ),
 
+        // colorController existed but was never attached to a field — the
+        // Save & Continue call always sent color: "" instead, regardless
+        // of what a driver might have wanted to enter. If the backend
+        // requires a non-empty color, that alone would fail every single
+        // vehicle-info save with the generic "Unable to save vehicle
+        // information" error, no matter how correct everything else was.
+        _buildTextField2("Vehicle Color *", colorController),
+
         _buildTextField2("Engine Number *", engineController),
 
         _buildTextField2("Chassis Number *", chassisController),
@@ -1382,20 +1482,43 @@ class _DetailsScreenState extends State<DetailsScreen> {
           GestureDetector(
             onTap: () async {
               final now = DateTime.now();
-              final picked = await showDatePicker(
+              // showDatePicker() (the old approach) opens on a year grid
+              // but still lets the driver drill into a month and a day —
+              // full date-picker behavior for a field that only ever
+              // stores a year. YearPicker is the same widget Flutter's
+              // date picker uses for its own year view, used here on its
+              // own so there's no month/day step to land on at all.
+              final firstYear = 1990;
+              final lastYear = now.year;
+              final initialYear = _selectedManufactureYear != null
+                  ? int.tryParse(_selectedManufactureYear!) ?? lastYear
+                  : lastYear;
+
+              final pickedYear = await showDialog<int>(
                 context: context,
-                initialDate: _selectedManufactureYear != null
-                    ? DateTime(int.parse(_selectedManufactureYear!))
-                    : now,
-                firstDate: DateTime(1990),
-                lastDate: now,
-                initialDatePickerMode: DatePickerMode.year,
-                helpText: "SELECT MANUFACTURE YEAR",
+                builder: (dialogContext) {
+                  return AlertDialog(
+                    title: const Text("Select Manufacture Year"),
+                    content: SizedBox(
+                      width: 300,
+                      height: 300,
+                      child: YearPicker(
+                        firstDate: DateTime(firstYear),
+                        lastDate: DateTime(lastYear),
+                        selectedDate: DateTime(initialYear),
+                        currentDate: now,
+                        onChanged: (DateTime dateTime) {
+                          Navigator.of(dialogContext).pop(dateTime.year);
+                        },
+                      ),
+                    ),
+                  );
+                },
               );
-              if (picked != null) {
+              if (pickedYear != null) {
                 setState(() {
-                  _selectedManufactureYear = picked.year.toString();
-                  yearController.text = picked.year.toString();
+                  _selectedManufactureYear = pickedYear.toString();
+                  yearController.text = pickedYear.toString();
                 });
               }
             },
@@ -1716,7 +1839,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     for (var doc in controller.driverDocumentList) {
                       if (doc.isRequired == true && doc.imageFile == null) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text("${doc.name} image required")),
+                          SnackBar(content: Text("Please upload an image for ${doc.name}")),
                         );
                         return;
                       }
@@ -1724,7 +1847,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       if (doc.numberController.text.trim().isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("${doc.name} number required"),
+                            content: Text("Please enter the ${doc.name} number"),
                           ),
                         );
                         return;
@@ -1734,7 +1857,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           doc.expiryController.text.trim().isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("${doc.name} expiry required"),
+                            content: Text("Please select the expiry date for ${doc.name}"),
                           ),
                         );
                         return;
@@ -1746,7 +1869,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       documents: controller.driverDocumentList,
                     );
 
-                    if (response.body["code"] == "200") {
+                    if (response.body["code"]?.toString() == "200") {
                       Get.find<AuthController>().vehicleType(context: context);
                       setState(() {
                         isDriverDocSaved = true;

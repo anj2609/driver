@@ -88,7 +88,7 @@ class _VerificationLoaderScreenState
                   "Hang tight! This could take a minute or\n two to complete!",
                   textAlign: TextAlign.center,
                    style: PoppinsReguler.copyWith(
-                                color: ColorResources.TextColorForGrey,
+                                color: ColorResources.textColorForGrey,
                                 fontSize: Dimensions.hight15
                               ),
                 ),

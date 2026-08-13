@@ -118,7 +118,6 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
           return GetBuilder<ProfileController>(
             init: Get.find<ProfileController>(),
             builder: (profileController) {
-              final tripData = profileController.tripDetailsModel?.data;
 
               // Fetch estimate ride data if not already fetched
               if (homeController.estimatePrice.isEmpty &&
@@ -134,14 +133,24 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
                 });
               }
 
-              // Price from estimate API
-              final String ridePrice = homeController.estimatePrice;
+              // Prefer trackRideModel's own fields (already fetched, no
+              // extra round-trip needed) over the separate estimate API —
+              // that flow depends on ProfileController's tripDetailsModel
+              // resolving with valid drop coordinates, which for some
+              // bookings' backend data never happens, leaving this whole
+              // card permanently blank ("₹ --" / "—" / "—") even though
+              // trackRideModel already has real values sitting right here.
+              final String ridePrice = (acceptData.data?.totalFare?.isNotEmpty ?? false)
+                  ? acceptData.data!.totalFare!
+                  : homeController.estimatePrice;
 
-              // Distance from estimate API only
-              final String distance = homeController.estimateDistance;
+              final String distance = (acceptData.data?.distance?.isNotEmpty ?? false)
+                  ? acceptData.data!.distance!
+                  : homeController.estimateDistance;
 
-              // Duration from estimate API only
-              final String rawDuration = homeController.estimateDuration;
+              final String rawDuration = (acceptData.data?.time?.isNotEmpty ?? false)
+                  ? acceptData.data!.time!
+                  : homeController.estimateDuration;
 
               final String distanceText = distance.isNotEmpty
                   ? '$distance km' : '—';
@@ -260,17 +269,6 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
         },
       ),
     );
-  }
-
-  /// Returns the first non-null, non-empty, non-"0" value from two candidates
-  String _getValidValue(String? primary, String? fallback) {
-    if (primary != null && primary.isNotEmpty && primary != '0' && primary != 'null') {
-      return primary;
-    }
-    if (fallback != null && fallback.isNotEmpty && fallback != '0' && fallback != 'null') {
-      return fallback;
-    }
-    return '';
   }
 
   /// INFO BOX

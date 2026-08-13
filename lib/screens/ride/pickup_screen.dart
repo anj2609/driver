@@ -640,6 +640,7 @@ import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/screens/home/ridedetails_screen.dart' show bookingIdStore;
 import 'package:myridedriverapp/widgets/canclerideconfirmations.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
+import 'package:myridedriverapp/widgets/inapp_navigation_map.dart';
 import 'package:pinput/pinput.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -663,8 +664,17 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
   bool isInitialized = false;
   bool isArrived = false;
+  bool isMarkingArrived = false;
   bool isOtpVerified = false;
   bool isChatLoading = false;
+
+  // Live, route-aware ETA/distance from InAppNavigationMap's turn-by-turn
+  // engine (real road-network data) — preferred over the older
+  // estimate/backend-reported fields below once available, since those
+  // come from an unreliable secondary flow (or, for this ride's backend
+  // data specifically, were nonsensical outright).
+  int? _liveEtaSeconds;
+  double? _liveDistanceMeters;
 
   Timer? _timer;
   StreamSubscription<Position>? positionStream;
@@ -756,6 +766,46 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     positionStream?.cancel();
     _timer?.cancel();
     super.dispose();
+  }
+
+  String _formatEta(int seconds) {
+    final minutes = (seconds / 60).ceil();
+    if (minutes < 60) return '$minutes min';
+    final hours = minutes ~/ 60;
+    final rem = minutes % 60;
+    return '${hours}h ${rem}m';
+  }
+
+  String _formatKm(double meters) => (meters / 1000).toStringAsFixed(1);
+
+  /// Marks arrival at pickup. Shared by the manual "Arrived" button and
+  /// in-app navigation's automatic arrival detection — both just call this
+  /// one guarded path, so an auto-detected arrival is exactly as safe
+  /// (idempotent, same backend call, same failure handling) as tapping
+  /// the button by hand.
+  Future<void> _markArrived(String bookingId) async {
+    if (isMarkingArrived || isArrived) return;
+    if (bookingId.isEmpty) return;
+
+    setState(() => isMarkingArrived = true);
+    try {
+      final response = await Get.find<HomeController>().driverArrived(
+        context: context,
+        bookingId: bookingId,
+      );
+      final succeeded = response.statusCode == 200 &&
+          response.body != null &&
+          response.body['code']?.toString() == '200';
+      if (mounted && succeeded) {
+        setState(() => isArrived = true);
+      }
+    } catch (_) {
+      // Keep the Arrived button available so the driver can retry — no toast.
+    } finally {
+      if (mounted && !isArrived) {
+        setState(() => isMarkingArrived = false);
+      }
+    }
   }
 
   @override
@@ -863,38 +913,31 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
           return Stack(
             children: [
-              GoogleMap(
-                initialCameraPosition: CameraPosition(
-                  target: pickupLatLng ?? const LatLng(28.6139, 77.2090),
-                  zoom: 14,
+              // Real turn-by-turn navigation to the pickup point — replaces
+              // the old bare GoogleMap (which only ever showed a redrawn
+              // overview polyline, no maneuver data, no rerouting, no
+              // arrival detection). Reuses HomeController's existing GPS
+              // stream; doesn't start a second one.
+              Positioned.fill(
+                child: InAppNavigationMap(
+                  destLat: rideData.lat,
+                  destLng: rideData.lng,
+                  destLabel: 'Pickup',
+                  // Auto-detected arrival calls the exact same guarded path
+                  // as tapping "Arrived" by hand — see _markArrived().
+                  onArrived: () =>
+                      _markArrived(rideData.bookingId?.toString() ?? ''),
+                  // Leaves room for the address/distance box below, which
+                  // now sits at the very top like it originally did.
+                  topOffset: 155,
+                  onUpdate: (snapshot) {
+                    if (!mounted) return;
+                    setState(() {
+                      _liveEtaSeconds = snapshot.remainingDurationSeconds;
+                      _liveDistanceMeters = snapshot.remainingDistanceMeters;
+                    });
+                  },
                 ),
-
-                onMapCreated: (controllerMap) {
-                  mapController = controllerMap;
-
-                  if (driverLatitude != null && driverLongitude != null) {
-                    mapController!.animateCamera(
-                      CameraUpdate.newLatLngBounds(
-                        LatLngBounds(
-                          southwest: LatLng(
-                            min(driverLatitude!, rideData.lat!),
-                            min(driverLongitude!, rideData.lng!),
-                          ),
-                          northeast: LatLng(
-                            max(driverLatitude!, rideData.lat!),
-                            max(driverLongitude!, rideData.lng!),
-                          ),
-                        ),
-                        100,
-                      ),
-                    );
-                  }
-                },
-
-                myLocationEnabled: true,
-                myLocationButtonEnabled: true,
-                markers: controller.markers,
-                polylines: controller.polylines,
               ),
 
               /// TOP BOX
@@ -941,7 +984,14 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                       const SizedBox(height: 4),
 
                       Text(
-                        'Distance: ${controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'} km',
+                        // Prefer the live, route-aware distance from
+                        // in-app navigation (actual road-network distance)
+                        // — rideData.distance is whatever the backend
+                        // reported for this booking, which for some rides
+                        // has turned out to be nonsensical (e.g. thousands
+                        // of km for a local trip); estimateDistance is a
+                        // separate, often-empty estimate flow.
+                        'Distance: ${_liveDistanceMeters != null ? _formatKm(_liveDistanceMeters!) : ((rideData.distance != null && rideData.distance!.isNotEmpty) ? rideData.distance : (controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'))} km',
                         style: PoppinsSemiBold.copyWith(
                           color: ColorResources.whiteColor,
                         ),
@@ -1030,9 +1080,17 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
                               Chip(
                                 label: Text(
-                                  controller.estimateDuration.isNotEmpty
-                                      ? controller.estimateDuration
-                                      : '—',
+                                  // Prefer the live, route-aware ETA from
+                                  // in-app navigation (real road-network
+                                  // data) — controller.estimateDuration
+                                  // comes from a separate, often-empty
+                                  // estimate flow, which is why this
+                                  // showed as "—" even mid-ride.
+                                  _liveEtaSeconds != null
+                                      ? _formatEta(_liveEtaSeconds!)
+                                      : (controller.estimateDuration.isNotEmpty
+                                          ? controller.estimateDuration
+                                          : '—'),
                                 ),
                               ),
                             ],
@@ -1065,7 +1123,9 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       const SizedBox(height: 5),
 
                                       Text(
-                                        '${controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'} km',
+                                        // Same preference order as the top
+                                        // banner above.
+                                        '${_liveDistanceMeters != null ? _formatKm(_liveDistanceMeters!) : ((rideData.distance != null && rideData.distance!.isNotEmpty) ? rideData.distance : (controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'))} km',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                         ),
@@ -1099,7 +1159,13 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       const SizedBox(height: 5),
 
                                       Text(
-                                        '₹ ${controller.estimatePrice.isNotEmpty ? controller.estimatePrice : '—'}',
+                                        // Same fix — rideData.totalFare comes
+                                        // straight from track-booking-ride
+                                        // for this exact ride; the estimate
+                                        // flow (estimatePrice) is a separate,
+                                        // easy-to-leave-empty mechanism that
+                                        // was the only thing this ever read.
+                                        '₹ ${(rideData.totalFare != null && rideData.totalFare!.isNotEmpty) ? rideData.totalFare : (controller.estimatePrice.isNotEmpty ? controller.estimatePrice : '—')}',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                           color: ColorResources.blackcolor11,
@@ -1280,17 +1346,12 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                             const SizedBox(height: 18),
 
                             CustomButton(
-                              text: "Arrived",
-                              onPressed: () {
-                                setState(() {
-                                  isArrived = true;
-                                });
-
-                                Get.find<HomeController>().driverArrived(
-                                  context: context,
-                                  bookingId: rideData.bookingId.toString(),
-                                );
-                              },
+                              text: isMarkingArrived
+                                  ? "Marking arrival..."
+                                  : "Arrived",
+                              onPressed: isMarkingArrived
+                                  ? () {}
+                                  : () => _markArrived(rideData.bookingId?.toString() ?? ''),
                             ),
                           ],
 
@@ -1322,7 +1383,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                 String otp = _otpController.text.trim();
 
                                 if (otp.length != 4) {
-                                  Get.snackbar("Error", "Please enter OTP");
+                                  // No toast — post-accept ride flow is toast-free.
                                   return;
                                 }
 
@@ -1362,7 +1423,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                     });
                                   }
                                 } else {
-                                  Get.snackbar("Error", "Invalid OTP");
+                                  // No toast — post-accept ride flow is toast-free.
                                 }
                               },
                             ),
@@ -1754,7 +1815,26 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     );
   }
 
-  void _showCancelBottomSheet(String bookingid) {
+  Future<void> _showCancelBottomSheet(String bookingid) async {
+    if (bookingid.isEmpty) {
+      // No toast — post-accept ride flow is toast-free by design.
+      return;
+    }
+
+    final controller = Get.find<HomeController>();
+    try {
+      final response = await controller.cancleRideReason();
+      final succeeded =
+          response.statusCode == 200 &&
+          response.body != null &&
+          response.body['code']?.toString() == '200';
+      if (!succeeded || controller.cancleReasonModelList.isEmpty) {
+        return;
+      }
+    } catch (_) {
+      return;
+    }
+
     Get.bottomSheet(
       CancelRideBottomSheet(bookingId: bookingid),
       isScrollControlled: true,

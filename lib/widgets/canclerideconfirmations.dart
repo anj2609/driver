@@ -17,12 +17,47 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
   int selectedIndex = -1;
   String cancleId = "";
   bool isCancelling = false;
+  bool _isLoadingReasons = false;
+  bool _loadFailed = false;
   late final HomeController _controller;
 
   @override
   void initState() {
     super.initState();
     _controller = Get.find<HomeController>();
+    // cancleRideReason() is fired once, fire-and-forget, from
+    // HomeController.onInit() — if that single attempt fails for any
+    // reason (no network yet at app startup, auth token not ready, a
+    // transient blip), cancleReasonModelList stays empty forever with no
+    // retry anywhere. This sheet used to just read that list directly and
+    // show a spinner whenever it was empty — with nothing to ever
+    // populate it, that spinner never went away and cancellation was
+    // permanently stuck. Fetching again here (whenever the list is
+    // already empty) gives every cancel attempt its own real chance to
+    // load reasons, instead of depending entirely on whether the one
+    // startup attempt happened to succeed.
+    if (_controller.cancleReasonModelList.isEmpty) {
+      _fetchReasons();
+    }
+  }
+
+  Future<void> _fetchReasons() async {
+    setState(() {
+      _isLoadingReasons = true;
+      _loadFailed = false;
+    });
+    try {
+      await _controller.cancleRideReason();
+    } catch (_) {
+      // handled via _loadFailed below
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingReasons = false;
+          _loadFailed = _controller.cancleReasonModelList.isEmpty;
+        });
+      }
+    }
   }
 
   @override
@@ -71,7 +106,27 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
           ),
           const SizedBox(height: 16),
 
-          if (reasons.isEmpty)
+          if (reasons.isEmpty && _loadFailed)
+            Column(
+              children: [
+                Text(
+                  "Couldn't load cancellation reasons.",
+                  style: TextStyle(fontSize: 14, color: Colors.red.shade600),
+                ),
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: _isLoadingReasons ? null : _fetchReasons,
+                  child: _isLoadingReasons
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text("Retry"),
+                ),
+              ],
+            )
+          else if (reasons.isEmpty)
             const Center(child: PremiumBlurLoader())
           else
             ListView.builder(
@@ -125,25 +180,14 @@ class _CancelRideBottomSheetState extends State<CancelRideBottomSheet> {
                 : CustomCancleButton(
                     text: 'Confirm Cancellation',
                     onTap: () async {
+                      // No toast — post-accept ride flow is toast-free by
+                      // design; tapping Confirm simply does nothing until
+                      // a reason is actually selected.
                       if (selectedIndex == -1 || cancleId.isEmpty) {
-                        Get.snackbar(
-                          "Select Reason",
-                          "Please select a cancellation reason",
-                          snackPosition: SnackPosition.BOTTOM,
-                          backgroundColor: Colors.red.shade50,
-                          colorText: Colors.red,
-                        );
                         return;
                       }
 
                       if (widget.bookingId == null || widget.bookingId!.isEmpty) {
-                        Get.snackbar(
-                          "Error",
-                          "Booking ID not found",
-                          snackPosition: SnackPosition.BOTTOM,
-                          backgroundColor: Colors.red.shade50,
-                          colorText: Colors.red,
-                        );
                         return;
                       }
 

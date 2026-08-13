@@ -29,11 +29,17 @@ class AuthRepo extends GetxService {
     });
   }
 
-  Future<Response> reSendOtp({String? phone, String? numOtp}) async {
+  Future<Response> reSendOtp({String? phone, String? numOtp, String? type}) async {
     log('resend  otp number $phone');
+    // Was missing "type" (register/login) entirely, unlike sendOtpApi()
+    // above which always includes it. The backend needs it to know which
+    // pending OTP session to resend for this number — without it, every
+    // resend attempt either fails outright or resends the wrong session,
+    // which is why tapping "Resend OTP" never actually produced a working
+    // new code.
     return apiClient.postsignUpData(ApiConstants.reSendOtp, {
       "phone": phone,
-
+      "type": type,
       "user_type": ApiConstants.driverLogin,
     });
   }

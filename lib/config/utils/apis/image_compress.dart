@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 
 Future<File> compressImageUnder2MB(File file) async {
   File resultFile = file;
@@ -29,7 +30,7 @@ Future<File> compressImageUnder2MB(File file) async {
     await resultFile.writeAsBytes(resizedBytes);
 
     fileSize = await resultFile.length();
-    print("🔁 COMPRESSED SIZE: ${fileSize / 1024} KB");
+    debugPrint("🔁 COMPRESSED SIZE: ${fileSize / 1024} KB");
 
     targetWidth -= 200;
 

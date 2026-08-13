@@ -3,14 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
-import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/qr_payment_model.dart';
-import 'package:myridedriverapp/widgets/toaster_animation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OnlinePaymentSheet extends StatefulWidget {
@@ -132,32 +130,15 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
         // Restart countdown and polling with new QR
         _startCountdown();
         _startPolling();
-
-        AnimatedTopToast.show(
-          context: context,
-          message: 'QR code regenerated successfully.',
-          backgroundColor: ColorResources.appColor,
-          icon: Icons.check_circle_rounded,
-        );
+        // No toast — post-accept ride flow is toast-free by design; the
+        // fresh QR itself is the visible confirmation.
       } else {
         setState(() => isRegenerating = false);
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Failed to regenerate QR. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
       }
     } catch (e) {
       debugPrint('Regenerate QR error: $e');
       if (mounted) {
         setState(() => isRegenerating = false);
-        AnimatedTopToast.show(
-          context: context,
-          message: 'Something went wrong. Please try again.',
-          backgroundColor: ColorResources.redbuttoncolor,
-          icon: Icons.error_rounded,
-        );
       }
     }
   }
@@ -201,8 +182,9 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
     // 3. Let the thank-you message display for 2 seconds
     await Future.delayed(const Duration(seconds: 2));
 
-    // 4. Navigate to home — closes the sheet and replaces entire stack
-    Get.offAllNamed(RouteHelper.getHomeScreen());
+    if (!mounted) return;
+
+    widget.homeController.returnToExistingHome();
   }
 
   Widget _buildThankYouView() {

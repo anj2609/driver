@@ -60,8 +60,13 @@ class _DriverSignInpScreenState extends State<DriverSignInpScreen> {
                     mainAxisAlignment: MainAxisAlignment.start,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Neutral copy — this screen now handles both a
+                      // brand-new number and one that's already
+                      // registered (the OTP send below detects which and
+                      // continues accordingly), so it no longer assumes
+                      // "creating an account".
                       Text(
-                        "Join My Ride Today",
+                        "Welcome to My Ride",
                         style: PoppinsSemiBold.copyWith(
                           fontSize: Dimensions.spacingSize20,
                           color: ColorResources.blackcolor11,
@@ -70,9 +75,9 @@ class _DriverSignInpScreenState extends State<DriverSignInpScreen> {
 
                       const SizedBox(height: Dimensions.fontSizeSmall),
                       Text(
-                        "Let's get started! Enter your phone number to \ncreate your My Ride account.",
+                        "Enter your phone number to sign in or create your My Ride account.",
                         style: PoppinsMedium.copyWith(
-                          color: ColorResources.TextColorForGrey,
+                          color: ColorResources.textColorForGrey,
                         ),
                       ),
 
@@ -192,35 +197,9 @@ class _DriverSignInpScreenState extends State<DriverSignInpScreen> {
                         ],
                       ),
 
-                      const SizedBox(height: 10),
-
-                      Center(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              "Already have an account?",
-                              style: PoppinsMedium.copyWith(
-                                fontSize: 13,
-                                color: ColorResources.blackcolor,
-                              ),
-                            ),
-                            InkWell(
-                              onTap: () {
-                                Get.toNamed(RouteHelper.getLoginRoute());
-                              },
-                              child: Text(
-                                " Sign in",
-                                style: PoppinsMedium.copyWith(
-                                  fontSize: 13,
-                                  color: ColorResources.blueeebutton,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
+                      // No more separate "Already have an account? Sign
+                      // in" link — there's only this one entry point now,
+                      // for both new and returning drivers.
                       const SizedBox(height: 20),
 
                       Row(
@@ -301,9 +280,13 @@ class _DriverSignInpScreenState extends State<DriverSignInpScreen> {
 
                       const SizedBox(height: 30),
 
-                      /// Sign Up Button — smart: tries register, falls back to login
+                      /// Single continue button — smart: tries a register-type
+                      /// OTP first and transparently falls back to a login-type
+                      /// OTP if the backend says this number is already
+                      /// registered (sendOtpWithTypeDetection). The driver never
+                      /// has to know or choose which one applies to them.
                       CustomPrimaryButton(
-                        text: "Sign up",
+                        text: "Continue",
                         onTap: () async {
                           String mobile = mobileController.text.trim();
 

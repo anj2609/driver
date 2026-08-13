@@ -1,4 +1,6 @@
 
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -18,30 +20,66 @@ final FlutterLocalNotificationsPlugin localNotifications =
     FlutterLocalNotificationsPlugin();
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
-Future<void> _initializeCore() async {
+// Public (not the original leading-underscore `_initializeCore`) so
+// splash_screen.dart can call it again to retry Firebase/DI setup if the
+// first attempt fails — see the try/catch around `await appInitialization`
+// there. A failed Firebase.initializeApp() (e.g. a device with broken/
+// outdated Google Play Services) used to leave di.init() never having run
+// at all, so every screen's first Get.find() call — none of which are
+// guarded — threw immediately: an uncaught exception during app startup,
+// which is exactly what an Android "keeps stopping" crash looks like.
+Future<void> initializeAppCore() async {
   await Firebase.initializeApp();
   await di.init();
 }
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+  // Was just `runApp(MyApp())` — this app had zero global error handling
+  // anywhere (no runZonedGuarded, no FlutterError.onError, no Crashlytics),
+  // so an uncaught exception on a specific device (e.g. the reported
+  // Galaxy M11 "Nride driver keeps stopping" crash) left nothing to look
+  // at beyond a bare "keeps stopping" system dialog — no way to tell which
+  // of several plausible causes it actually was. This doesn't stop a fatal
+  // error from taking the app down, but it does mean any error routed
+  // through the zone (framework errors always are; platform/isolate-level
+  // native crashes are not) gets logged before that happens, instead of
+  // vanishing. `flutter logs` / `adb logcat` on a reproducing device is
+  // now the fastest way to actually see what's failing, instead of
+  // guessing blind.
+  runZonedGuarded(
+    () {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Kicked off without awaiting so Flutter can paint its first frame (and
-  // dismiss Android's mandatory native splash) immediately, instead of
-  // sitting on the OS splash for as long as Firebase/DI setup takes.
-  appInitialization = _initializeCore();
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (FlutterErrorDetails details) {
+        debugPrint('[FATAL] FlutterError: ${details.exceptionAsString()}');
+        debugPrint('${details.stack}');
+        originalOnError?.call(details);
+      };
 
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.white,
-      statusBarIconBrightness: Brightness.dark,
-      statusBarBrightness: Brightness.light,
-    ),
+      // Kicked off without awaiting so Flutter can paint its first frame
+      // (and dismiss Android's mandatory native splash) immediately,
+      // instead of sitting on the OS splash for as long as Firebase/DI
+      // setup takes.
+      appInitialization = initializeAppCore();
+
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.white,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+        ),
+      );
+
+      runApp(MyApp());
+      //configLoading();
+    },
+    (error, stack) {
+      debugPrint('[FATAL] Uncaught zone error: $error');
+      debugPrint('$stack');
+    },
   );
-
-  runApp(MyApp());
-  //configLoading();
 }
 
 void configLoading() {
@@ -72,8 +110,15 @@ class _MyAppState extends State<MyApp> {
     super.initState();
 
     // Firebase isn't ready until appInitialization resolves, so FCM setup
-    // has to wait for it rather than assuming it already completed.
-    appInitialization?.then((_) => _setupMessaging());
+    // has to wait for it rather than assuming it already completed. Was
+    // missing a catchError — if appInitialization rejects (e.g. Firebase
+    // init failing on a device with broken Google Play Services), this
+    // .then() callback simply never runs, silently, rather than crashing
+    // here; splash_screen.dart's own try/catch around the same Future is
+    // what actually surfaces and retries the failure to the user.
+    appInitialization
+        ?.then((_) => _setupMessaging())
+        .catchError((e) => debugPrint('[FCM] appInitialization failed: $e'));
   }
 
   void _setupMessaging() {

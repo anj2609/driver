@@ -268,6 +268,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
     super.initState();
 
     Future.microtask(() {
+      if (!mounted) return;
       Get.find<ProfileController>().getVehicleDetailsApi(context: context);
     });
   }
@@ -313,7 +314,32 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
           body: controller.isVehicleLoading
               ? Center(child:  PremiumBlurLoader())
-              : SafeArea(
+              : vehicle == null
+                  // A clean API failure (non-200, or a body that parsed but
+                  // came back empty) previously fell through to the normal
+                  // layout below with every field defaulting to "-" and an
+                  // empty image grid — looking like "no vehicle on file"
+                  // rather than "couldn't load it", with no way to retry.
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+                          const SizedBox(height: 12),
+                          const Text(
+                            "Could not load vehicle details.",
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                          TextButton(
+                            onPressed: () => Get.find<ProfileController>()
+                                .getVehicleDetailsApi(context: context),
+                            child: const Text("Retry"),
+                          ),
+                        ],
+                      ),
+                    )
+                  : SafeArea(
                   child: SingleChildScrollView(
                     child: Padding(
                       padding: EdgeInsets.symmetric(horizontal: width * .05),
@@ -590,7 +616,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                           /// Brand + Model from API
                           Text(
-                            "${vehicle?.brand ?? ''} ${vehicle?.model ?? ''}",
+                            "${vehicle.brand ?? ''} ${vehicle.model ?? ''}",
                             style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
@@ -601,7 +627,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                           /// Vehicle Number from API
                           Text(
-                            "Vehicle No: ${vehicle?.vehicleNumber ?? ''}",
+                            "Vehicle No: ${vehicle.vehicleNumber ?? ''}",
                             style: const TextStyle(
                               color: Colors.grey,
                               fontSize: 15,
@@ -694,23 +720,23 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                                 const SizedBox(height: 15),
 
-                                detailRow("Brand", vehicle?.brand ?? "-"),
+                                detailRow("Brand", vehicle.brand ?? "-"),
 
-                                detailRow("Model", vehicle?.model ?? "-"),
+                                detailRow("Model", vehicle.model ?? "-"),
 
                                 detailRow(
                                   "Chassis No",
-                                  vehicle?.chassisNumber?.toString() ?? "-",
+                                  vehicle.chassisNumber?.toString() ?? "-",
                                 ),
 
                                 detailRow(
                                   "Engine No",
-                                  vehicle?.engineNumber?.toString() ?? "-",
+                                  vehicle.engineNumber?.toString() ?? "-",
                                 ),
 
                                 detailRow(
                                   "Manufacture Year",
-                                  vehicle?.manufactureYear?.toString() ?? "-",
+                                  vehicle.manufactureYear?.toString() ?? "-",
                                 ),
                               ],
                             ),
@@ -742,6 +768,12 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
     final brandController = TextEditingController(text: vehicle?.brand ?? '');
     final modelController = TextEditingController(text: vehicle?.model ?? '');
+    // Was hardcoded to "" on save regardless of what (if anything) was
+    // ever on file — the same vehical-info endpoint used at registration
+    // rejects an empty color if the backend requires one, so every edit
+    // here could silently fail with a generic error and never actually
+    // save, while the driver never has anywhere to enter or correct it.
+    final colorController = TextEditingController(text: vehicle?.color ?? '');
     final vehicleNumberController =
         TextEditingController(text: vehicle?.vehicleNumber ?? '');
     final chassisController =
@@ -827,6 +859,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                       const SizedBox(height: 14),
                       _editField("Brand", brandController),
                       _editField("Model", modelController),
+                      _editField("Color", colorController),
                       // Now editable — the backend's vehical-info endpoint
                       // accepts a vehicle_id identifying the record being
                       // updated, so it no longer confuses an edit for a
@@ -870,7 +903,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                         vehicleNumberController.text.trim(),
                                     brand: brandController.text.trim(),
                                     model: modelController.text.trim(),
-                                    color: "",
+                                    color: colorController.text.trim(),
                                     chassisnumber:
                                         chassisController.text.trim(),
                                     enginenumber:
@@ -881,16 +914,32 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
 
                                   setSheetState(() => isSaving = false);
 
+                                  // Was a bare `== '200'` — likely tied
+                                  // directly to chassis/engine/manufacture
+                                  // year "not showing" reports: if this
+                                  // backend ever sends this endpoint's
+                                  // "code" as a JSON number, this save
+                                  // silently does nothing from the driver's
+                                  // point of view (no error, sheet doesn't
+                                  // close) AND getVehicleDetailsApi() below
+                                  // — the only thing that refreshes the
+                                  // Vehicle screen with what was just saved
+                                  // — never runs. The driver has no way to
+                                  // tell their edit didn't take.
+                                  final saveCode = response.body is Map
+                                      ? response.body['code']?.toString()
+                                      : null;
                                   if (response.statusCode == 200 &&
-                                      response.body['code'] == '200') {
-                                    if (Navigator.of(sheetContext).canPop()) {
-                                      Navigator.of(sheetContext).pop();
-                                    }
-                                    if (mounted) {
-                                      Get.find<ProfileController>()
-                                          .getVehicleDetailsApi(
-                                              context: context);
-                                    }
+                                      saveCode == '200') {
+                                  if (sheetContext.mounted &&
+                                      Navigator.of(sheetContext).canPop()) {
+                                    Navigator.of(sheetContext).pop();
+                                  }
+                                  if (mounted) {
+                                    Get.find<ProfileController>()
+                                        .getVehicleDetailsApi(
+                                            context: context);
+                                  }
                                   }
                                 },
                           child: isSaving

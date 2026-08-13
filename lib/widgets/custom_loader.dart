@@ -9,7 +9,19 @@ Future<BitmapDescriptor> getCustomIcon(String path, int width) async {
     size: Size(width.toDouble(), width.toDouble()),
   );
 
-  return await BitmapDescriptor.fromAssetImage(config, path);
+  // Was BitmapDescriptor.fromAssetImage(), deprecated in favor of
+  // BitmapDescriptor.asset() — and not just a lint nag: on newer
+  // google_maps_flutter_android builds this deprecated path can produce a
+  // descriptor the native Pigeon-based MapsApi fails to decode, throwing
+  // "PlatformException: Failed to decode image. The provided image must
+  // be a Bitmap." the moment a marker using it is added to the map.
+  // Explicit width/height keeps the on-screen size identical to before.
+  return BitmapDescriptor.asset(
+    config,
+    path,
+    width: width.toDouble(),
+    height: width.toDouble(),
+  );
 }
 
 

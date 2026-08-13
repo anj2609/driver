@@ -58,8 +58,19 @@ class AcceptRideData {
     status = json['status'];
     otp = json['otp'];
 
-    lat = json['lat'] != null ? (json['lat'] as num).toDouble() : null;
-    lng = json['lng'] != null ? (json['lng'] as num).toDouble() : null;
+    // Was `(json['lat'] as num).toDouble()` — a hard cast that throws
+    // (TypeError, not just a bad parse) the moment this backend ever sends
+    // lat/lng as a numeric-looking string instead of a raw JSON number,
+    // unlike dropLat/dropLng right below (already using the safe
+    // tryParse-on-toString pattern used everywhere else in this file/app).
+    // Since this whole fromJson() runs inside trackbookingRide()'s
+    // catch-all (home_controller.dart), a thrown TypeError here meant
+    // trackRideModel never got reassigned at all — silently, every single
+    // 15s poll — which is exactly what leaves pickup_screen.dart's
+    // InAppNavigationMap stuck on "Finding route…"/a spinner forever: the
+    // pickup destination coordinates it needs never arrive.
+    lat = json['lat'] != null ? double.tryParse(json['lat'].toString()) : null;
+    lng = json['lng'] != null ? double.tryParse(json['lng'].toString()) : null;
     dropLat = json['drop_lat'] != null ? double.tryParse(json['drop_lat'].toString()) : null;
     dropLng = json['drop_lng'] != null ? double.tryParse(json['drop_lng'].toString()) : null;
     pickupaddress = json['pickup_address'];
@@ -120,8 +131,9 @@ class CustomerInfo {
     name = json['name'];
     phone = json['phone'];
 
-    lat = json['lat'] != null ? (json['lat'] as num).toDouble() : null;
-    lng = json['lng'] != null ? (json['lng'] as num).toDouble() : null;
+    // Same hard-cast-throws-on-string fix as AcceptRideData.lat/lng above.
+    lat = json['lat'] != null ? double.tryParse(json['lat'].toString()) : null;
+    lng = json['lng'] != null ? double.tryParse(json['lng'].toString()) : null;
   }
 
   Map<String, dynamic> toJson() {

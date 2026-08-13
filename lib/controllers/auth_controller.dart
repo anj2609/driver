@@ -22,7 +22,7 @@ import 'package:myridedriverapp/repository/auth_repo.dart';
 import 'package:myridedriverapp/screens/auth/socialauth_screen.dart';
 import 'package:myridedriverapp/widgets/image_source_sheet.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -71,6 +71,11 @@ class AuthController extends GetxController implements GetxService {
   // double-tap before the first frame with the disabled state paints).
   bool isSubmittingDriverDocs = false;
   bool isSubmittingVehicleInfo = false;
+  // Same guard, for fillPersonalInfoApi() — the very first save action in
+  // registration. The button in driverdetails_screen.dart/socialauth_screen.dart
+  // was already wired to read this for its disable+spinner state; it just
+  // never existed here.
+  bool isSubmittingPersonalInfo = false;
   // final GoogleSignIn _googleSignIn = GoogleSignIn();
   final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email']);
 
@@ -101,13 +106,13 @@ class AuthController extends GetxController implements GetxService {
       );
     } catch (e) {
       deviceToken = null;
-      print("FCM getToken failed: $e");
+      debugPrint("FCM getToken failed: $e");
     }
 
     await saveDeviceData();
 
-    print("Saved Token: $deviceToken");
-    print("Saved Device Type: $deviceType");
+    debugPrint("Saved Token: $deviceToken");
+    debugPrint("Saved Device Type: $deviceType");
   }
 
   Future<void> saveDeviceData() async {
@@ -306,7 +311,7 @@ class AuthController extends GetxController implements GetxService {
       deviceToken = newToken;
       await saveDeviceData();
 
-      print("Updated Token: $newToken");
+      debugPrint("Updated Token: $newToken");
     });
   }
 
@@ -320,7 +325,7 @@ class AuthController extends GetxController implements GetxService {
       final GoogleSignInAccount? account = await _googleSignIn.signIn();
 
       if (account == null) {
-        print("User cancelled login");
+        debugPrint("User cancelled login");
         return null;
       }
 
@@ -339,14 +344,15 @@ class AuthController extends GetxController implements GetxService {
 
       ApiConstants.profileImage = account.photoUrl ?? "";
 
-      print("User Name: ${account.displayName}");
-      print("Gmail: ${account.email}");
-      print("Photo: ${account.photoUrl}");
+      debugPrint("User Name: ${account.displayName}");
+      debugPrint("Gmail: ${account.email}");
+      debugPrint("Photo: ${account.photoUrl}");
 
-      print("ID Token: $idToken");
-      print("Access Token: $accessToken");
+      debugPrint("ID Token: $idToken");
+      debugPrint("Access Token: $accessToken");
 
       /// API CALL
+      if (!context.mounted) return null;
       final response = await socailLogin(
         provider: provider.toString(),
         userToken: idToken,
@@ -355,7 +361,7 @@ class AuthController extends GetxController implements GetxService {
 
       return response;
     } catch (e) {
-      print("Error: $e");
+      debugPrint("Error: $e");
       return null;
     }
   }
@@ -379,23 +385,23 @@ class AuthController extends GetxController implements GetxService {
 
     // await EasyLoading.dismiss();
 
-    print("API RESPONSE => ${response.body}");
+    debugPrint("API RESPONSE => ${response.body}");
 
-    if (response.body != null && (response.body['code'] == '200')) {
+    if (response.body != null && (response.body['code']?.toString() == '200')) {
       ApiConstants.userTokenSocial = response.body['data']['api_token']
           .toString();
       ApiConstants.userIdSocial = response.body['data']['id'].toString();
       authRepo.saveUserToken(ApiConstants.userTokenSocial);
       authRepo.saveUserprofileid(ApiConstants.userIdSocial);
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Login successful. Welcome to My Ride!",
         backgroundColor: ColorResources.blueeebutton,
         icon: Icons.check_circle_rounded,
       );
       update();
-    } else if (response.body['code'] == '401') {
-      print("FULL RESPONSE => ${response.body}");
+    } else if (response.body['code']?.toString() == '401') {
+      debugPrint("FULL RESPONSE => ${response.body}");
 
 
       int isComplete =
@@ -413,8 +419,8 @@ class AuthController extends GetxController implements GetxService {
         response.body['code'].toString(),
       );
 
-      print("isComplete => $isComplete");
-      print("profileStatus => $userProfileStatuss");
+      debugPrint("isComplete => $isComplete");
+      debugPrint("profileStatus => $userProfileStatuss");
       update();
 
       Future.delayed(const Duration(milliseconds: 300), () async {
@@ -424,7 +430,7 @@ class AuthController extends GetxController implements GetxService {
         // verification_status is stored for future use via prefs
 
         if (userProfileStatuss == "1") {
-          print("Navigate => Earn With My Ride");
+          debugPrint("Navigate => Earn With My Ride");
 
           Get.offAllNamed(RouteHelper.getearnWithMyRideScreen());
 
@@ -434,7 +440,7 @@ class AuthController extends GetxController implements GetxService {
 
           update();
         } else if (userProfileStatuss == "2" || userProfileStatuss == "3") {
-          print("Navigate => Driver Details Step 3");
+          debugPrint("Navigate => Driver Details Step 3");
           isSoicialSaved = true;
           await prefs.setBool(ApiConstants.isDocumentSaved, isSoicialSaved);
           Get.offAllNamed(
@@ -444,7 +450,7 @@ class AuthController extends GetxController implements GetxService {
         }
         update();
         if (userProfileStatuss == "4") {
-          Get.find<AuthController>().vehicleType(context: context);
+          if (context.mounted) Get.find<AuthController>().vehicleType(context: context);
 
           Get.toNamed(
             RouteHelper.getsocialDetailScreen(),
@@ -457,7 +463,7 @@ class AuthController extends GetxController implements GetxService {
             arguments: {"step": 2},
           );
         } else if (userProfileStatuss == "6") {
-          print("Navigate => Driver Details Step 4");
+          debugPrint("Navigate => Driver Details Step 4");
 
           Get.offAllNamed(
             RouteHelper.getsocialDetailScreen(),
@@ -504,13 +510,13 @@ class AuthController extends GetxController implements GetxService {
         update();
       }
     } else {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Unable to sign in. Please try again.",
         backgroundColor: Colors.orange,
         icon: Icons.error_rounded,
       );
-      print("ERROR RESPONSE => ${response.body}");
+      debugPrint("ERROR RESPONSE => ${response.body}");
     }
 
     return response;
@@ -538,8 +544,8 @@ class AuthController extends GetxController implements GetxService {
       devicetype: deviceType,
     );
 
-    if (response.body != null && response.body["code"] == "200") {
-      AnimatedTopToast.show(
+    if (response.body != null && response.body["code"]?.toString() == "200") {
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "OTP sent to your mobile number. Please check your messages.",
         backgroundColor: Colors.green,
@@ -550,14 +556,14 @@ class AuthController extends GetxController implements GetxService {
 
       RouteHelper.getOtpVerification(mobileNumber, type);
     } else if (response.statusCode == 500) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Server error. Please try again later.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
     } else {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: 'Unable to send OTP. Please check your number and try again.',
         backgroundColor: Colors.red,
@@ -581,9 +587,9 @@ class AuthController extends GetxController implements GetxService {
       devicetype: deviceType,
     );
 
-    if (registerResponse.body?["code"] == "200") {
+    if (registerResponse.body?["code"]?.toString() == "200") {
       if (Get.isDialogOpen ?? false) Get.back();
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "OTP sent to your mobile number. Please check your messages.",
         backgroundColor: Colors.green,
@@ -601,12 +607,12 @@ class AuthController extends GetxController implements GetxService {
     final registerMessage = (registerResponse.body?["message"] ?? '')
         .toString();
     final phoneAlreadyInUse =
-        registerResponse.body?["code"] == "401" &&
+        registerResponse.body?["code"]?.toString() == "401" &&
         registerMessage.toLowerCase().contains("already in use");
 
     if (!phoneAlreadyInUse) {
       if (Get.isDialogOpen ?? false) Get.back();
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: registerMessage.isNotEmpty
             ? registerMessage
@@ -625,9 +631,9 @@ class AuthController extends GetxController implements GetxService {
       devicetype: deviceType,
     );
 
-    if (loginResponse.body?["code"] == "200") {
+    if (loginResponse.body?["code"]?.toString() == "200") {
       if (Get.isDialogOpen ?? false) Get.back();
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Welcome back! OTP sent to your registered number.",
         backgroundColor: Colors.green,
@@ -636,7 +642,7 @@ class AuthController extends GetxController implements GetxService {
       await Future.delayed(const Duration(milliseconds: 500));
       RouteHelper.getOtpVerification(mobileNumber, ApiConstants.UserLogin);
     } else {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Failed to send OTP. Please check your number and try again.",
         backgroundColor: Colors.red,
@@ -659,10 +665,10 @@ class AuthController extends GetxController implements GetxService {
       city: city,
     );
 
-    if (response.body['code'] == '200') {
-      Get.find<AuthController>().vehicleType(context: context);
+    if (response.body['code']?.toString() == '200') {
+      if (context.mounted) Get.find<AuthController>().vehicleType(context: context);
 
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Address saved successfully.",
         backgroundColor: Colors.green,
@@ -676,14 +682,14 @@ class AuthController extends GetxController implements GetxService {
         Get.toNamed(RouteHelper.getDriverDetails());
       }
     } else if (response.statusCode == 500) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Server error. Please try again later.",
         backgroundColor: Colors.red,
         icon: Icons.error_rounded,
       );
     } else {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: 'Unable to save address. Please try again.',
         backgroundColor: Colors.red,
@@ -773,12 +779,13 @@ class AuthController extends GetxController implements GetxService {
     update();
     try {
       Response response = await authRepo.driverdocument();
-      if (response.statusCode == 200 && response.body['code'] == '200') {
+      if (response.statusCode == 200 &&
+          response.body['code']?.toString() == '200') {
         driverDocumentModel = DriverDocumentModel.fromJson(response.body);
         driverDocumentList = driverDocumentModel?.data ?? [];
         _applyDriverDocDisplayNames(driverDocumentList);
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to load driver documents. Please try again.',
           backgroundColor: Colors.red,
@@ -799,12 +806,13 @@ class AuthController extends GetxController implements GetxService {
     update();
     try {
       Response response = await authRepo.vehicalDocument();
-      if (response.statusCode == 200 && response.body['code'] == '200') {
+      if (response.statusCode == 200 &&
+          response.body['code']?.toString() == '200') {
         vehicleDocumentModel = VehicleDocumentModel.fromJson(response.body);
         vehicleDocumentList = vehicleDocumentModel?.data ?? [];
         _applyVehicleDocDisplayNames(vehicleDocumentList);
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to load vehicle documents. Please try again.',
           backgroundColor: Colors.red,
@@ -863,24 +871,25 @@ class AuthController extends GetxController implements GetxService {
     required BuildContext context,
     required String mobileNumber,
     required String otpNumber,
-    //reSendOtp
+    String? type,
   }) async {
     update();
 
     Response response = await authRepo.reSendOtp(
       phone: mobileNumber,
+      type: type,
       //  numOtp: otpNumber,
     );
 
-    if (response.body["code"] == "200") {
-      AnimatedTopToast.show(
+    if (response.body["code"]?.toString() == "200") {
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "OTP resent to your mobile number. Please check your messages.",
         backgroundColor: Colors.green,
         icon: Icons.check_circle_rounded,
       );
     } else {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: 'Unable to resend OTP. Please try again.',
         backgroundColor: Colors.red,
@@ -900,10 +909,10 @@ class AuthController extends GetxController implements GetxService {
 
     Response response = await authRepo.logOut();
 
-    if (response.body['code'] == '200') {
+    if (response.body['code']?.toString() == '200') {
       /// await EasyLoading.dismiss();
       logOut();
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "You have been logged out successfully.",
         backgroundColor: Colors.green,
@@ -912,7 +921,7 @@ class AuthController extends GetxController implements GetxService {
 
       Get.offAllNamed(RouteHelper.getmyRideLoginScreen());
     } else if (response.statusCode == 500) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Server error. Please try again later.",
         backgroundColor: Colors.red,
@@ -920,7 +929,7 @@ class AuthController extends GetxController implements GetxService {
       );
     } else {
       // await EasyLoading.dismiss();
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Could not log out. Please try again.",
         backgroundColor: Colors.red,
@@ -950,7 +959,7 @@ class AuthController extends GetxController implements GetxService {
 
     await EasyLoading.dismiss();
 
-    print("API Response: ${response.body}");
+    debugPrint("API Response: ${response.body}");
 
     final body = response.body;
 
@@ -965,7 +974,7 @@ class AuthController extends GetxController implements GetxService {
   authRepo.saveUserToken(tokenDriver ?? "");
   authRepo.saveUserprofileid(userIdDriver ?? "");
 
-  AnimatedTopToast.show(
+  if (context.mounted) AnimatedTopToast.show(
     context: context,
     message: "OTP verified. Welcome to My Ride!",
     backgroundColor: Colors.green,
@@ -978,7 +987,7 @@ else if (code == "401") {
 
   // No token → wrong OTP, not a document-pending response
   if (token.isEmpty) {
-    AnimatedTopToast.show(
+    if (context.mounted) AnimatedTopToast.show(
       context: context,
       message: body?['message'] ?? 'Incorrect OTP. Please try again.',
       backgroundColor: Colors.red,
@@ -1032,7 +1041,7 @@ else if (code == "401") {
   _saveDocsToCache();
 }
 else {
-  AnimatedTopToast.show(
+  if (context.mounted) AnimatedTopToast.show(
     context: context,
     message: 'Invalid or expired OTP. Please try again.',
     backgroundColor: Colors.red,
@@ -1057,7 +1066,7 @@ else {
 
 //       isDocLoading = false;
 
-//       AnimatedTopToast.show(
+//       if (context.mounted) AnimatedTopToast.show(
 //         context: context,
 //         message: "${response.body['message']} ",
 //         backgroundColor: Colors.green,
@@ -1131,7 +1140,7 @@ else {
 
 //       isDocLoading = false;
 //       update();
-//       AnimatedTopToast.show(
+//       if (context.mounted) AnimatedTopToast.show(
 //         context: context,
 //         message: body?['message'] ?? "Documents Under Review",
 //         backgroundColor: Colors.orange,
@@ -1142,7 +1151,7 @@ else {
 //     else {
 //       isDocLoading = false;
 //       update();
-//       AnimatedTopToast.show(
+//       if (context.mounted) AnimatedTopToast.show(
 //         context: context,
 //         message: body?['message'] ?? "Invalid OTP",
 //         backgroundColor: Colors.red,
@@ -1164,38 +1173,46 @@ else {
     String? dob,
     File? profileimage,
   }) async {
-    update();
-
-    Response response = await authRepo.fillPersonalApi(
-      name: name!.trim(),
-      email: email!.trim(),
-      gender: gender!.trim(),
-      dob: dob!.trim(),
-      profile_image: profileimage,
-    );
-
-    if (response.body["code"] == "200") {
-      AnimatedTopToast.show(
-        context: context,
-        message: "Personal information saved successfully.",
-        backgroundColor: Colors.green,
-        icon: Icons.check_circle_rounded,
-      );
-
-      vehicalDocument(context: context);
-
-      await Future.delayed(const Duration(milliseconds: 500));
-    } else {
-      AnimatedTopToast.show(
-        context: context,
-        message: 'Unable to save your information. Please try again.',
-        backgroundColor: Colors.red,
-        icon: Icons.error_rounded,
-      );
+    if (isSubmittingPersonalInfo) {
+      return Response(statusCode: 0, body: {'code': 'busy'});
     }
-
+    isSubmittingPersonalInfo = true;
     update();
-    return response;
+
+    try {
+      Response response = await authRepo.fillPersonalApi(
+        name: name!.trim(),
+        email: email!.trim(),
+        gender: gender!.trim(),
+        dob: dob!.trim(),
+        profile_image: profileimage,
+      );
+
+      if (response.body["code"]?.toString() == "200") {
+        if (context.mounted) AnimatedTopToast.show(
+          context: context,
+          message: "Personal information saved successfully.",
+          backgroundColor: Colors.green,
+          icon: Icons.check_circle_rounded,
+        );
+
+        if (context.mounted) vehicalDocument(context: context);
+
+        await Future.delayed(const Duration(milliseconds: 500));
+      } else {
+        if (context.mounted) AnimatedTopToast.show(
+          context: context,
+          message: 'Unable to save your information. Please try again.',
+          backgroundColor: Colors.red,
+          icon: Icons.error_rounded,
+        );
+      }
+
+      return response;
+    } finally {
+      isSubmittingPersonalInfo = false;
+      update();
+    }
   }
 
   //////==================== Driver Document uploaded ========================///////////
@@ -1222,7 +1239,7 @@ else {
       for (final doc in documents) {
         final file = doc.imageFile;
         if (file != null && !await file.exists()) {
-          AnimatedTopToast.show(
+          if (context.mounted) AnimatedTopToast.show(
             context: context,
             message:
                 "The image for \"${doc.name ?? 'a document'}\" is no longer "
@@ -1245,7 +1262,7 @@ else {
         );
       }).toList();
 
-      print("Uploading Docs Count: ${documentList.length}");
+      debugPrint("Uploading Docs Count: ${documentList.length}");
 
       Response response = await authRepo.driverOploadedDocument(
         documentList: documentList,
@@ -1288,14 +1305,14 @@ else {
         }
         _saveDocsToCache();
 
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Documents uploaded successfully.",
           backgroundColor: Colors.green,
           icon: Icons.check_circle_rounded,
         );
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to upload documents. Please check your details and try again.',
           backgroundColor: Colors.red,
@@ -1308,7 +1325,7 @@ else {
     } catch (e) {
       // await EasyLoading.dismiss();
       debugPrint('uploadDocumentDriver error: $e');
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Failed to upload documents. Please try again.",
         backgroundColor: Colors.red,
@@ -1340,7 +1357,7 @@ else {
     update();
 
     try {
-      print('testing demo ${vehicleStoreId} ${vehicleid}');
+      debugPrint('testing demo $vehicleStoreId $vehicleid');
       List<VehicleDocumentUploadModels> documentLists = documents.map((doc) {
         return VehicleDocumentUploadModels(
           documentId: doc.id.toString(),
@@ -1359,7 +1376,7 @@ else {
           //     : vehicleStoreId.toString(),
         );
       }).toList();
-      print('testinggg |||||| store id ${vehicleStoreId}');
+      debugPrint('testinggg |||||| store id $vehicleStoreId');
 
       Response response = await authRepo.vehicleDocUploaded(
         documentList: documentLists,
@@ -1367,7 +1384,7 @@ else {
 
       // await EasyLoading.dismiss();
 
-      if (response.body["code"] == "200") {
+      if (response.body["code"]?.toString() == "200") {
         // Populate editVehicleDocumentList so they appear immediately in My Documents
         editVehicleDocumentList.clear();
         for (int i = 0; i < documents.length; i++) {
@@ -1400,14 +1417,14 @@ else {
           await authRepo.saveUserprofileid(ApiConstants.userIdSocial);
         }
         _saveDocsToCache();
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Vehicle documents saved successfully.",
           backgroundColor: Colors.green,
           icon: Icons.check_circle_rounded,
         );
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to upload vehicle documents. Please try again.',
           backgroundColor: Colors.red,
@@ -1418,7 +1435,7 @@ else {
       update();
       return response;
     } catch (e) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Failed to upload vehicle documents. Please try again.",
         backgroundColor: Colors.red,
@@ -1452,7 +1469,7 @@ else {
         documentList: documentLists,
       );
 
-      if (response.body != null && response.body["code"] == "200") {
+      if (response.body != null && response.body["code"]?.toString() == "200") {
         for (var doc in editDriverDocumentList) {
           if (doc.status == "rejected") {
             doc.status = "pending";
@@ -1462,14 +1479,14 @@ else {
           }
         }
         _saveDocsToCache();
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Driver documents submitted for review. We will notify you once approved.",
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to update documents. Please check your details and try again.',
           backgroundColor: ColorResources.redbuttoncolor,
@@ -1479,7 +1496,7 @@ else {
 
       return response;
     } catch (e) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Could not submit documents. Please check your connection and try again.",
         backgroundColor: ColorResources.redbuttoncolor,
@@ -1523,7 +1540,7 @@ else {
         documentList: documentLists,
       );
 
-      if (response.body["code"] == "200") {
+      if (response.body["code"]?.toString() == "200") {
         for (var doc in editVehicleDocumentList) {
           if (doc.status == "rejected") {
             doc.status = "pending";
@@ -1533,14 +1550,14 @@ else {
           }
         }
         _saveDocsToCache();
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Vehicle documents submitted for review. We will notify you once approved.",
           backgroundColor: ColorResources.blueeebutton,
           icon: Icons.check_circle_rounded,
         );
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to update vehicle documents. Please check your details and try again.',
           backgroundColor: ColorResources.redbuttoncolor,
@@ -1550,7 +1567,7 @@ else {
 
       return response;
     } catch (e) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: "Could not submit vehicle documents. Please check your connection and try again.",
         backgroundColor: ColorResources.redbuttoncolor,
@@ -1568,11 +1585,12 @@ else {
     update();
     try {
       Response response = await authRepo.vehicalDocument();
-      if (response.statusCode == 200 && response.body['code'] == '200') {
+      if (response.statusCode == 200 &&
+          response.body['code']?.toString() == '200') {
         vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
         vehicleTypeList = vehicleTypeModel?.data ?? [];
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to load vehicle types. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
@@ -1593,11 +1611,12 @@ else {
     update();
     try {
       Response response = await authRepo.vehicalType();
-      if (response.statusCode == 200 && response.body['code'] == '200') {
+      if (response.statusCode == 200 &&
+          response.body['code']?.toString() == '200') {
         vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
         vehicleTypeList = vehicleTypeModel?.data ?? [];
       } else {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to load vehicle brands. Please try again.',
           backgroundColor: ColorResources.redbuttoncolor,
@@ -1644,7 +1663,7 @@ else {
       if (vehicaleimages != null) {
         for (final file in vehicaleimages) {
           if (!await file.exists()) {
-            AnimatedTopToast.show(
+            if (context.mounted) AnimatedTopToast.show(
               context: context,
               message:
                   "One of the selected vehicle images is no longer "
@@ -1690,7 +1709,21 @@ else {
         final data = body['data'];
         vehicleStoreId = data is Map ? (data['id']?.toString() ?? '') : '';
 
-        AnimatedTopToast.show(
+        // Pairs with the log added to getVehicleDetailsApi() — that one
+        // shows what a later GET returns for these fields; this shows what
+        // this exact save's own response echoed back (if it echoes the
+        // saved record at all) right after submit, sent as
+        // chassisnumber/enginenumber/manufactureyear (see the
+        // "postdrivervehicale fields" log a few lines up the stack for
+        // what was actually sent on the wire). Comparing the two log lines
+        // pinpoints whether a mismatch happens at submit, at persistence,
+        // or only shows up later on fetch.
+        debugPrint(
+          '[VehicleInfoSave] sent chassis=$chassisnumber engine=$enginenumber '
+          'year=$manufactureyear -- response data: $data',
+        );
+
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Vehicle information saved successfully.",
           backgroundColor: ColorResources.blueeebutton,
@@ -1698,16 +1731,27 @@ else {
         );
         await Future.delayed(const Duration(milliseconds: 500));
       } else if (body is Map && body['data'] == "401") {
-        AnimatedTopToast.show(
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Unauthorized. Please log in again.",
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
       } else {
-        AnimatedTopToast.show(
+        // A 413 (server rejects the upload as too large) came back as this
+        // same generic message, with the real cause — oversized image
+        // files — completely hidden. Images are now compressed before
+        // upload (see postdrivervehicale()), but calling this out
+        // specifically means a driver hitting it again (e.g. the server's
+        // limit is stricter than expected) gets a message that actually
+        // points at the fix — smaller photos — instead of "just try again"
+        // on a request that will fail identically every time.
+        final message = response.statusCode == 413
+            ? 'The selected vehicle photos are too large to upload. Please retake or choose smaller photos and try again.'
+            : 'Unable to save vehicle information. Please try again.';
+        if (context.mounted) AnimatedTopToast.show(
           context: context,
-          message: 'Unable to save vehicle information. Please try again.',
+          message: message,
           backgroundColor: ColorResources.redbuttoncolor,
           icon: Icons.error_rounded,
         );
@@ -1718,7 +1762,7 @@ else {
       return response;
     } catch (e) {
       debugPrint('vehicaleInfoApi error: $e');
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: 'Unable to save vehicle information. Please check your connection and try again.',
         backgroundColor: ColorResources.redbuttoncolor,
@@ -1802,7 +1846,7 @@ else {
 
     if (response.statusCode == 200) {
     } else if (response.statusCode == 422) {
-      AnimatedTopToast.show(
+      if (context.mounted) AnimatedTopToast.show(
         context: context,
         message: 'Invalid verification code. Please try again.',
         backgroundColor: Colors.red,
@@ -2230,18 +2274,7 @@ else {
     return doc;
   }
 
-  String _buildServerDocUrl(String? file) {
-    if (file == null || file.trim().isEmpty) return '';
-    if (file.startsWith('http://') || file.startsWith('https://')) return file;
-    final path = file.startsWith('/') ? file.substring(1) : file;
-    if (path.startsWith('storage/')) {
-      return '${ApiConstants.imageurl}$path';
-    }
-    final base = ApiConstants.fileUrl.endsWith('/')
-        ? ApiConstants.fileUrl
-        : '${ApiConstants.fileUrl}/';
-    return '$base$path';
-  }
+
 
   void changeStep(int step) {
     currentStep = step;
