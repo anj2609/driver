@@ -47,6 +47,67 @@ class HomeController extends GetxController {
   bool isRingtonePlaying = false;
   bool hasActiveRide = false;
 
+  // Booking ids rideCompletedMarked() has succeeded for, kept permanently
+  // (not on a timer) and persisted so they survive an app restart. Guards
+  // driverBookingActives() below.
+  //
+  // This used to be a single _lastCompletedBookingId honored only within a
+  // 2-minute window, on the theory that a driver-booking-active read landing
+  // shortly after completion could still report the just-finished booking as
+  // "ongoing" because the backend hadn't caught up yet. That assumption is
+  // what broke: `homescreen` is a plain GetPage, so *every* return to Home —
+  // not just the one right after completing a ride — creates a fresh
+  // HomeMapScreen and re-arms its 10s driverBookingActives() check. Any later
+  // revisit past the 2-minute window (or a backend that simply takes longer
+  // than 2 minutes to mark a booking completed — which, given everything else
+  // found wrong with this backend's responses, is not a safe assumption to
+  // make) hit an expired guard and read that stale "ongoing" as real, yanking
+  // the driver straight back into the ride screen for a booking they'd
+  // already been paid for and left — reported as the payment prompt
+  // reappearing "after some time" back on Home.
+  //
+  // Once this app instance has completed a booking, there is no legitimate
+  // reason to ever route back into it again, no matter how long the backend
+  // takes to catch up — so remember it for good instead of on a clock.
+  static const String _completedBookingIdsPrefsKey = 'completed_booking_ids';
+  // Capped so this can't grow without bound over a long-lived install; a
+  // driver is never going to need protection against a completion older than
+  // its most recent few dozen rides.
+  static const int _maxRememberedCompletedBookingIds = 50;
+  final Set<String> _completedBookingIds = <String>{};
+  bool _completedBookingIdsLoaded = false;
+
+  Future<void> _ensureCompletedBookingIdsLoaded() async {
+    if (_completedBookingIdsLoaded) return;
+    _completedBookingIdsLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList(_completedBookingIdsPrefsKey);
+      if (saved != null) _completedBookingIds.addAll(saved);
+    } catch (e) {
+      debugPrint('[CompletedRides] failed to load persisted ids: $e');
+    }
+  }
+
+  Future<void> _rememberCompletedBookingId(String bookingId) async {
+    _completedBookingIds.add(bookingId);
+    // Oldest-first eviction isn't tracked precisely (a Set has no order
+    // guarantee) — approximate is fine here, this is a safety net, not an
+    // audit log.
+    while (_completedBookingIds.length > _maxRememberedCompletedBookingIds) {
+      _completedBookingIds.remove(_completedBookingIds.first);
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _completedBookingIdsPrefsKey,
+        _completedBookingIds.toList(),
+      );
+    } catch (e) {
+      debugPrint('[CompletedRides] failed to persist ids: $e');
+    }
+  }
+
   // IDs of nearby trips that have already triggered the ringtone this
   // online session. A single "has it rung yet" boolean (the old approach)
   // only fires on the empty→non-empty transition — a second rider's
@@ -1562,6 +1623,31 @@ class HomeController extends GetxController {
         debugPrint("ACTIVE STATUS => $status");
         debugPrint("BOOKING ID => $bookingId");
 
+        // This same booking was completed (rideCompletedMarked() succeeded)
+        // by this app instance at some point — if the backend's own "active
+        // ride" record hasn't caught up (or never fully does), this poll can
+        // still report it "accepted"/"ongoing" even though the driver has
+        // already been paid and sent home. `homescreen` is a plain GetPage,
+        // so every return to Home — not just the one right after completing
+        // a ride — re-arms the check that calls this, so a stale read taken
+        // at face value could yank the driver straight back into the ride
+        // screen for a booking they'd already left, at any later point, not
+        // just moments after completion. Once we've completed a booking
+        // ourselves there's no legitimate reason to ever navigate back into
+        // it, so this is checked with no time limit.
+        await _ensureCompletedBookingIdsLoaded();
+        final bool isCompletedBooking =
+            bookingId.isNotEmpty && _completedBookingIds.contains(bookingId);
+
+        if (isCompletedBooking) {
+          debugPrint(
+            "ACTIVE RIDE IGNORED => booking $bookingId was already "
+            "completed by this app; treating this '$status' read as stale "
+            "rather than navigating back into it.",
+          );
+          return;
+        }
+
         ///=============== TRACK RIDE API CALL =================///
         if (bookingId.isNotEmpty) {
           await trackbookingRide(context: Get.context!, bookingId: bookingId);
@@ -1735,6 +1821,13 @@ class HomeController extends GetxController {
       debugPrint('testing mode for completeRide ${response.body?['code']}');
 
       if (_isSuccessResponse(response)) {
+        // Recorded (and persisted) before anything else clears — see
+        // driverBookingActives() for why this booking id needs to stay
+        // remembered permanently, even though every other trace of it is
+        // about to be wiped below. Not awaited: this only writes to
+        // SharedPreferences, and nothing below depends on it having landed.
+        _rememberCompletedBookingId(bookingId);
+
         // Clear saved ride data from SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove(ApiConstants.bookingid);
@@ -1774,6 +1867,29 @@ class HomeController extends GetxController {
         return response;
       } else if (response.body != null &&
           response.body['code']?.toString() == '401') {
+        // Was an unconditional "conflict, stay put" — but this code is
+        // reused across every ride-flow endpoint for "not in the expected
+        // state for this action", and for complete-ride specifically that
+        // can just as easily mean "already completed" (e.g. this exact
+        // call landing twice — a slow first response plus a retry) as it
+        // can mean a genuine different-ride conflict. Silently returning
+        // for *both* meant a driver who tapped "Cash Received" on an
+        // already-completed booking got left stranded on the payment
+        // screen forever, identically to the online-payment "already paid"
+        // case fixed in generateOnlineQr() — same root issue, same fix:
+        // check what the message actually says before assuming conflict.
+        final message = _responseMessage(response);
+        if (_looksAlreadyHandled(message)) {
+          returnToExistingHome();
+          if (isOnline) {
+            startListeningBookings();
+          }
+          update();
+          return Response(
+            statusCode: 200,
+            body: {'code': '200', 'message': message},
+          );
+        }
         hasActiveRide = true;
         // No toast — post-accept ride flow is toast-free by design.
         return response;
@@ -2005,10 +2121,43 @@ class HomeController extends GetxController {
         debugPrint(
           '[Payment] generate-qr-payment rejected: ${backendMessage ?? body}',
         );
+
+        // "Booking already paid" (and the like) is the gateway telling us
+        // this ride is actually *done* — same signal rideCompletedMarked()
+        // already treats as success via _looksAlreadyHandled(). This path
+        // didn't: it showed the backend's own "already paid" message as a
+        // red error toast and then just stopped, leaving the driver
+        // stranded on the ride/payment screen with a completed ride that
+        // never got cleared or navigated away from — indistinguishable
+        // from a real failure. Treat it the same way completion does:
+        // clear ride state and go home instead of erroring out.
+        if (backendMessage != null && _looksAlreadyHandled(backendMessage)) {
+          if (context.mounted) {
+            AnimatedTopToast.show(
+              context: context,
+              message: 'This ride is already paid for.',
+              backgroundColor: ColorResources.blueeebutton,
+              icon: Icons.check_circle_rounded,
+            );
+          }
+          savedTripData = null;
+          savedAcceptData = null;
+          trackRideModel = null;
+          driverBookingActivesModel = null;
+          hasActiveRide = false;
+          stopRingtone();
+          returnToExistingHome();
+          if (isOnline) {
+            startListeningBookings();
+          }
+          update();
+          return null;
+        }
+
         // Prefer the backend's own wording — it is the only thing that can say
-        // *why* (booking already paid, gateway not configured, a validation
-        // failure on a field this app sends). A generic "check your
-        // connection" actively misleads when the network was fine.
+        // *why* (gateway not configured, a validation failure on a field this
+        // app sends, etc). A generic "check your connection" actively
+        // misleads when the network was fine.
         lastQrError = (backendMessage != null && backendMessage.isNotEmpty)
             ? backendMessage
             : 'The payment gateway rejected this request.';
