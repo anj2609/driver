@@ -2,18 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
-import 'package:myridedriverapp/controllers/profile_controller.dart';
 
-import 'package:myridedriverapp/screens/home/ridedetails_screen.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
-import 'package:myridedriverapp/widgets/inapp_navigation_map.dart';
 import 'package:myridedriverapp/widgets/online_payment_sheet.dart';
 import 'package:myridedriverapp/widgets/onlineoffline_custombutton.dart';
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
@@ -37,11 +33,10 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
   bool _isPaymentProcessing = false;
   bool _isPaymentDone = false;
 
-  // Live, route-aware ETA/distance from InAppNavigationMap's turn-by-turn
-  // engine — preferred over controller.estimateDuration/estimateDistance
-  // (a separate, often-empty estimate flow) once available.
-  int? _liveEtaSeconds;
-  double? _liveDistanceMeters;
+  // (_liveEtaSeconds/_liveDistanceMeters lived here to receive turn-by-turn
+  // updates from InAppNavigationMap. This screen no longer renders a map, so
+  // there is nothing feeding or reading them. pickup_screen still uses that
+  // widget for the leg to the passenger.)
 
   // Guards the one-off controller.getRouteCoordinates() call below — that
   // call exists purely to keep the separate "Ride Details" screen (which
@@ -80,46 +75,6 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     }
   }
 
-  /// Drop-off coordinates for this ride, preferring track-booking-ride's own
-  /// figures and falling back to trip-detail.
-  ///
-  /// track-booking-ride frequently returns the booking without usable drop
-  /// coordinates — HomeController.trackbookingRide() already compensates for
-  /// exactly this when it computes the route, reading ProfileController's
-  /// tripDetailsModel instead. That fallback never reached the map, though:
-  /// InAppNavigationMap was handed trackRideModel's raw dropLat/dropLng, and
-  /// when those are null it builds no engine and no destination, so it returns
-  /// a CircularProgressIndicator that nothing will ever clear. The payment
-  /// buttons around it render normally, which is why this looked like "the map
-  /// area is stuck loading" rather than a missing-data problem.
-  ({double? lat, double? lng}) _resolveDropCoordinates(dynamic rideData) {
-    double? lat = rideData?.dropLat;
-    double? lng = rideData?.dropLng;
-
-    final bool unusable =
-        lat == null || lng == null || (lat == 0.0 && lng == 0.0);
-    if (!unusable) return (lat: lat, lng: lng);
-
-    try {
-      final tripData = Get.find<ProfileController>().tripDetailsModel?.data;
-      final double? fallbackLat = tripData?.dropLat;
-      final double? fallbackLng = tripData?.dropLng;
-      if (fallbackLat != null &&
-          fallbackLng != null &&
-          !(fallbackLat == 0.0 && fallbackLng == 0.0)) {
-        return (lat: fallbackLat, lng: fallbackLng);
-      }
-    } catch (_) {
-      // ProfileController not registered — fall through to the null result
-      // below, which the map now renders as a plain map rather than a spinner.
-    }
-
-    debugPrint(
-      '[StartRide] no usable drop coordinates from track-booking-ride or '
-      'trip-detail — navigation map will show without a route',
-    );
-    return (lat: null, lng: null);
-  }
 
   void _fetchRouteForDetailsScreenOnce() {
     if (_didFetchRouteForDetails) return;
@@ -136,13 +91,6 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     );
   }
 
-  String _formatEta(int seconds) {
-    final minutes = (seconds / 60).ceil();
-    if (minutes < 60) return '$minutes min';
-    final hours = minutes ~/ 60;
-    final rem = minutes % 60;
-    return '${hours}h ${rem}m';
-  }
 
   void _setMarkers() {
     markers = {
@@ -342,6 +290,133 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     }
   }
 
+  // Ensures the payment prompt is raised once per ride rather than on every
+  // rebuild — build() runs on every HomeController.update(), which is several
+  // times a second while the location stream is live.
+  bool _paymentPromptShown = false;
+
+  /// Raises the end-of-ride payment prompt.
+  ///
+  /// This replaces the inline Online/Cash buttons that used to sit in a bottom
+  /// sheet over the navigation map. Both are gone from this screen now: the
+  /// fare, the closing message and the payment choice all live here instead.
+  ///
+  /// The dialog closes before either handler runs, so the QR sheet isn't
+  /// stacked on top of it and neither handler has to reason about a dialog it
+  /// didn't open — that coupling is what produced the stranded barrier loaders
+  /// this screen kept getting stuck behind.
+  Future<void> _showPaymentPrompt(
+    HomeController controller,
+    String bookingId,
+    String totalFare,
+  ) async {
+    if (!mounted) return;
+
+    final String? choice = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.check_circle_rounded,
+                size: 46,
+                color: Colors.green.shade600,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'Ride complete',
+              style: PoppinsBold.copyWith(fontSize: 19, color: Colors.black87),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Hope you enjoyed the ride! Collect the fare to finish up.',
+              textAlign: TextAlign.center,
+              style: PoppinsReguler.copyWith(
+                fontSize: 13.5,
+                color: Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: ColorResources.appColor.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    'Amount to collect',
+                    style: PoppinsReguler.copyWith(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '₹ $totalFare',
+                    style: PoppinsBold.copyWith(
+                      fontSize: 27,
+                      color: ColorResources.appColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: CustomPrimaryButton(
+                  text: 'Online Payment',
+                  onTap: () => Navigator.of(dialogCtx).pop('online'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: CustomPrimaryButton(
+                  text: 'Cash Payment',
+                  onTap: () => Navigator.of(dialogCtx).pop('cash'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'online') {
+      await _openOnlinePayment(controller, bookingId);
+    } else {
+      await _completeCashRide(controller, bookingId, totalFare);
+    }
+
+    // A successful payment navigates away on its own (rideCompletedMarked and
+    // OnlinePaymentSheet both call Get.offAllNamed). Still being here means it
+    // failed or the driver backed out, so offer the choice again instead of
+    // stranding them on a screen with no way to collect.
+    if (mounted && !_isPaymentDone) {
+      setState(() => _paymentPromptShown = false);
+    }
+  }
+
   Widget _buildPostPaymentToggle(HomeController controller) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -380,32 +455,23 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
 
           final bookingId = data.data!.bookingId.toString();
           final totalFare = data.data?.totalFare?.toString() ?? '0';
-          final drop = _resolveDropCoordinates(data.data);
+
+          // The Online/Cash buttons and the bottom sheet that held them are
+          // gone from this screen; the fare, the closing message and the
+          // payment choice are raised in a dialog instead (see
+          // _showPaymentPrompt). Fired from a post-frame callback because
+          // build() runs on every HomeController.update() — several times a
+          // second while the location stream is live — and _paymentPromptShown
+          // keeps that to one prompt per ride.
+          if (!_paymentPromptShown && !_isPaymentDone && !_isPaymentProcessing) {
+            _paymentPromptShown = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _showPaymentPrompt(controller, bookingId, totalFare);
+            });
+          }
 
           return Stack(
             children: [
-              // Real turn-by-turn navigation to the drop-off point —
-              // replaces the old bare GoogleMap. Reuses HomeController's
-              // existing GPS stream; doesn't start a second one.
-              Positioned.fill(
-                child: InAppNavigationMap(
-                  destLat: drop.lat,
-                  destLng: drop.lng,
-                  destLabel: 'Drop-off',
-                  onArrived: () => debugPrint('[Nav] Arrived at drop-off'),
-                  // Leaves room for the address card below, which sits at
-                  // the very top like it originally did.
-                  topOffset: 130,
-                  onUpdate: (snapshot) {
-                    if (!mounted) return;
-                    setState(() {
-                      _liveEtaSeconds = snapshot.remainingDurationSeconds;
-                      _liveDistanceMeters = snapshot.remainingDistanceMeters;
-                    });
-                  },
-                ),
-              ),
-
               Positioned(
                 top: 45,
                 left: 16,
@@ -459,211 +525,38 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
                 ),
               ),
 
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + MediaQuery.of(context).padding.bottom),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(28),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black12,
-                        blurRadius: 10,
-                        offset: Offset(0, -3),
-                      ),
-                    ],
+
+              // Shown while a payment is in flight. The dialog has already
+              // closed by this point, so without something here the driver
+              // would be looking at a bare screen with no sign anything is
+              // happening.
+              if (_isPaymentProcessing)
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: Colors.black26,
+                    child: Center(child: PremiumBlurLoader()),
                   ),
-                  child: _isPaymentDone
-                      ? _buildPostPaymentToggle(controller)
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            /// Ride info row
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange.shade100,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.access_time,
-                                        size: 14,
-                                        color: Colors.orange,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        _liveEtaSeconds != null
-                                            ? _formatEta(_liveEtaSeconds!)
-                                            : (controller.estimateDuration.isNotEmpty
-                                                ? controller.estimateDuration
-                                                : '—'),
-                                        style: PoppinsSemiBold.copyWith(
-                                          fontSize: 12,
-                                          color: Colors.orange.shade800,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (_liveDistanceMeters != null)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 5,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue.shade50,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.route_outlined,
-                                          size: 14,
-                                          color: Colors.blue.shade700,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          '${(_liveDistanceMeters! / 1000).toStringAsFixed(1)} km',
-                                          style: PoppinsSemiBold.copyWith(
-                                            fontSize: 12,
-                                            color: Colors.blue.shade800,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: ColorResources.appColor.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    '₹$totalFare',
-                                    style: PoppinsBold.copyWith(
-                                      fontSize: 16,
-                                      color: ColorResources.appColor,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            const SizedBox(height: 10),
-
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.location_on,
-                                  color: Colors.red,
-                                  size: 22,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    '${data.data!.dropaddress}',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: PoppinsReguler.copyWith(
-                                      color: ColorResources.blackcolor11,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                GestureDetector(
-                                  onTap: () async {
-                                    String? id;
-                                    setState(() {
-                                      id = data.data?.bookingId?.toString() ?? "";
-                                      bookingIdStore = data.data?.bookingId?.toString();
-                                    });
-                                    if (isNavigating) return;
-                                    isNavigating = true;
-                                    try {
-                                      await Get.toNamed(
-                                        RouteHelper.getbookingTripDetailsScreen(),
-                                        arguments: {"bookingId": id},
-                                      );
-                                    } finally {
-                                      isNavigating = false;
-                                    }
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: ColorResources.blackcolor11,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      "Ride Details",
-                                      style: PoppinsSemiBold.copyWith(
-                                        color: ColorResources.blackcolor11,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            /// Payment buttons
-                            if (_isPaymentProcessing)
-                              const Center(
-                                child: Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 12),
-                                  child: CircularProgressIndicator(),
-                                ),
-                              )
-                            else
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: CustomPrimaryButton(
-                                      text: 'Online Payment',
-                                      onTap: () => _openOnlinePayment(controller, bookingId),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: CustomPrimaryButton(
-                                      text: 'Cash Payment',
-                                      onTap: () => _completeCashRide(controller, bookingId, totalFare),
-                                    ),
-                                  ),
-                                ],
-                              ),
-
-                            const SizedBox(height: 10),
-                          ],
-                        ),
                 ),
-              ),
+
+              // Payment settled. rideCompletedMarked/OnlinePaymentSheet
+              // normally navigate Home themselves, so this is only visible in
+              // the brief window before that lands — or if it didn't.
+              if (_isPaymentDone)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: EdgeInsets.fromLTRB(
+                        18, 18, 18, 18 + MediaQuery.of(context).padding.bottom),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius:
+                          BorderRadius.vertical(top: Radius.circular(28)),
+                    ),
+                    child: _buildPostPaymentToggle(controller),
+                  ),
+                ),
             ],
           );
         },
