@@ -293,6 +293,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
+import 'package:myridedriverapp/services/road_route.dart';
 
 
 class TripDetailsScreen extends StatefulWidget {
@@ -311,7 +312,42 @@ class TripDetailsScreen extends StatefulWidget {
 class _TripDetailsScreenState
     extends State<TripDetailsScreen> {
 
- 
+  // The actual driven road, per Google Directions — not the straight line
+  // between pickup and drop that used to be drawn here, which can visibly cut
+  // across blocks or terrain no vehicle actually crossed. Fetched once per
+  // booking (see build()) rather than per rebuild, since this is a single map
+  // on a detail screen rather than one of many in a list — the per-row cost
+  // that made a live road-network fetch too expensive to also do there.
+  List<LatLng>? _roadPoints;
+  String? _roadPointsForBookingId;
+  bool _isFetchingRoad = false;
+
+  Future<void> _ensureRoadRoute(String bookingId, LatLng pickup, LatLng drop) async {
+    if (_roadPointsForBookingId == bookingId || _isFetchingRoad) return;
+    _isFetchingRoad = true;
+
+    final route = await RoadRouteService.fetch(
+      originLat: pickup.latitude,
+      originLng: pickup.longitude,
+      destLat: drop.latitude,
+      destLng: drop.longitude,
+    );
+
+    _isFetchingRoad = false;
+    if (!mounted) return;
+
+    if (route != null && route.points.isNotEmpty) {
+      setState(() {
+        _roadPoints = route.points;
+        _roadPointsForBookingId = bookingId;
+      });
+    } else {
+      debugPrint(
+        '[TripDetails] road route fetch failed for booking $bookingId — '
+        'map will show pickup/drop markers with no route line',
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -359,6 +395,13 @@ class _TripDetailsScreenState
             data.dropLat ?? 0,
             data.dropLng ?? 0,
           );
+
+          final String bookingIdStr = data.bookingId.toString();
+          if ((data.pickupLat ?? 0) != 0 && (data.dropLat ?? 0) != 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _ensureRoadRoute(bookingIdStr, pickup, drop);
+            });
+          }
 
           return SingleChildScrollView(
             child: Column(
@@ -462,17 +505,21 @@ class _TripDetailsScreenState
                       ),
                     },
 
-                    polylines: {
-                      Polyline(
-                        polylineId:
-                          PolylineId("route"),
-                        points: [
-                          pickup,
-                          drop
-                        ],
-                        width: 5,
-                      )
-                    },
+                    // The real driven road once _ensureRoadRoute resolves for
+                    // this booking; nothing drawn until then rather than the
+                    // straight line that used to sit here as a placeholder —
+                    // a fabricated route is worse than no route, since it can
+                    // visibly cross terrain no vehicle actually crossed.
+                    polylines: (_roadPointsForBookingId == bookingIdStr &&
+                            _roadPoints != null)
+                        ? {
+                            Polyline(
+                              polylineId: const PolylineId("route"),
+                              points: _roadPoints!,
+                              width: 5,
+                            ),
+                          }
+                        : {},
                   ),
                 ),
 

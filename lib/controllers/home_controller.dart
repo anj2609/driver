@@ -17,6 +17,7 @@ import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
+import 'package:myridedriverapp/services/road_route.dart';
 import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
@@ -1449,6 +1450,23 @@ class HomeController extends GetxController {
               dropLat: dLat,
               dropLng: dLng,
             );
+
+            // Fire-and-forget, cached by booking id — see
+            // _ensureActualTripRoadDistance. Kicked off as early as pickup/drop
+            // are known (ride start) so the real road-network figure is
+            // already cached by the time the driver reaches payment, rather
+            // than making complete-ride/generate-qr-payment wait on a
+            // Directions API call.
+            final String? bookingIdForRoute = rideData?.bookingId?.toString();
+            if (bookingIdForRoute != null) {
+              _ensureActualTripRoadDistance(
+                bookingIdForRoute,
+                pickupLat,
+                pickupLng,
+                dLat,
+                dLng,
+              );
+            }
           }
         } else {
           //  EasyLoading.dismiss();
@@ -1789,26 +1807,81 @@ class HomeController extends GetxController {
 
   // ======= Online Payment — Generate QR & Verify =======
 
+  // Road-network pickup->drop distance, cached per booking so
+  // _actualDistanceForBackend can return it synchronously. Populated by
+  // _ensureActualTripRoadDistance, kicked off as soon as pickup/drop are known
+  // (see trackbookingRide) — well before the driver reaches a payment button,
+  // so the real fetch happens off the critical path instead of adding a
+  // Directions API round trip to complete-ride/generate-qr-payment.
+  String? _actualTripDistanceBookingId;
+  String? _actualTripRoadDistanceKm;
+
+  Future<void> _ensureActualTripRoadDistance(
+    String bookingId,
+    double pickupLat,
+    double pickupLng,
+    double dropLat,
+    double dropLng,
+  ) async {
+    if (_actualTripDistanceBookingId == bookingId &&
+        _actualTripRoadDistanceKm != null) {
+      return;
+    }
+
+    final route = await RoadRouteService.fetch(
+      originLat: pickupLat,
+      originLng: pickupLng,
+      destLat: dropLat,
+      destLng: dropLng,
+    );
+
+    if (route == null) {
+      debugPrint(
+        '[Payment] road-network distance fetch failed for booking '
+        '$bookingId — actual_distance will fall back to a straight-line '
+        'estimate until this succeeds',
+      );
+      return;
+    }
+
+    _actualTripDistanceBookingId = bookingId;
+    _actualTripRoadDistanceKm = route.distanceKm.toStringAsFixed(1);
+    debugPrint(
+      '[Payment] road-network pickup→drop distance cached: '
+      '$_actualTripRoadDistanceKm km for booking $bookingId',
+    );
+  }
+
   /// This trip's tracked distance, in the form the backend expects.
   ///
-  /// Computed fresh from the ride's own pickup and drop coordinates via
-  /// Haversine — not from computedDistance/totaldestance, despite those
-  /// fields' names. Both are continuously overwritten with the distance from
-  /// the *driver's live position* to the drop point (calculateETA/
+  /// Prefers the cached road-network figure from _ensureActualTripRoadDistance
+  /// (the real driving distance, matching what the map now draws). Falls back
+  /// to a Haversine straight-line estimate between pickup and drop only if
+  /// that fetch hasn't completed yet or failed — still specific to this trip's
+  /// actual endpoints, just not road-aware.
+  ///
+  /// Neither of those reads computedDistance/totaldestance any more, despite
+  /// those fields' names: both are continuously overwritten with the distance
+  /// from the *driver's live position* to the drop point (calculateETA/
   /// fetchRouteDistanceDuration are called with the driver's current lat/lng
   /// as the origin, refreshed throughout the ride for the on-screen ETA). By
   /// the time a ride completes the driver's live position is at the drop
   /// location, so that figure collapses to ~0 — confirmed from a device log
   /// showing actual_distance=0.0 sent to generate-qr-payment on a real,
-  /// multi-hundred-km booking. The same value feeds complete-ride, so this
-  /// wasn't only a QR-generation bug; every completed ride has been reporting
-  /// close to zero distance.
-  ///
-  /// Falls back to computedDistance/totaldestance only if pickup or drop
-  /// coordinates are missing, then to '0', so the field the backend requires
-  /// is never omitted.
+  /// multi-hundred-km booking. The same value fed complete-ride too, so this
+  /// wasn't only a QR-generation bug; every completed ride had been reporting
+  /// close to zero distance. They're now only a last-resort fallback, used if
+  /// this trip's pickup/drop coordinates are missing entirely.
   String _actualDistanceForBackend() {
     final rideData = trackRideModel?.data;
+    final String? bookingId = rideData?.bookingId?.toString();
+
+    if (bookingId != null &&
+        _actualTripDistanceBookingId == bookingId &&
+        _actualTripRoadDistanceKm != null) {
+      return _actualTripRoadDistanceKm!;
+    }
+
     final double? pickupLat = rideData?.lat;
     final double? pickupLng = rideData?.lng;
     final double? dropLat = rideData?.dropLat;
@@ -1823,6 +1896,10 @@ class HomeController extends GetxController {
       final double distanceKm =
           calculateDistance(pickupLat, pickupLng, dropLat, dropLng);
       if (!distanceKm.isNaN && !distanceKm.isInfinite) {
+        debugPrint(
+          '[Payment] road-network distance not cached yet for booking '
+          '$bookingId — sending straight-line estimate instead',
+        );
         return distanceKm.toStringAsFixed(1);
       }
     }

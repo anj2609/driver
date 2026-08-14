@@ -195,17 +195,19 @@ class _EarningActivityScreenState extends State<EarningActivityScreen> {
                                     ),
                                   },
 
-                                  polylines: {
-                                    Polyline(
-                                      polylineId: const PolylineId("route"),
-                                      points: [
-                                        LatLng(pickupLat, pickupLng),
-                                        LatLng(dropLat, dropLng),
-                                      ],
-                                      color: const Color(0xff00AEEF),
-                                      width: 4,
-                                    ),
-                                  },
+                                  // No route line drawn here on purpose. This
+                                  // is one live map per row in a scrolling
+                                  // list — fetching the real road-network
+                                  // route for every row at once would be N
+                                  // Directions API calls and N routes computed
+                                  // simultaneously just to render a list, and
+                                  // the straight line this used to draw was
+                                  // actively misleading (a fabricated path,
+                                  // not the road actually driven). The real
+                                  // route is one tap away: this row opens
+                                  // TripDetailsScreen, which fetches and draws
+                                  // it once, for one map.
+                                  polylines: const {},
 
                                   zoomControlsEnabled: false,
                                   myLocationButtonEnabled: false,
