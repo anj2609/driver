@@ -16,6 +16,7 @@ import 'package:myridedriverapp/widgets/custom_loader.dart';
 import 'package:myridedriverapp/widgets/inapp_navigation_map.dart';
 import 'package:myridedriverapp/widgets/online_payment_sheet.dart';
 import 'package:myridedriverapp/widgets/onlineoffline_custombutton.dart';
+import 'package:myridedriverapp/widgets/toaster_animation.dart';
 
 class StartDriverRideScreen extends StatefulWidget {
   const StartDriverRideScreen({super.key});
@@ -170,20 +171,41 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     if (_isPaymentProcessing) return;
     setState(() => _isPaymentProcessing = true);
 
+    // No Get.dialog() barrier loader — _isPaymentProcessing already swaps the
+    // payment buttons for a CircularProgressIndicator in build(), so this was
+    // a second, redundant loader whose only real contribution was getting
+    // stuck.
+    //
+    // Dismissing it depended on `Get.isDialogOpen`, GetX's own bookkeeping,
+    // which is not reliable here: it isn't cleared by a stack replacement
+    // (rideCompletedMarked -> Get.offAllNamed), and it can still read false in
+    // the window before the dialog route has actually been pushed. Whenever it
+    // read false the Get.back() was skipped, leaving a non-dismissible barrier
+    // over the screen with no way out but restarting the app — the infinite
+    // loading reported on "Online Payment".
     try {
-      Get.dialog(
-        const Center(child: PremiumBlurLoader()),
-        barrierDismissible: false,
-      );
-
       final qrData = await controller.generateOnlineQr(
         context: context,
         bookingId: bookingId,
       );
 
-      if (mounted && (Get.isDialogOpen ?? false)) Get.back();
+      if (qrData == null) {
+        // generateOnlineQr() returns null for every failure and shows nothing
+        // itself, so without this the driver tapped the button, watched a
+        // spinner, and got nothing back with no reason given.
+        if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: "Couldn't create the payment QR. Please check your "
+                "connection and try again.",
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
+        return;
+      }
 
-      if (qrData != null && context.mounted) {
+      if (context.mounted) {
         await showModalBottomSheet(
           context: context,
           isScrollControlled: true,
@@ -204,8 +226,15 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
         // "payment done" toggle view for a payment that never happened.
       }
     } catch (e) {
-      if (mounted && (Get.isDialogOpen ?? false)) Get.back();
       debugPrint('Online payment error: $e');
+      if (context.mounted) {
+        AnimatedTopToast.show(
+          context: context,
+          message: "Couldn't start the online payment. Please try again.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
     } finally {
       if (mounted) setState(() => _isPaymentProcessing = false);
     }
@@ -282,12 +311,13 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     // Home itself (Get.offAllNamed), so there's nothing further to do here.
     bool completed = false;
 
+    // Barrier dialog removed here too — same reason as _openOnlinePayment
+    // above, and this path is worse for it: rideCompletedMarked() ends in
+    // Get.offAllNamed(), which replaces the stack without clearing GetX's
+    // isDialogOpen flag, so the guarded Get.back() below was skipped exactly
+    // when a loader had been left behind. _isPaymentProcessing covers the
+    // loading state on its own.
     try {
-      Get.dialog(
-        const Center(child: PremiumBlurLoader()),
-        barrierDismissible: false,
-      );
-
       final response = await controller.rideCompletedMarked(
         context: context,
         bookingId: bookingId,
@@ -303,14 +333,6 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
     } catch (e) {
       debugPrint('Cash payment error: $e');
     } finally {
-      // On success, rideCompletedMarked() already called Get.offAllNamed()
-      // above, which unmounts this screen — guarding on `mounted` here
-      // means we never fire a stray Get.back() against the Home screen
-      // that just replaced this one (GetX's isDialogOpen flag doesn't get
-      // cleared by that kind of stack replacement, only by a normal pop).
-      if (mounted && (Get.isDialogOpen ?? false)) {
-        Get.back();
-      }
       if (mounted) {
         setState(() {
           _isPaymentProcessing = false;
