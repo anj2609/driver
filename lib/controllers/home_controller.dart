@@ -1301,7 +1301,7 @@ class HomeController extends GetxController {
         // uncomfortably long. Awaiting it here — bounded, so a slow response
         // can't hang the accept flow itself — means the destination screen
         // has its data already in hand for its very first frame in the
-        // common case. Capped at 6s deliberately shorter than the pickup
+        // common case. Capped at 3s, tight enough that the accept-loading dialog reads as brief rather than a stall, and deliberately shorter than the pickup
         // screen's own 8s retry-UI reveal (see pickup_screen.dart), so a
         // genuinely slow/failing fetch still falls through to navigate and
         // that screen's own retry affordance takes over, rather than making
@@ -1311,10 +1311,10 @@ class HomeController extends GetxController {
             await trackbookingRide(
               context: context,
               bookingId: bookingId,
-            ).timeout(const Duration(seconds: 6));
+            ).timeout(const Duration(seconds: 3));
           } catch (e) {
             debugPrint(
-              '[Accept] trackbookingRide did not complete within 6s '
+              '[Accept] trackbookingRide did not complete within 3s '
               '($e) — proceeding to the pickup screen anyway; its own '
               'retry UI will take over from here.',
             );

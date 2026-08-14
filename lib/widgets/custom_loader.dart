@@ -1,4 +1,3 @@
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -103,62 +102,65 @@ class PremiumBlurLoader extends StatelessWidget {
       canPop: true,
       child: Material(
         type: MaterialType.transparency,
+        // Was IgnorePointer -> BackdropFilter(ImageFilter.blur(...)) ->
+        // Container. A full-screen Gaussian blur forces a save-layer plus a
+        // blur pass over everything behind it, redone every single frame the
+        // dialog is up. Used in 23 places across the app, that's real,
+        // avoidable jank on mid/low-end Android hardware, and it's exactly
+        // the kind of cost that makes a "brief loading moment" (e.g. the
+        // accept-ride dialog) feel sluggish to even appear rather than
+        // snappy. A flat semi-transparent scrim gives the same dimmed-
+        // background look for a fraction of the GPU cost.
         child: IgnorePointer(
           ignoring: false,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: 4,
-              sigmaY: 4,
-            ),
+          child: Container(
+            width: double.infinity,
+            height: double.infinity,
+            color: Colors.black.withValues(alpha: 0.35),
+            alignment: Alignment.center,
             child: Container(
-              width: double.infinity,
-              height: double.infinity,
-              color: Colors.black.withValues(alpha: 0.15),
-              alignment: Alignment.center,
-              child: Container(
-                width: 150,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 20,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: const [
-                    BoxShadow(
-                      blurRadius: 20,
-                      spreadRadius: 2,
-                      color: Colors.black12,
+              width: 150,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 20,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: const [
+                  BoxShadow(
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                    color: Colors.black12,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SpinKitThreeBounce(
+                    color: Color(0xFF123EBC),
+                    size: 28,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    "Loading...",
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SpinKitThreeBounce(
-                      color: Color(0xFF123EBC),
-                      size: 28,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Loading...",
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
+                  ),
+                  const SizedBox(height: 12),
 
-                    /// Cancel / Back Button
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        // OR Get.back();
-                      },
-                      child:  Text("Cancel", style: TextStyle(color: Colors.red),),
-                    ),
-                  ],
-                ),
+                  /// Cancel / Back Button
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      // OR Get.back();
+                    },
+                    child: Text("Cancel", style: TextStyle(color: Colors.red)),
+                  ),
+                ],
               ),
             ),
           ),
