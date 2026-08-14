@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -8,9 +7,6 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
-import 'package:myridedriverapp/controllers/profile_controller.dart';
-import 'package:myridedriverapp/model/acceptride_details_model.dart';
-import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
 
 import 'package:myridedriverapp/model/trip_model.dart';
 import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
@@ -18,7 +14,6 @@ import 'package:myridedriverapp/widgets/custom_loader.dart';
 
 import 'package:myridedriverapp/widgets/custum_header.dart';
 import 'package:myridedriverapp/widgets/onlineoffline_custombutton.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeMapScreen extends StatefulWidget {
   const HomeMapScreen({super.key});
@@ -66,7 +61,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   @override
   void initState() {
     super.initState();
-    startBookingPolling();
     checkLocationPermission();
     activeRideTimer = Timer(const Duration(seconds: 10), () async {
       if (!mounted) return;
@@ -79,66 +73,21 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     });
   }
 
-  Timer? bookingTimer;
-  bool isPollingStarted = false;
-  bool isApiCalling = false;
-
-  Future<void> startBookingPolling() async {
-    if (isPollingStarted) return;
-
-    final prefs = await SharedPreferences.getInstance();
-
-    String? tripJson = prefs.getString(ApiConstants.tripKey);
-    String? acceptJson = prefs.getString(ApiConstants.acceptRideKey);
-
-    if (tripJson != null && acceptJson != null) {
-      NewBookingNearByModel tripData = NewBookingNearByModel.fromJson(
-        jsonDecode(tripJson),
-      );
-
-      AcceptRideModel acceptData = AcceptRideModel.fromJson(
-        jsonDecode(acceptJson),
-      );
-
-      debugPrint("Trip Id: ${tripData.id}");
-      debugPrint("Accept Ride Id: ${acceptData.data!.otp}");
-    } else {
-      debugPrint("No ride data found");
-    }
-
-    isPollingStarted = true;
-
-    bookingTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
-      // Prevent multiple API calls at same time
-      if (isApiCalling) return;
-
-      try {
-        isApiCalling = true;
-
-        final prefs = await SharedPreferences.getInstance();
-        String? userId = prefs.getString(ApiConstants.profileid);
-
-        if (userId == null || userId.isEmpty) {
-          return;
-        }
-
-        final homeController = Get.find<HomeController>();
-        final profileController = Get.find<ProfileController>();
-
-        // Profile API refresh
-
-        //await homeController.driverBookingActives();
-        await homeController.cancleRideReason();
-
-        // Profile API
-        profileController.fetchProfile();
-      } catch (e) {
-        debugPrint("Polling Error: $e");
-      } finally {
-        isApiCalling = false;
-      }
-    });
-  }
+  // (startBookingPolling/bookingTimer/stopBookingPolling used to live here —
+  // a 60s Timer.periodic that read tripJson/acceptJson from prefs purely to
+  // debugPrint them, then called cancleRideReason() and fetchProfile() on
+  // every tick, for as long as this screen — the driver's home screen — was
+  // open, online or not.
+  //
+  // Both calls were pure waste. cancleRideReason() fetches
+  // cancellation-type-list, static reference data (the list of cancel
+  // reasons) that's already fetched once at HomeController init and again
+  // on-demand right before every cancel dialog — a 60s poll of it forever in
+  // the background added nothing. fetchProfile() hits the same get-profile
+  // endpoint HomeController._pollNearbyBookings() already calls every 3s
+  // while online (see home_controller.dart) — a completely redundant call
+  // to the same data on a slower clock, and one that kept running even while
+  // offline, when nothing needed it at all.)
 
   void _showLocationDialog() {
     showDialog(
@@ -286,23 +235,9 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     startLocationStream();
   }
 
-  void stopBookingPolling() {
-    bookingTimer?.cancel();
-    bookingTimer = null;
-    isPollingStarted = false;
-  }
-
-  // @override
-  // void dispose() {
-  //   stopBookingPolling();
-  //   super.dispose();
-  // }
-
   @override
   void dispose() {
-    stopBookingPolling();
     _positionStream?.cancel();
-    bookingTimer?.cancel();
     activeRideTimer?.cancel();
     super.dispose();
   }

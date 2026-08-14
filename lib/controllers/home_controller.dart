@@ -681,6 +681,15 @@ class HomeController extends GetxController {
   // place.
   bool _isPollingNearbyBookings = false;
 
+  // Cache for the is_busy pre-check below — see its comment for why this
+  // exists. 15s, i.e. one re-check per five poll cycles: long enough to cut
+  // the extra get-profile call by 80%, short enough that a driver who just
+  // got busy is skipped from new-booking-list within one cancellation-worthy
+  // window rather than riding on a minute-old value.
+  static const Duration _busyCheckInterval = Duration(seconds: 15);
+  DateTime? _lastBusyCheckAt;
+  bool _cachedIsBusy = false;
+
   Future<void> _pollNearbyBookings() async {
     if (!isOnline) return;
     if (_isPollingNearbyBookings) return;
@@ -698,21 +707,37 @@ class HomeController extends GetxController {
       // hiccup, with nothing logged to say why. A driver hitting this on
       // most/every cycle would see their incoming-request card simply never
       // appear, indistinguishable from there being no nearby riders at all.
-      try {
-        final profileRes = await homeRepo.getDriverProfile();
-        if (profileRes.statusCode == 200 && profileRes.body != null) {
-          final profileData = profileRes.body['data'];
-          final isBusy = profileData?['is_busy'];
-          if (isBusy == true || isBusy == 1 || isBusy?.toString() == '1') {
-            debugPrint('Driver is_busy — skipping new-booking-list poll');
-            return;
+      //
+      // Only re-fetched every _busyCheckInterval rather than on every single
+      // 3s tick — this alone was doubling the request rate of the whole
+      // dispatch loop (a full get-profile call purely to read one field,
+      // back-to-back with the new-booking-list call it gates) for as long as
+      // any driver was online. It's only a secondary guard, so a slightly
+      // stale cached value between real checks costs nothing the backend
+      // wasn't already covering.
+      final bool needsBusyCheck = _lastBusyCheckAt == null ||
+          DateTime.now().difference(_lastBusyCheckAt!) >= _busyCheckInterval;
+      if (needsBusyCheck) {
+        try {
+          final profileRes = await homeRepo.getDriverProfile();
+          _lastBusyCheckAt = DateTime.now();
+          if (profileRes.statusCode == 200 && profileRes.body != null) {
+            final profileData = profileRes.body['data'];
+            final isBusy = profileData?['is_busy'];
+            _cachedIsBusy =
+                isBusy == true || isBusy == 1 || isBusy?.toString() == '1';
           }
+        } catch (e) {
+          debugPrint(
+            '[LocationPipeline] is_busy check failed ($e) — proceeding with '
+            'new-booking-list poll using the last known value instead of '
+            'silently skipping it',
+          );
         }
-      } catch (e) {
-        debugPrint(
-          '[LocationPipeline] is_busy check failed ($e) — proceeding with '
-          'new-booking-list poll anyway instead of silently skipping it',
-        );
+      }
+      if (_cachedIsBusy) {
+        debugPrint('Driver is_busy — skipping new-booking-list poll');
+        return;
       }
 
       try {
@@ -860,6 +885,11 @@ class HomeController extends GetxController {
   void stopListeningBookings() {
     _dummyTimer?.cancel();
     _dummyTimer = null;
+    // So a stale busy=true from just before going offline (e.g. finishing a
+    // ride) can't survive into the next online session and silently suppress
+    // new-booking-list until the 15s cache would have expired anyway.
+    _lastBusyCheckAt = null;
+    _cachedIsBusy = false;
   }
 
   void returnToExistingHome() {
