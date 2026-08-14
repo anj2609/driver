@@ -1493,11 +1493,26 @@ class HomeController extends GetxController {
   /////// ========================= Track Booking Ride ========================/////
   ////trackBookingRide
 
+  // Set on a failed/errored trackbookingRide() call, cleared at the start of
+  // the next one. update() already runs unconditionally at the end of that
+  // function regardless of outcome, so pickup_screen's GetBuilder *does*
+  // rebuild on failure — but with trackRideModel still null, that rebuild is
+  // visually identical to still-loading, since nothing distinguished "still
+  // trying" from "gave up." Combined with this app's global 60s HTTP timeout
+  // (api_client.dart), a slow/flaky connection right at accept time — exactly
+  // when several other calls (get-profile, driver-location-update, the
+  // dispatch poll teardown) are also firing — could leave the driver looking
+  // at a bare spinner for up to a minute with zero indication anything was
+  // wrong, and no way to retry short of leaving the screen. This flag lets
+  // pickup_screen show a real retry affordance well before that.
+  bool trackRideLoadFailed = false;
+
   Future<Response?> trackbookingRide({
     required BuildContext context,
     String? bookingId,
   }) async {
     // EasyLoading.show(status: "Please wait...");
+    trackRideLoadFailed = false;
     update();
 
     Response? response;
@@ -1562,6 +1577,11 @@ class HomeController extends GetxController {
         } else {
           //  EasyLoading.dismiss();
           debugPrint(trackRideModel?.message ?? "Something went wrong");
+          // Backend responded (HTTP 200) but its own inner code signals a
+          // failure — trackRideModel is non-null, but pickup_screen also
+          // requires trackRideModel.data, which a response shaped like this
+          // won't have populated. Same hang as the two branches below.
+          trackRideLoadFailed = true;
 
           // Get.snackbar(
           //   '',
@@ -1574,6 +1594,7 @@ class HomeController extends GetxController {
       } else {
         //   EasyLoading.dismiss();
         debugPrint("ERROR ===> Invalid server response");
+        trackRideLoadFailed = true;
         // Get.snackbar(
         //   '',
         //   "Invalid server response",
@@ -1584,6 +1605,7 @@ class HomeController extends GetxController {
     } catch (e) {
       ///EasyLoading.dismiss();
       debugPrint("ERROR ===> $e");
+      trackRideLoadFailed = true;
 
       // Get.snackbar(
       //   '',

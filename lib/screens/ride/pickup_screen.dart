@@ -700,11 +700,41 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
   final TextEditingController _otpController = TextEditingController();
 
+  // This screen renders nothing but a bare CircularProgressIndicator until
+  // controller.trackRideModel loads — and startTimer() below already retries
+  // that fetch every 15s in the background, silently, with no feedback of any
+  // kind. If the first attempt (fired from acceptRidesTrip right when this
+  // screen is pushed) is slow or fails — realistic exactly at accept time,
+  // when several other calls (get-profile, driver-location-update, the
+  // dispatch poll teardown) are also firing, and this app's HTTP client has a
+  // 60s timeout — the driver sees an unexplained spinner with no way to tell
+  // "still loading" from "stuck," and no way to force a retry short of
+  // leaving the screen. This surfaces that after a few seconds instead of
+  // leaving it invisible.
+  bool _showLoadRetry = false;
+  Timer? _loadRetryRevealTimer;
+
   @override
   void initState() {
     super.initState();
     _initLocation();
     startTimer();
+    _loadRetryRevealTimer = Timer(const Duration(seconds: 8), () {
+      if (!mounted) return;
+      final loaded = Get.find<HomeController>().trackRideModel?.data != null;
+      if (!loaded) setState(() => _showLoadRetry = true);
+    });
+  }
+
+  Future<void> _retryLoadRideDetails() async {
+    final controller = Get.find<HomeController>();
+    if (mounted) setState(() => _showLoadRetry = false);
+    final prefs = await SharedPreferences.getInstance();
+    final bookingId = prefs.getString("booking_id");
+    await controller.trackbookingRide(context: context, bookingId: bookingId);
+    if (!mounted) return;
+    final loaded = controller.trackRideModel?.data != null;
+    if (!loaded) setState(() => _showLoadRetry = true);
   }
 
   Future<void> _initLocation() async {
@@ -784,6 +814,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   void dispose() {
     positionStream?.cancel();
     _timer?.cancel();
+    _loadRetryRevealTimer?.cancel();
     super.dispose();
   }
 
@@ -845,6 +876,43 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
           final data = controller.trackRideModel;
 
           if (data == null || data.data == null) {
+            // controller.trackRideLoadFailed only reflects the *first*
+            // attempt (fired the instant this screen is pushed) failing
+            // outright; _showLoadRetry additionally catches it just being
+            // slow — the two together mean the driver is never staring at an
+            // unexplained spinner for more than about 8 seconds.
+            if (controller.trackRideLoadFailed || _showLoadRetry) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        color: Colors.grey.shade500,
+                        size: 44,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        "Couldn't load this ride's details. "
+                        "Check your connection and try again.",
+                        textAlign: TextAlign.center,
+                        style: PoppinsReguler.copyWith(
+                          fontSize: 14,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      ElevatedButton(
+                        onPressed: _retryLoadRideDetails,
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
             return const Center(child: CircularProgressIndicator());
           }
 
