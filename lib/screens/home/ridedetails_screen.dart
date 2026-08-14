@@ -144,20 +144,36 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
                   ? acceptData.data!.totalFare!
                   : homeController.estimatePrice;
 
-              final String distance = (acceptData.data?.distance?.isNotEmpty ?? false)
+              // "Present" has to mean more than "not an empty string" here.
+              // track-booking-ride returns these as numbers, and the model
+              // stringifies whatever it gets — so a booking the backend
+              // hasn't priced/measured yet arrives as the string "0", which
+              // is non-empty and therefore beat every fallback below. The
+              // screen then showed a confident "0 km" / "0" instead of
+              // falling through to the estimate, which is the ETA-reads-zero
+              // complaint on this screen.
+              bool hasValue(String? s) =>
+                  s != null && s.isNotEmpty && (double.tryParse(s) ?? 0) > 0;
+
+              final String distance = hasValue(acceptData.data?.distance)
                   ? acceptData.data!.distance!
                   : homeController.estimateDistance;
 
-              final String rawDuration = (acceptData.data?.time?.isNotEmpty ?? false)
+              final String rawDuration = hasValue(acceptData.data?.time)
                   ? acceptData.data!.time!
                   : homeController.estimateDuration;
 
-              final String distanceText = distance.isNotEmpty
-                  ? '$distance km' : '—';
-              // estimateDuration already contains "3 mins" format
-              final String durationText = rawDuration.isNotEmpty
-                  ? rawDuration
-                  : '—';
+              final String distanceText =
+                  hasValue(distance) ? '$distance km' : '—';
+              // The backend's `time` is a bare number of minutes, while
+              // estimateDuration already arrives formatted ("3 mins") — so
+              // only append the unit to the bare one, or this read "2856"
+              // with no indication of what it counted.
+              final String durationText = rawDuration.isEmpty
+                  ? '—'
+                  : (double.tryParse(rawDuration) != null
+                      ? '$rawDuration min'
+                      : rawDuration);
 
               return SingleChildScrollView(
                 padding: EdgeInsets.all(width * 0.04),

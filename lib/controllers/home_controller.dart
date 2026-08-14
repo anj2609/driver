@@ -237,8 +237,24 @@ class HomeController extends GetxController {
     cancleRideReason();
   }
 
+  // True once onClose() has run. GetX never reuses a closed instance — with
+  // fenix it builds a brand new one — so this is a permanent, one-way "I am
+  // the orphan, not the live controller" marker.
+  //
+  // Cancelling the timers below stops future ticks, but it cannot unwind a
+  // _pollNearbyBookings() that is already parked on an await. That cycle
+  // resumes after onClose and runs to completion against a controller nothing
+  // is listening to: its update() reaches no widget, but playRingtone() still
+  // makes real noise. That is the ringtone-without-a-card the device log
+  // shows. The registration is permanent now (see get_di.dart) so this should
+  // no longer be reachable at all — kept as a cheap, non-negotiable backstop,
+  // since a ghost that can still ring is precisely the failure that is
+  // invisible in code review and obvious to a driver.
+  bool _isClosed = false;
+
   @override
   void onClose() {
+    _isClosed = true;
     _autoUpdateTimer?.cancel();
     positionStream?.cancel();
     _locationRetryTimer?.cancel();
@@ -752,6 +768,7 @@ class HomeController extends GetxController {
   bool _cachedIsBusy = false;
 
   Future<void> _pollNearbyBookings() async {
+    if (_isClosed) return;
     if (!isOnline) return;
     if (_isPollingNearbyBookings) return;
     _isPollingNearbyBookings = true;
@@ -807,6 +824,10 @@ class HomeController extends GetxController {
           'driverLat=$latitude driverLng=$longitude',
         );
         Response response = await homeRepo.newBookingNearByMe();
+
+        // The await above is exactly where a cycle can outlive onClose().
+        // Bail before touching any state or the ringtone — see _isClosed.
+        if (_isClosed) return;
 
         // CONFIRMED from a real device log: this endpoint's success key is
         // "status" ("status":"200"), not "code" like every other endpoint
@@ -1036,6 +1057,8 @@ class HomeController extends GetxController {
   }
 
   Future<void> playRingtone() async {
+    // An orphaned instance must never be audible — see _isClosed.
+    if (_isClosed) return;
     if (isRingtonePlaying) return;
 
     isRingtonePlaying = true;
@@ -2676,9 +2699,22 @@ class HomeController extends GetxController {
   String? totaldestance = '';
   String totaltime = '';
 
-  /// Computed values from Google Directions API (accurate route-based)
+  /// Computed values from Google Directions API (accurate route-based).
+  ///
+  /// WARNING: written by three callers with three different meanings
+  /// (driver→pickup, pickup→drop, driver→destination) — see the note in
+  /// [_calculateETAFallback]. Fine for "roughly how far is this trip";
+  /// useless as a live ETA. Use [etaToDestinationMinutes] for that.
   String computedDistance = '';
   String computedDuration = '';
+
+  /// Live "driver → wherever they are currently headed", in whole minutes /
+  /// km. Written only by [_calculateETAFallback], which both ride screens
+  /// re-run against their own current destination (pickup while heading to
+  /// the passenger, drop-off once the ride is underway), so it always means
+  /// the same thing no matter who reads it.
+  String etaToDestinationMinutes = '';
+  String distanceToDestinationKm = '';
 
   /// Estimate ride data from /api/estimate-ride-list
   String estimatePrice = '';
@@ -2813,6 +2849,22 @@ class HomeController extends GetxController {
 
     final newDistance = distance.toStringAsFixed(1);
     final newTime = timeMinutes.round().toString();
+
+    // Dedicated, unambiguous copy of "driver → wherever they're currently
+    // headed", written ONLY here.
+    //
+    // computedDistance/computedDuration below cannot be trusted by any
+    // screen, because three different calculations all write those same two
+    // fields with three different meanings: getRouteCoordinates() writes
+    // driver→pickup, fetchRouteDistanceDuration() writes pickup→drop, and
+    // this writes driver→destination. Whichever ran most recently wins. In
+    // practice pickup_screen's 15s timer re-runs getRouteCoordinates(driver→
+    // pickup) forever, so once the driver reaches the passenger those fields
+    // are pinned at "0.0"/"0" — and every screen reading them shows a 0 ETA
+    // for the rest of the ride, including the leg to the drop-off. That is
+    // the "ETA is 0 everywhere" report.
+    etaToDestinationMinutes = newTime;
+    distanceToDestinationKm = newDistance;
 
     // Guard against a no-op update(): pickup_screen.dart calls calculateETA()
     // from a postFrameCallback on every single build, and calculateETA used

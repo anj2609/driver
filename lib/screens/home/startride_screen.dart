@@ -447,9 +447,14 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
           // flow, per acceptride_details_model.dart). Fixed to the actual
           // destination: dropLat/dropLng.
           WidgetsBinding.instance.addPostFrameCallback((_) {
+            // Live stream position first — driverLatitude here is a single
+            // getCurrentPosition() from initState that is never refreshed,
+            // so it froze the ETA at the moment the ride started and left it
+            // unwritten entirely whenever that one call failed. Same fix as
+            // pickup_screen; see the note there.
             controller.calculateETA(
-              driverLat: driverLatitude,
-              driverLng: driverLongitude,
+              driverLat: controller.latitude ?? driverLatitude,
+              driverLng: controller.longitude ?? driverLongitude,
               userLat: data.data!.dropLat,
               userLng: data.data!.dropLng,
             );

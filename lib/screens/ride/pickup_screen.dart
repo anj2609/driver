@@ -731,19 +731,48 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   }
 
   void startTimer() {
-    _timer = Timer.periodic(const Duration(seconds: 15), (timer) async {
+    // Two cadences, because this timer serves two very different jobs.
+    //
+    // Once the ride is loaded, 15s is the right refresh rate. But it was also
+    // the *first-load* retry — and acceptRidesTrip() only waits 3s for
+    // track-booking-ride before pushing this screen anyway. So any fetch
+    // slower than 3s (routine on this backend: the accept burst fires
+    // alongside get-profile and driver-location-update, on a client with a
+    // 60s timeout) dropped the driver onto "Loading ride details..." and then
+    // left it spinning for a further 15 seconds with nothing in flight. That
+    // dead wait is the reported "takes a lot of time and the loader keeps
+    // running" — the request wasn't slow, nothing was asking.
+    //
+    // Retry fast while there is nothing to show, then settle into the normal
+    // refresh rate once it lands.
+    _scheduleTick(const Duration(milliseconds: 1500));
+  }
+
+  void _scheduleTick(Duration interval) {
+    _timer?.cancel();
+    _timer = Timer.periodic(interval, (timer) async {
       if (!mounted) return;
+
+      final controller = Get.find<HomeController>();
+      final bool wasLoaded = controller.trackRideModel?.data != null;
 
       final prefs = await SharedPreferences.getInstance();
       String? bookingId = prefs.getString("booking_id");
-      final controller = Get.find<HomeController>();
+      if (!mounted) return;
+
       Get.find<ProfileController>().tripRideDetailsApi(
         context: context,
         bookingid: bookingId,
       );
 
       await controller.trackbookingRide(context: context, bookingId: bookingId);
+      if (!mounted) return;
       final track = controller.trackRideModel;
+
+      // First successful load — drop back to the slower refresh cadence.
+      if (!wasLoaded && track?.data != null) {
+        _scheduleTick(const Duration(seconds: 15));
+      }
 
       if (track == null || track.data == null) return;
       if (driverLatitude == null || driverLongitude == null) return;
@@ -947,9 +976,20 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
           }
 
           WidgetsBinding.instance.addPostFrameCallback((_) {
+            // controller.latitude/longitude first, driverLatitude second.
+            //
+            // driverLatitude is a single Geolocator.getCurrentPosition()
+            // taken in initState and never touched again, so feeding it here
+            // pinned the ETA to wherever the driver happened to be when this
+            // screen opened — it could not count down as they drove. And if
+            // that one-shot call failed (permission prompt still up, no fix
+            // yet, timeout) it stayed null forever, calculateETA's
+            // zero-coordinate guard bailed on every call, and the ETA field
+            // was never written at all. controller.latitude/longitude is the
+            // live position stream that is already running for this ride.
             controller.calculateETA(
-              driverLat: driverLatitude,
-              driverLng: driverLongitude,
+              driverLat: controller.latitude ?? driverLatitude,
+              driverLng: controller.longitude ?? driverLongitude,
               userLat: rideData.lat,
               userLng: rideData.lng,
             );
@@ -1054,6 +1094,25 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                   topOffset: 155,
                   onUpdate: (snapshot) {
                     if (!mounted) return;
+
+                    // Only trust a snapshot that actually has a route behind
+                    // it. NavigationEngine.onLocationUpdate() returns
+                    // NavSnapshot.empty() — every field zero — for as long as
+                    // it has no route, which is every frame until the
+                    // Directions call resolves, and forever if it fails or
+                    // the destination is missing. InAppNavigationMap forwards
+                    // those to onUpdate unconditionally.
+                    //
+                    // Storing them made _liveEtaSeconds/_liveDistanceMeters
+                    // non-null zeros, and both readers below prefer
+                    // "not null" over their fallbacks — so the chip rendered
+                    // _formatEta(0) = "0 min" and the card "0.0 km", pinned
+                    // there permanently instead of falling through to the
+                    // real values that were already loaded. That is the
+                    // "ETA is always 0" bug: not a bad calculation, an empty
+                    // placeholder outranking good data.
+                    if (snapshot.routePoints.isEmpty) return;
+
                     setState(() {
                       _liveEtaSeconds = snapshot.remainingDurationSeconds;
                       _liveDistanceMeters = snapshot.remainingDistanceMeters;
@@ -1204,15 +1263,32 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                 label: Text(
                                   // Prefer the live, route-aware ETA from
                                   // in-app navigation (real road-network
-                                  // data) — controller.estimateDuration
-                                  // comes from a separate, often-empty
-                                  // estimate flow, which is why this
-                                  // showed as "—" even mid-ride.
+                                  // data). Now that routeless snapshots are
+                                  // ignored (see onUpdate), this is null
+                                  // until a route genuinely exists, so the
+                                  // fallbacks below actually get used.
+                                  //
+                                  // etaToDestinationMinutes sits ahead of
+                                  // estimateDuration because it is the
+                                  // driver→pickup figure calculateETA()
+                                  // recomputes from this screen on every
+                                  // build — always populated, and it means
+                                  // only that. Deliberately NOT
+                                  // computedDuration, which three different
+                                  // calculations overwrite with three
+                                  // different meanings (see HomeController).
+                                  // estimateDuration comes from the separate,
+                                  // often-empty estimate-ride-list flow,
+                                  // which is why this showed "—" even
+                                  // mid-ride.
                                   _liveEtaSeconds != null
                                       ? _formatEta(_liveEtaSeconds!)
-                                      : (controller.estimateDuration.isNotEmpty
-                                          ? controller.estimateDuration
-                                          : '—'),
+                                      : (controller
+                                              .etaToDestinationMinutes.isNotEmpty
+                                          ? '${controller.etaToDestinationMinutes} min'
+                                          : (controller.estimateDuration.isNotEmpty
+                                              ? controller.estimateDuration
+                                              : '—')),
                                 ),
                               ),
                             ],
@@ -1246,8 +1322,15 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
                                       Text(
                                         // Same preference order as the top
-                                        // banner above.
-                                        '${_liveDistanceMeters != null ? _formatKm(_liveDistanceMeters!) : ((rideData.distance != null && rideData.distance!.isNotEmpty) ? rideData.distance : (controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'))} km',
+                                        // banner above. rideData.distance is
+                                        // checked for a real value, not just
+                                        // a non-empty string — the backend
+                                        // sends an unpriced booking's
+                                        // distance as 0, which the model
+                                        // stringifies to "0" and which then
+                                        // beat every fallback and rendered a
+                                        // confident "0 km".
+                                        '${_liveDistanceMeters != null ? _formatKm(_liveDistanceMeters!) : (((double.tryParse(rideData.distance ?? '') ?? 0) > 0) ? rideData.distance : (controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'))} km',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                         ),

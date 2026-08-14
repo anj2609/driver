@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
+import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/coupon_model.dart';
 import 'package:myridedriverapp/model/driverdocument_model.dart';
@@ -1872,6 +1873,22 @@ else {
     _googleSignIn.signOut();
     authRepo.removeUserToken();
     _clearProfileCache();
+
+    // HomeController is registered permanent (see get_di.dart), so it now
+    // survives logout instead of being torn down as a side effect of GetX
+    // deleting it. Its location heartbeat and 3s nearby-booking poll would
+    // otherwise keep running — and keep hitting the API — for a driver who
+    // just signed out. Shut it down here, explicitly, where the intent is
+    // visible, rather than depending on a dependency-injection side effect.
+    try {
+      final home = Get.find<HomeController>();
+      home.isOnline = false;
+      home.stopListeningBookings();
+      home.stopRingtone();
+      home.stopLiveTracking();
+      home.resetRideState();
+      home.saveOnlineStatus(false);
+    } catch (_) {}
   }
 
   void _clearProfileCache() async {

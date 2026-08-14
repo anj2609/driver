@@ -93,11 +93,44 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
     _cameraInitialized = false;
   }
 
+  // Cleared on failure so the next build can try again — see below.
+  DateTime? _lastRouteAttemptAt;
+
   Future<void> _requestInitialRoute(LatLng origin) async {
     if (_routeRequested || _engine == null) return;
+
+    // The flag used to latch on the FIRST attempt and never clear, so a
+    // single failed fetch — a dropped request, a momentary Directions
+    // hiccup, or simply the first GPS fix landing before the network was
+    // ready — permanently gave up on routing for the whole screen visit.
+    // The engine then had no route for the rest of the ride, and
+    // onLocationUpdate() returns NavSnapshot.empty() (every field zero)
+    // whenever it has no route. That is the other half of "ETA is 0
+    // everywhere": nothing was ever going to fetch a route again.
+    //
+    // Throttled rather than retried flat-out, because this is driven from
+    // build() and build() runs on every HomeController.update() — several
+    // times a second while the location stream is live.
+    final now = DateTime.now();
+    if (_lastRouteAttemptAt != null &&
+        now.difference(_lastRouteAttemptAt!) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastRouteAttemptAt = now;
+
     _routeRequested = true;
     final ok = await _engine!.fetchRoute(origin);
-    if (mounted && ok) setState(() {});
+    if (!mounted) return;
+    if (ok) {
+      setState(() {});
+    } else {
+      // Let the next build (≥5s from now) have another go.
+      _routeRequested = false;
+      debugPrint(
+        '[Nav] route fetch failed for origin '
+        '${origin.latitude},${origin.longitude} — will retry',
+      );
+    }
   }
 
   void _animateCamera(NavSnapshot snapshot) {

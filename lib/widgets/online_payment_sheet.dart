@@ -1,15 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:myridedriverapp/config/utils/colors.dart';
-import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
-import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/qr_payment_model.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class OnlinePaymentSheet extends StatefulWidget {
   final String bookingId;
@@ -151,39 +147,43 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
     // 1. Replace sheet content with thank-you view immediately
     setState(() => _isPaymentConfirmed = true);
 
-    // 2. Clear all saved ride data and stop booking polling
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(ApiConstants.bookingid);
-      await prefs.remove(ApiConstants.acceptedtrip);
-      await prefs.remove('booking_id');
-      await prefs.remove('trip_data');
-      await HomeController.clearRideData();
+    widget.homeController.resetRideState();
+    widget.homeController.stopListeningBookings();
 
-      widget.homeController.savedTripData = null;
-      widget.homeController.savedAcceptData = null;
-      widget.homeController.trackRideModel = null;
-      widget.homeController.driverBookingActivesModel = null;
-      widget.homeController.hasActiveRide = false;
-      widget.homeController.computedDistance = '';
-      widget.homeController.computedDuration = '';
-      widget.homeController.estimatePrice = '';
-      widget.homeController.estimateDistance = '';
-      widget.homeController.estimateDuration = '';
-      widget.homeController.resetRideState();
-      widget.homeController.stopListeningBookings();
-
-      try {
-        Get.find<ProfileController>().tripDetailsModel = null;
-      } catch (_) {}
-    } catch (_) {}
-
-    // 3. Let the thank-you message display for 2 seconds
+    // 2. Let the thank-you message display for 2 seconds
     await Future.delayed(const Duration(seconds: 2));
 
-    if (!mounted) return;
+    // 3. Actually close the ride out — this is what generate-qr-payment /
+    // check-payment-status never do on their own: they only settle the
+    // *payment*, not the booking itself. Without this call the backend's
+    // own ride record is left "ongoing" forever, so it keeps getting
+    // offered back to this driver as new-booking-list re-matches the exact
+    // rider they just finished with, and driverBookingActives() keeps
+    // reading it as an active ride to resume — reported as "redirected to
+    // nearby rides with the completed rider's card still showing".
+    // rideCompletedMarked() is also what records this booking id in the
+    // permanent completed-ids guard (see its own comments) that filters it
+    // out of both of those reads for good, clears the remaining saved ride
+    // state, and — on success — navigates home itself, so nothing further
+    // is needed here on that front.
+    if (mounted) {
+      try {
+        await widget.homeController.rideCompletedMarked(
+          context: context,
+          bookingId: widget.bookingId,
+          source: 'online',
+        );
+      } catch (e) {
+        debugPrint('Online payment: rideCompletedMarked failed: $e');
+      }
+    }
 
-    widget.homeController.returnToExistingHome();
+    // Fallback: if rideCompletedMarked() didn't get a chance to navigate
+    // (e.g. it threw before reaching its own returnToExistingHome()), still
+    // get the driver back to Home rather than leaving them stuck here.
+    if (mounted) {
+      widget.homeController.returnToExistingHome();
+    }
   }
 
   Widget _buildThankYouView() {
