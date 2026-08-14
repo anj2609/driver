@@ -1288,9 +1288,39 @@ class HomeController extends GetxController {
           acceptCode == '200') {
         //  tripdata = response.body['data'];
         stopRingtone();
+
+        // Was fire-and-forget, immediately followed by navigation — so
+        // GoingForPickupScreen mounted before trackRideModel had any data,
+        // and showed its own bare loading spinner for however long this
+        // request actually took. Under real network conditions that's not
+        // instant: this fires right alongside get-profile and
+        // driver-location-update (both visible in the same burst in device
+        // logs), and this app's HTTP client has a 60s timeout — so the
+        // driver could watch the accept-loading dialog, then land on a
+        // *second*, unexplained spinner for anywhere from a few seconds to
+        // uncomfortably long. Awaiting it here — bounded, so a slow response
+        // can't hang the accept flow itself — means the destination screen
+        // has its data already in hand for its very first frame in the
+        // common case. Capped at 6s deliberately shorter than the pickup
+        // screen's own 8s retry-UI reveal (see pickup_screen.dart), so a
+        // genuinely slow/failing fetch still falls through to navigate and
+        // that screen's own retry affordance takes over, rather than making
+        // the driver wait twice for the same failure.
         if (context.mounted) {
-          trackbookingRide(context: context, bookingId: bookingId);
+          try {
+            await trackbookingRide(
+              context: context,
+              bookingId: bookingId,
+            ).timeout(const Duration(seconds: 6));
+          } catch (e) {
+            debugPrint(
+              '[Accept] trackbookingRide did not complete within 6s '
+              '($e) — proceeding to the pickup screen anyway; its own '
+              'retry UI will take over from here.',
+            );
+          }
         }
+
         Get.offNamedUntil(
           RouteHelper.getgoingForPickupScreen(),
           (route) => route.settings.name == RouteHelper.getHomeScreen(),
