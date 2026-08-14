@@ -1791,17 +1791,47 @@ class HomeController extends GetxController {
 
   /// This trip's tracked distance, in the form the backend expects.
   ///
-  /// computedDistance is the Google Directions pickup→drop figure refreshed
-  /// throughout the ride (with a Haversine fallback) — the closest thing this
-  /// app has to "actual distance driven". Falls back to totaldestance, then
-  /// '0', so the field is never omitted or empty.
+  /// Computed fresh from the ride's own pickup and drop coordinates via
+  /// Haversine — not from computedDistance/totaldestance, despite those
+  /// fields' names. Both are continuously overwritten with the distance from
+  /// the *driver's live position* to the drop point (calculateETA/
+  /// fetchRouteDistanceDuration are called with the driver's current lat/lng
+  /// as the origin, refreshed throughout the ride for the on-screen ETA). By
+  /// the time a ride completes the driver's live position is at the drop
+  /// location, so that figure collapses to ~0 — confirmed from a device log
+  /// showing actual_distance=0.0 sent to generate-qr-payment on a real,
+  /// multi-hundred-km booking. The same value feeds complete-ride, so this
+  /// wasn't only a QR-generation bug; every completed ride has been reporting
+  /// close to zero distance.
   ///
-  /// Shared by complete-ride and generate-qr-payment: both reject the request
-  /// with "The actual distance field is required." without it. That was the
-  /// entire reason the online-payment QR never appeared — generate-qr-payment
-  /// was only ever sent booking_id, so the backend returned code 401 and the
-  /// sheet was never shown.
+  /// Falls back to computedDistance/totaldestance only if pickup or drop
+  /// coordinates are missing, then to '0', so the field the backend requires
+  /// is never omitted.
   String _actualDistanceForBackend() {
+    final rideData = trackRideModel?.data;
+    final double? pickupLat = rideData?.lat;
+    final double? pickupLng = rideData?.lng;
+    final double? dropLat = rideData?.dropLat;
+    final double? dropLng = rideData?.dropLng;
+
+    if (pickupLat != null &&
+        pickupLng != null &&
+        dropLat != null &&
+        dropLng != null &&
+        !(pickupLat == 0.0 && pickupLng == 0.0) &&
+        !(dropLat == 0.0 && dropLng == 0.0)) {
+      final double distanceKm =
+          calculateDistance(pickupLat, pickupLng, dropLat, dropLng);
+      if (!distanceKm.isNaN && !distanceKm.isInfinite) {
+        return distanceKm.toStringAsFixed(1);
+      }
+    }
+
+    debugPrint(
+      '[Payment] no usable pickup/drop coordinates for actual_distance — '
+      'falling back to computedDistance/totaldestance (driver-to-drop, '
+      'likely ~0 near ride end)',
+    );
     if (computedDistance.isNotEmpty) return computedDistance;
     if (totaldestance?.isNotEmpty == true) return totaldestance!;
     return '0';
