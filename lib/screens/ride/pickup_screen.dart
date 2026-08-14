@@ -853,16 +853,84 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
         builder: (controller) {
           final data = controller.trackRideModel;
 
-          // No spinner, no retry message — by explicit request. In the
-          // common case data is already here (acceptRidesTrip awaits
-          // trackbookingRide before ever pushing this screen); in the rare
-          // case it isn't yet, render nothing and let the GetBuilder rebuild
-          // itself the moment it lands, via either that same in-flight call
-          // or startTimer()'s existing 15s background retry. No user action,
-          // no visible loading state — just a brief blank frame instead of a
-          // populated one.
+          // The screen's own shell (live map + bottom sheet) rather than a
+          // blank frame — only the part that actually needs the API
+          // response (trip details: address, OTP, fare) shows a loader, in
+          // place of the sheet's real content, matching its exact styling so
+          // the transition to the loaded state doesn't jump.
+          //
+          // InAppNavigationMap already renders a plain live map off the
+          // driver's own GPS stream when handed no destination (see its own
+          // graceful-degradation branch) — reused as-is here rather than
+          // duplicating a second map instance. It re-renders itself with the
+          // real route the moment this same GetBuilder rebuilds with data
+          // populated.
+          //
+          // In the common case data is already here (acceptRidesTrip awaits
+          // trackbookingRide before ever pushing this screen), so this branch
+          // is rarely even reached; the rare case where it still isn't ready
+          // resolves itself via either that same in-flight call or
+          // startTimer()'s existing 15s background retry — no user action.
           if (data == null || data.data == null) {
-            return const SizedBox.shrink();
+            return Stack(
+              children: [
+                const Positioned.fill(
+                  child: InAppNavigationMap(
+                    destLat: null,
+                    destLng: null,
+                    destLabel: '',
+                  ),
+                ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      28,
+                      16,
+                      28 + MediaQuery.of(context).padding.bottom,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(25),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Center(
+                          child: Container(
+                            height: 5,
+                            width: 50,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade400,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          "Loading ride details...",
+                          style: PoppinsReguler.copyWith(
+                            fontSize: 13,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
           }
 
           final rideData = data.data!;
