@@ -394,14 +394,6 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
                     else
                       Column(
                         children: [
-                          Text(
-                            'QR Expired',
-                            style: PoppinsReguler.copyWith(
-                              fontSize: 12,
-                              color: Colors.red,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
                           SizedBox(
                             width: double.infinity,
                             child: OutlinedButton.icon(
