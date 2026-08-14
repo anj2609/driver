@@ -97,6 +97,16 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
       builder: (_) {
         final trips = _trips;
 
+        // Diagnostic for a reported debug-vs-release split: the ringtone
+        // plays in release (confirming incomingTrips is populated and
+        // update() ran) but no card appears — this print, present in both
+        // build modes, is what tells us whether this widget's build() is
+        // even being invoked with a non-empty list when that happens, or
+        // whether the gap is elsewhere entirely.
+        debugPrint(
+          '[IncomingCard] build() trips=${trips.length} mounted=$mounted',
+        );
+
         // No request pending — render nothing at all, leaving the home map
         // completely untouched. Nothing to pop or dismiss, because this was
         // never a route.
