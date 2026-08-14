@@ -138,14 +138,16 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
       );
 
       if (qrData == null) {
-        // generateOnlineQr() returns null for every failure and shows nothing
-        // itself, so without this the driver tapped the button, watched a
-        // spinner, and got nothing back with no reason given.
+        // generateOnlineQr() shows nothing itself, so without this the driver
+        // tapped the button, watched a spinner, and got nothing back. Show the
+        // reason it recorded rather than assuming the network was at fault —
+        // a rejection from the gateway and a dropped connection need different
+        // responses from the driver.
         if (context.mounted) {
           AnimatedTopToast.show(
             context: context,
-            message: "Couldn't create the payment QR. Please check your "
-                "connection and try again.",
+            message: controller.lastQrError ??
+                "Couldn't create the payment QR. Please try again.",
             backgroundColor: ColorResources.redbuttoncolor,
             icon: Icons.error_rounded,
           );

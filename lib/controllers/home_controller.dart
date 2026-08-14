@@ -1807,14 +1807,26 @@ class HomeController extends GetxController {
     return '0';
   }
 
+  /// Why the last generateOnlineQr() call produced no QR, in words fit to show
+  /// the driver. Null when the last attempt succeeded.
+  ///
+  /// generateOnlineQr() returns a bare null for every failure, so the caller
+  /// could only ever say "couldn't create the QR, check your connection" — a
+  /// guess that is wrong whenever the real cause is a backend rejection, and
+  /// unhelpful either way. Carrying the reason out means the driver sees what
+  /// actually happened without anyone needing a device log.
+  String? lastQrError;
+
   Future<QrPaymentData?> generateOnlineQr({
     required BuildContext context,
     required String bookingId,
   }) async {
+    lastQrError = null;
     try {
+      final String distance = _actualDistanceForBackend();
       final response = await homeRepo.generateQrCode(
         bookingId: bookingId,
-        actualDistance: _actualDistanceForBackend(),
+        actualDistance: distance,
       );
       final body = response.body;
       final isSuccess = _isSuccessResponse(response);
@@ -1825,6 +1837,7 @@ class HomeController extends GetxController {
       // say which branch bailed out.
       debugPrint(
         '[Payment] generate-qr-payment bookingId=$bookingId '
+        'actual_distance=$distance '
         'statusCode=${response.statusCode} isSuccess=$isSuccess raw=$body',
       );
 
@@ -1845,16 +1858,30 @@ class HomeController extends GetxController {
             'Keys present: ${body.keys.toList()}',
           );
         }
+        lastQrError =
+            'The payment gateway accepted the request but returned no QR '
+            'code. Please try again, or collect cash instead.';
         return null;
       } else {
+        final String? backendMessage =
+            body is Map ? body['message']?.toString() : null;
         debugPrint(
-          '[Payment] generate-qr-payment rejected: '
-          '${body is Map ? body['message'] : body}',
+          '[Payment] generate-qr-payment rejected: ${backendMessage ?? body}',
         );
+        // Prefer the backend's own wording — it is the only thing that can say
+        // *why* (booking already paid, gateway not configured, a validation
+        // failure on a field this app sends). A generic "check your
+        // connection" actively misleads when the network was fine.
+        lastQrError = (backendMessage != null && backendMessage.isNotEmpty)
+            ? backendMessage
+            : 'The payment gateway rejected this request.';
         return null;
       }
     } catch (e, st) {
       debugPrint('generateOnlineQr error: $e\n$st');
+      lastQrError =
+          'Could not reach the payment gateway. Check your connection and '
+          'try again.';
       return null;
     }
   }
