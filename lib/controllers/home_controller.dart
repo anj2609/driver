@@ -830,14 +830,33 @@ class HomeController extends GetxController {
         if (response.statusCode == 200 && responseCode == "200") {
           List data = response.body['data'] ?? [];
 
+          // Same permanent guard used in driverBookingActives() — see there
+          // for the full story. Reported: after completing and being paid
+          // for a ride, the exact same ride's card reappeared as if it were
+          // a fresh incoming request, and tapping it (or any other) then got
+          // rejected with "You already have an active ride" — the backend's
+          // own accept-ride check, which is direct evidence the booking
+          // never actually got closed out server-side, even though it was
+          // completed from this app's point of view. new-booking-list
+          // re-offering it is the same kind of staleness that
+          // driverBookingActives() already had to defend against, just on
+          // the "new request" side instead of the "resume an active ride"
+          // side. Filtering it out here means a booking we know we finished
+          // can never come back as a card, regardless of what the backend's
+          // own record still says.
+          await _ensureCompletedBookingIdsLoaded();
+
           List<NewBookingNearByModel> apiTrips = data
               .map((trip) => NewBookingNearByModel.fromJson(trip))
               // Drop anything this driver already declined this session —
               // the backend has no decline endpoint to exclude it for us,
-              // so without this it would resurface on the very next poll.
+              // so without this it would resurface on the very next poll —
+              // and anything already completed by this app, ever.
               .where(
                 (trip) =>
-                    trip.id == null || !_rejectedTripIds.contains(trip.id),
+                    trip.id == null ||
+                    (!_rejectedTripIds.contains(trip.id) &&
+                        !_completedBookingIds.contains(trip.id.toString())),
               )
               .toList();
 
@@ -1524,17 +1543,11 @@ class HomeController extends GetxController {
   ////trackBookingRide
 
   // Set on a failed/errored trackbookingRide() call, cleared at the start of
-  // the next one. update() already runs unconditionally at the end of that
-  // function regardless of outcome, so pickup_screen's GetBuilder *does*
-  // rebuild on failure — but with trackRideModel still null, that rebuild is
-  // visually identical to still-loading, since nothing distinguished "still
-  // trying" from "gave up." Combined with this app's global 60s HTTP timeout
-  // (api_client.dart), a slow/flaky connection right at accept time — exactly
-  // when several other calls (get-profile, driver-location-update, the
-  // dispatch poll teardown) are also firing — could leave the driver looking
-  // at a bare spinner for up to a minute with zero indication anything was
-  // wrong, and no way to retry short of leaving the screen. This flag lets
-  // pickup_screen show a real retry affordance well before that.
+  // the next one. Not read by any UI right now — pickup_screen deliberately
+  // shows no loading/retry state of its own (see its build()) — but kept as
+  // a plain diagnostic signal (visible via debugPrint below and to anything
+  // that wants it later) distinguishing "still trying" from "gave up,"
+  // rather than deleting it along with the retry UI it used to drive.
   bool trackRideLoadFailed = false;
 
   Future<Response?> trackbookingRide({
