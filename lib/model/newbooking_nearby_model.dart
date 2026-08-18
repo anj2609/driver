@@ -35,7 +35,11 @@ class NewBookingNearByModel {
   double? dropLat;
   double? dropLng;
   String? dropAddress;
+  /// Whole-trip length, pickup to drop, in km. Pairs with [time].
   double? distance;
+  /// How far this driver is from the pickup point, in km. Not shown on the
+  /// card yet — see the note in fromJson.
+  double? driverToPickupDistance;
   // Were never parsed at all — the incoming-booking card showed a
   // hardcoded "Customer" label, a bundled placeholder image, and no fare,
   // regardless of what the backend actually sent, because this model
@@ -61,6 +65,7 @@ class NewBookingNearByModel {
       this.dropLng,
       this.dropAddress,
       this.distance,
+      this.driverToPickupDistance,
       this.customerName,
       this.customerImage,
       this.fare,
@@ -74,18 +79,27 @@ class NewBookingNearByModel {
     dropLat = json['drop_lat'] != null ? double.tryParse(json['drop_lat'].toString()) : null;
     dropLng = json['drop_lng'] != null ? double.tryParse(json['drop_lng'].toString()) : null;
     dropAddress = json['drop_address'];
-    // CONFIRMED from a real device log: this endpoint sends *two* distance
-    // figures — "distance" (the whole trip's pickup-to-drop length, e.g.
-    // 2429.43 for a Noida-to-Tripura trip) and "driver_to_pickup_distance"
-    // (how far *this driver* is from the pickup point, e.g. 0.01). The
-    // card shows this value next to the customer's name specifically to
-    // answer "how far away is this rider", so it needs to be the latter —
-    // reading plain "distance" was showing the trip's total length instead
-    // (a driver 10m from the pickup would have seen "2429.43 km").
-    distance = (json['driver_to_pickup_distance'] ?? json['distance']) != null
-        ? double.tryParse(
-            (json['driver_to_pickup_distance'] ?? json['distance']).toString(),
-          )
+    // This endpoint sends *two* distance figures: "distance" — the whole
+    // trip's pickup-to-drop length (2396.71 for Ghaziabad → Agartala) — and
+    // "driver_to_pickup_distance", how far this driver is from the pickup
+    // point (e.g. 0.01).
+    //
+    // [distance] is the trip length, deliberately, so that it pairs with
+    // [time], which is the trip's duration. The card shows the two together;
+    // having one describe the journey and the other the driver's approach
+    // made the pair unreadable ("0.9 km · 46h 21m"). This previously read
+    // driver_to_pickup_distance for that slot — do not switch it back
+    // without also moving [time] to match.
+    distance = json['distance'] != null
+        ? double.tryParse(json['distance'].toString())
+        : null;
+
+    // Kept separate and still parsed: "how far away is this rider" is
+    // genuinely useful to a driver deciding whether to accept, it just
+    // belongs next to the customer's name rather than next to the trip
+    // duration.
+    driverToPickupDistance = json['driver_to_pickup_distance'] != null
+        ? double.tryParse(json['driver_to_pickup_distance'].toString())
         : null;
 
     // The confirmed accept-ride response (AcceptRideData) nests this
@@ -117,16 +131,23 @@ class NewBookingNearByModel {
             json['base_fare'])
         ?.toString();
 
-    // CONFIRMED from the same log: there's no request/booking timestamp
-    // field at all — what this endpoint actually sends is "duration", the
-    // trip's estimated driving time in seconds (e.g. 2856 = ~48 min).
-    // Formatted here rather than left as a raw seconds count, matching how
-    // the in-app navigation banner formats duration elsewhere.
+    // There's no request/booking timestamp field on this endpoint — what it
+    // sends is "duration", the trip's estimated driving time in MINUTES.
+    //
+    // This was previously read as seconds and divided by 60. Verified
+    // against the live API on a Ghaziabad → Agartala booking: for one route
+    // estimate-ride-list reports "estimated_time":"2780 mins" while
+    // outstation/estimate and trip-detail both report "duration":2781 —
+    // the same number, so the unit is minutes. Dividing by 60 rendered that
+    // 46-hour trip as "47 min" on the card.
+    //
+    // Parsed as a double before rounding because the field is not
+    // guaranteed to be an integer (trip-detail returns 2781, but the
+    // estimate's own distance/duration pair carries decimals).
     final rawDuration = json['duration'];
     if (rawDuration != null) {
-      final seconds = int.tryParse(rawDuration.toString());
-      if (seconds != null) {
-        final minutes = (seconds / 60).ceil();
+      final minutes = double.tryParse(rawDuration.toString())?.round();
+      if (minutes != null) {
         time = minutes < 60
             ? '$minutes min'
             : '${minutes ~/ 60}h ${minutes % 60}m';

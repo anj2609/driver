@@ -1747,9 +1747,33 @@ else {
         // limit is stricter than expected) gets a message that actually
         // points at the fix — smaller photos — instead of "just try again"
         // on a request that will fail identically every time.
+        //
+        // Everything other than 413 fell through to a fixed "Unable to save
+        // vehicle information. Please try again." — the backend's own
+        // response message was fetched nowhere and shown nowhere. A
+        // validation rejection ("The chassis number field is required", "The
+        // vehicle number has already been taken", a missing vehicle_type_id)
+        // is precisely the case where the driver can fix the problem
+        // themselves, and precisely the case this message hid. Retrying an
+        // identical request that fails identically every time is the only
+        // thing the old text suggested. Prefer whatever the server actually
+        // said; keep the generic line only when it says nothing useful.
+        final serverMessage = body is Map ? body['message']?.toString() : null;
         final message = response.statusCode == 413
             ? 'The selected vehicle photos are too large to upload. Please retake or choose smaller photos and try again.'
-            : 'Unable to save vehicle information. Please try again.';
+            : (serverMessage != null && serverMessage.trim().isNotEmpty
+                ? serverMessage
+                : 'Unable to save vehicle information. Please try again.');
+
+        // The status code and body are what distinguish a validation
+        // rejection from an auth or server failure, and neither reaches the
+        // toast. Log both so a failing save can be diagnosed from logcat
+        // without reproducing it under a debugger.
+        debugPrint(
+          '[VehicleInfoSave] FAILED status=${response.statusCode} '
+          'code=$code body=$body',
+        );
+
         if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: message,

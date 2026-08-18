@@ -145,8 +145,17 @@ class ApiConstants {
 
   ///verification_status
 
-  static const String imageurl = 'https://myride.infinititechsolution.com/';
-  static const String fileUrl = 'https://myride.infinititechsolution.com/';
+  // Uploaded files (profile photos, vehicle photos, documents) are served by
+  // the same deployment that serves [baseUrl] — anything the app uploads
+  // through the API lands there. These previously pointed at
+  // myride.infinititechsolution.com, which is a separate server: requesting
+  // the same path from each returns a different file (different byte length,
+  // different Server header — hcdn vs the API's nginx), so it is a distinct
+  // deployment with its own storage, not a CDN edge in front of this one.
+  // Anything a driver uploaded through the API was therefore being looked up
+  // on a host that had never received it.
+  static const String imageurl = 'https://app.nride.in/';
+  static const String fileUrl = 'https://app.nride.in/';
   static const String apiKey = 'AIzaSyBNHiJLxFa2qcs079P5TaYrB770_CVMldU';
 }
 

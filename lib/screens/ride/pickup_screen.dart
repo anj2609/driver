@@ -825,6 +825,31 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     super.dispose();
   }
 
+  /// Picks the best available ETA, preferring the live route-aware figure
+  /// from in-app navigation, then the driver→pickup estimate, then the
+  /// estimate-ride-list duration. A source that reports zero is treated as
+  /// having no answer rather than as an answer of zero.
+  String _etaText(HomeController controller) {
+    final live = _liveEtaSeconds;
+    if (live != null && live > 0) return _formatEta(live);
+
+    final fallbackMinutes =
+        double.tryParse(controller.etaToDestinationMinutes.trim());
+    if (fallbackMinutes != null && fallbackMinutes > 0) {
+      return '${controller.etaToDestinationMinutes} min';
+    }
+
+    // Arrives pre-formatted from the estimate endpoint ("2804 mins"), so it
+    // is shown as-is — but only once it holds something other than a zero.
+    final estimate = controller.estimateDuration.trim();
+    final estimateMinutes = double.tryParse(estimate);
+    if (estimate.isNotEmpty && (estimateMinutes == null || estimateMinutes > 0)) {
+      return estimate;
+    }
+
+    return '—';
+  }
+
   String _formatEta(int seconds) {
     final minutes = (seconds / 60).ceil();
     if (minutes < 60) return '$minutes min';
@@ -1281,14 +1306,22 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                   // often-empty estimate-ride-list flow,
                                   // which is why this showed "—" even
                                   // mid-ride.
-                                  _liveEtaSeconds != null
-                                      ? _formatEta(_liveEtaSeconds!)
-                                      : (controller
-                                              .etaToDestinationMinutes.isNotEmpty
-                                          ? '${controller.etaToDestinationMinutes} min'
-                                          : (controller.estimateDuration.isNotEmpty
-                                              ? controller.estimateDuration
-                                              : '—')),
+                                  //
+                                  // Each source is accepted only if it is
+                                  // actually a positive number. "Present"
+                                  // cannot mean "not empty" here: a zero is
+                                  // exactly what every one of these produces
+                                  // when it has nothing — _liveEtaSeconds
+                                  // before a route resolves, and
+                                  // etaToDestinationMinutes whenever
+                                  // calculateETA's inputs collapse to the
+                                  // same point. Being non-empty, the string
+                                  // "0" then beat every fallback below it and
+                                  // the chip sat on "0 min" instead of
+                                  // falling through to data that existed.
+                                  // ridedetails_screen already guards its own
+                                  // ETA this way for the same reason.
+                                  _etaText(controller),
                                 ),
                               ),
                             ],

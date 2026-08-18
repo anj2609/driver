@@ -344,11 +344,17 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                             color: ColorResources.blackcolor,
                           ),
                         ),
+                        // How far away the rider is — the driver's approach,
+                        // which is what belongs beside their name. The trip's
+                        // own length sits with the trip duration on the right,
+                        // so the two pairs never get read as one figure.
                         Row(
                           children: [
                             Icon(Icons.location_on, size: 14),
                             Text(
-                              "${trip.distance?.toStringAsFixed(2) ?? 0} km",
+                              trip.driverToPickupDistance != null
+                                  ? "${trip.driverToPickupDistance!.toStringAsFixed(1)} km away"
+                                  : "Nearby",
                               style: PoppinsReguler,
                             ),
                           ],
@@ -371,14 +377,19 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                           fontSize: 16,
                         ),
                       ),
-                    // Same gap as fare — the model never parsed a time
-                    // field either, so there was nothing to show here
-                    // regardless of what the backend sent.
-                    if (trip.time != null && trip.time!.isNotEmpty)
+                    // The trip itself: how long it is and how long it takes,
+                    // kept together so they read as one journey. Either half
+                    // can be missing without leaving a stray separator.
+                    if (trip.distance != null ||
+                        (trip.time?.isNotEmpty ?? false))
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          trip.time!,
+                          [
+                            if (trip.distance != null)
+                              "${trip.distance!.toStringAsFixed(1)} km",
+                            if (trip.time?.isNotEmpty ?? false) trip.time!,
+                          ].join("  •  "),
                           style: PoppinsReguler.copyWith(
                             color: ColorResources.textColorForGrey,
                             fontSize: 12,
