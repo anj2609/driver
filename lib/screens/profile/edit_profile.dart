@@ -34,6 +34,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String selectedGender = "Male";
   List<String> genderList = ["Male", "Female", "Other"];
 
+  // Set once, the first time the loaded profile is shown. Without it the block
+  // below re-copied every field (and reset the gender) from the controller on
+  // each rebuild — and picking a gender calls setState, which rebuilds — so
+  // the new gender was overwritten by the old API value the instant it was
+  // chosen. That is why the dropdown was stuck on Male.
+  bool _fieldsInitialised = false;
+
   File? selectedImage;
   final ImagePicker _picker = ImagePicker();
 
@@ -111,18 +118,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             if (controller.isLoading.value) {
               return Center(child: PremiumBlurLoader());
             }
-            nameController.text = controller.nameController.text;
-            emailController.text = controller.emailController.text;
-            phoneController.text = controller.phoneController.text;
-            dobController.text = controller.dobController.text;
+            // Seed the editable fields from the loaded profile exactly once,
+            // so the rider's own edits (a changed gender, an edited name)
+            // survive the next rebuild instead of being reset back to what the
+            // API first returned.
+            if (!_fieldsInitialised) {
+              _fieldsInitialised = true;
+              nameController.text = controller.nameController.text;
+              emailController.text = controller.emailController.text;
+              phoneController.text = controller.phoneController.text;
+              dobController.text = controller.dobController.text;
 
-            // Gender safe set
-            String apiGender = controller.genderController.text;
-
-            if (genderList.contains(apiGender)) {
-              selectedGender = apiGender;
-            } else {
-              selectedGender = "Male"; // default fallback
+              final String apiGender = controller.genderController.text;
+              selectedGender =
+                  genderList.contains(apiGender) ? apiGender : "Male";
             }
             // DateTime date = DateTime.parse(controller.dobController.text);
             // dobController.text = DateFormat('yyyy-MM-dd').format(date);
@@ -156,16 +165,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           backgroundColor: Colors.grey.shade300,
                           backgroundImage: selectedImage != null
                               ? FileImage(selectedImage!)
-                              : (controller.profileimagee != null &&
-                                    controller.profileimagee!.isNotEmpty)
-                              ? NetworkImage(
-                                  "${ApiConstants.imageurl}${controller.profileimagee}",
-                                )
-                              : null,
+                              : (controller.resolvedProfileImageUrl != null
+                                  ? NetworkImage(
+                                      controller.resolvedProfileImageUrl!,
+                                    )
+                                  : null),
                           child:
                               selectedImage == null &&
-                                  (controller.profileimagee == null ||
-                                      controller.profileimagee!.isEmpty)
+                                  controller.resolvedProfileImageUrl == null
                               ? Icon(Icons.person, size: 50, color: Colors.grey)
                               : null,
                         ),

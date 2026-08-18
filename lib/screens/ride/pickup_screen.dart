@@ -625,8 +625,10 @@
 // }
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -637,6 +639,7 @@ import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/chat_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
+import 'package:myridedriverapp/model/acceptride_details_model.dart';
 import 'package:myridedriverapp/screens/home/ridedetails_screen.dart' show bookingIdStore;
 import 'package:myridedriverapp/widgets/canclerideconfirmations.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
@@ -786,12 +789,19 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
         debugPrint('[Pickup] Backend status is arrived — showing OTP');
       }
 
-      controller.getRouteCoordinates(
-        startLat: driverLatitude!,
-        startLng: driverLongitude!,
-        endLat: track.data!.lat!,
-        endLng: track.data!.lng!,
-      );
+      // Re-targeted per phase. This used to be hardcoded to the pickup, so
+      // once the driver had the passenger aboard it kept re-measuring the
+      // journey to a point they were already standing on — every 15 seconds,
+      // for the rest of the ride.
+      final routeTarget = _navTarget(track.data);
+      if (routeTarget != null) {
+        controller.getRouteCoordinates(
+          startLat: driverLatitude!,
+          startLng: driverLongitude!,
+          endLat: routeTarget.lat,
+          endLng: routeTarget.lng,
+        );
+      }
 
       // Move map camera to follow the driver's current position
       if (mapController != null && mounted) {
@@ -829,22 +839,58 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   /// from in-app navigation, then the driver→pickup estimate, then the
   /// estimate-ride-list duration. A source that reports zero is treated as
   /// having no answer rather than as an answer of zero.
-  String _etaText(HomeController controller) {
-    final live = _liveEtaSeconds;
-    if (live != null && live > 0) return _formatEta(live);
+  /// True only for a string holding a number greater than zero.
+  ///
+  /// Every distance/time source in this screen reports 0 when it has nothing
+  /// rather than reporting nothing, so "is it present" and "is it an answer"
+  /// are different questions. Treating the first as the second is what pinned
+  /// the readouts at "0.0 km" and blanked the ETA.
+  static bool _isRealValue(String? raw) {
+    if (raw == null) return false;
+    final value = double.tryParse(raw.trim());
+    return value != null && value > 0;
+  }
 
-    final fallbackMinutes =
-        double.tryParse(controller.etaToDestinationMinutes.trim());
-    if (fallbackMinutes != null && fallbackMinutes > 0) {
-      return '${controller.etaToDestinationMinutes} min';
+  String _etaText(HomeController controller, AcceptRideData? rideData) {
+    // The booking's own trip time (track-booking-ride's `time`) comes first,
+    // and deliberately outranks the live figure. Before OTP the only live
+    // route is driver→pickup, which collapses to ~0-2 min the instant the
+    // driver reaches the pickup — that is what dropped the readout from
+    // "54 min" to "3 min" a few seconds in. The backend's trip time is the
+    // stable, authoritative answer for the journey the driver is taking on,
+    // so it is shown until a live figure for the *same* journey exists (only
+    // once the ride is ongoing and a real destination route is running).
+    if (_isRealValue(rideData?.time)) return '${rideData!.time!.trim()} min';
+
+    final live = _liveEtaSeconds;
+    if (isOtpVerified && live != null && live > 0) return _formatEta(live);
+
+    if (_isRealValue(controller.etaToDestinationMinutes)) {
+      return '${controller.etaToDestinationMinutes.trim()} min';
     }
 
-    // Arrives pre-formatted from the estimate endpoint ("2804 mins"), so it
-    // is shown as-is — but only once it holds something other than a zero.
     final estimate = controller.estimateDuration.trim();
     final estimateMinutes = double.tryParse(estimate);
     if (estimate.isNotEmpty && (estimateMinutes == null || estimateMinutes > 0)) {
       return estimate;
+    }
+
+    return '—';
+  }
+
+  /// Distance counterpart to [_etaText], with the same sources in the same
+  /// order so the two readouts can never describe different journeys.
+  String _distanceText(HomeController controller, AcceptRideData? rideData) {
+    // Backend trip distance first, for the same reason as the ETA: the live
+    // figure before pickup is driver→pickup (~0.5 km once arrived) and must
+    // not overwrite the 38 km the trip actually is.
+    if (_isRealValue(rideData?.distance)) return rideData!.distance!.trim();
+
+    final live = _liveDistanceMeters;
+    if (isOtpVerified && live != null && live > 0) return _formatKm(live);
+
+    if (_isRealValue(controller.estimateDistance)) {
+      return controller.estimateDistance.trim();
     }
 
     return '—';
@@ -859,6 +905,114 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   }
 
   String _formatKm(double meters) => (meters / 1000).toStringAsFixed(1);
+
+  /// Where the driver is actually headed right now.
+  ///
+  /// Before the passenger is aboard that is the pickup point; once the ride is
+  /// underway it is the drop-off. This screen stays mounted for the whole
+  /// trip, and every distance/ETA on it used to be measured to the pickup
+  /// regardless of phase — so the moment the driver reached the passenger the
+  /// readout collapsed to "0.0 km / 1 min" and stayed there for the rest of
+  /// the journey, reporting progress toward a place already arrived at.
+  ///
+  /// Falls back to the pickup when the booking carries no drop coordinates,
+  /// which is still wrong but no worse than before, and never returns 0,0 —
+  /// HomeController's ETA guard treats that as "no fix yet" and bails.
+  ({double lat, double lng})? _navTarget(AcceptRideData? ride) {
+    if (ride == null) return null;
+
+    // "underway" is the ride actually being in progress — the passenger is
+    // aboard — which is `ongoing`, i.e. after the OTP is verified. It is NOT
+    // `arrived`: that only means the driver has reached the pickup and is
+    // waiting for the rider, and the destination they still need guiding to is
+    // the pickup, not the drop. Treating `arrived` as underway pointed
+    // navigation at the drop (or, with no drop coords, back at the pickup) the
+    // whole time the OTP screen was up, which is what fed the driver→pickup
+    // ~0.5 km figure over the map.
+    final String phase = ride.status?.toLowerCase() ?? '';
+    final bool underway = isOtpVerified || phase == 'ongoing';
+
+    if (underway) {
+      // Prefer the backend's own drop coordinates; fall back to the ones we
+      // geocoded from drop_address when it doesn't send them (see
+      // [_ensureDropCoordinates]).
+      final dropLat = ride.dropLat ?? _geocodedDrop?.latitude;
+      final dropLng = ride.dropLng ?? _geocodedDrop?.longitude;
+      if (dropLat != null && dropLng != null) {
+        return (lat: dropLat, lng: dropLng);
+      }
+    }
+    if (ride.lat != null && ride.lng != null) {
+      return (lat: ride.lat!, lng: ride.lng!);
+    }
+    return null;
+  }
+
+  /// Drop-off resolved from [AcceptRideData.dropaddress] via Google Geocoding,
+  /// for the common case where track-booking-ride returns a drop_address
+  /// string but no drop_lat/drop_lng — without which destination navigation
+  /// has nothing to route toward.
+  LatLng? _geocodedDrop;
+
+  /// The booking [_geocodedDrop] belongs to (and a guard against firing the
+  /// same lookup repeatedly from build).
+  int? _geocodedDropBooking;
+  bool _geocodingInFlight = false;
+
+  /// If this booking is missing its drop coordinates but has a drop address,
+  /// geocode the address once and cache the result. Safe to call from build:
+  /// it no-ops unless there is genuinely new work to do.
+  Future<void> _ensureDropCoordinates(AcceptRideData ride) async {
+    // Backend already gave coordinates, or there's no address to work from.
+    if (ride.dropLat != null && ride.dropLng != null) return;
+    final address = ride.dropaddress?.trim();
+    if (address == null || address.isEmpty) return;
+
+    // Already resolved (or resolving) for this exact booking.
+    if (_geocodedDropBooking == ride.bookingId && _geocodedDrop != null) return;
+    if (_geocodingInFlight) return;
+    _geocodingInFlight = true;
+
+    try {
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json'
+        '?address=${Uri.encodeComponent(address)}&key=${ApiConstants.apiKey}',
+      );
+      final response = await http.get(url).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) {
+        debugPrint('[Pickup] geocode HTTP ${response.statusCode} for "$address"');
+        return;
+      }
+      final body = jsonDecode(response.body);
+      // Directions/Geocoding return 200 even on failure — the real outcome is
+      // in `status`, with ZERO_RESULTS / REQUEST_DENIED / OVER_QUERY_LIMIT the
+      // usual culprits.
+      final status = body['status'];
+      final results = body['results'];
+      if (status != 'OK' || results is! List || results.isEmpty) {
+        debugPrint('[Pickup] geocode "$address" returned $status');
+        return;
+      }
+      final loc = results[0]['geometry']?['location'];
+      final lat = (loc?['lat'] as num?)?.toDouble();
+      final lng = (loc?['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null) return;
+
+      if (!mounted) return;
+      setState(() {
+        _geocodedDrop = LatLng(lat, lng);
+        _geocodedDropBooking = ride.bookingId;
+      });
+      debugPrint(
+        '[Pickup] geocoded drop "$address" -> $lat,$lng for booking '
+        '${ride.bookingId} — destination navigation enabled',
+      );
+    } catch (e) {
+      debugPrint('[Pickup] geocode error for "$address": $e');
+    } finally {
+      _geocodingInFlight = false;
+    }
+  }
 
   /// Marks arrival at pickup. Shared by the manual "Arrived" button and
   /// in-app navigation's automatic arrival detection — both just call this
@@ -989,6 +1143,14 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
           final rideData = data.data!;
 
+          // Resolve the destination from drop_address when the backend sends
+          // no drop coordinates, so turn-by-turn to the drop can run. Guarded
+          // internally to fire the lookup at most once per booking; scheduled
+          // after this frame so it never calls setState mid-build.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _ensureDropCoordinates(rideData);
+          });
+
           if (!isInitialized) {
             isInitialized = true;
 
@@ -1012,11 +1174,15 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
             // zero-coordinate guard bailed on every call, and the ETA field
             // was never written at all. controller.latitude/longitude is the
             // live position stream that is already running for this ride.
+            // Same re-targeting as the route fetch above — the fallback ETA
+            // has to be measuring the same journey the screen claims to be
+            // reporting, or the two disagree the moment the ride starts.
+            final etaTarget = _navTarget(rideData);
             controller.calculateETA(
               driverLat: controller.latitude ?? driverLatitude,
               driverLng: controller.longitude ?? driverLongitude,
-              userLat: rideData.lat,
-              userLng: rideData.lng,
+              userLat: etaTarget?.lat ?? rideData.lat,
+              userLng: etaTarget?.lng ?? rideData.lng,
             );
 
             // Fetch estimate ride data (distance, time, price) from API.
@@ -1107,8 +1273,11 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
               // stream; doesn't start a second one.
               Positioned.fill(
                 child: InAppNavigationMap(
-                  destLat: rideData.lat,
-                  destLng: rideData.lng,
+                  // Turn-by-turn has to lead to where the driver is actually
+                  // going, which stops being the pickup the moment the
+                  // passenger is aboard.
+                  destLat: _navTarget(rideData)?.lat ?? rideData.lat,
+                  destLng: _navTarget(rideData)?.lng ?? rideData.lng,
                   destLabel: 'Pickup',
                   // Auto-detected arrival calls the exact same guarded path
                   // as tapping "Arrived" by hand — see _markArrived().
@@ -1197,7 +1366,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                         // has turned out to be nonsensical (e.g. thousands
                         // of km for a local trip); estimateDistance is a
                         // separate, often-empty estimate flow.
-                        'Distance: ${_liveDistanceMeters != null ? _formatKm(_liveDistanceMeters!) : ((rideData.distance != null && rideData.distance!.isNotEmpty) ? rideData.distance : (controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'))} km',
+                        'Distance: ${_distanceText(controller, rideData)} km',
                         style: PoppinsSemiBold.copyWith(
                           color: ColorResources.whiteColor,
                         ),
@@ -1321,7 +1490,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                   // falling through to data that existed.
                                   // ridedetails_screen already guards its own
                                   // ETA this way for the same reason.
-                                  _etaText(controller),
+                                  _etaText(controller, rideData),
                                 ),
                               ),
                             ],
@@ -1363,7 +1532,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                         // stringifies to "0" and which then
                                         // beat every fallback and rendered a
                                         // confident "0 km".
-                                        '${_liveDistanceMeters != null ? _formatKm(_liveDistanceMeters!) : (((double.tryParse(rideData.distance ?? '') ?? 0) > 0) ? rideData.distance : (controller.estimateDistance.isNotEmpty ? controller.estimateDistance : '—'))} km',
+                                        '${_distanceText(controller, rideData)} km',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                         ),

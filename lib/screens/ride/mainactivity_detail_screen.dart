@@ -450,7 +450,12 @@ class _TripDetailsScreenState
                                 children: [
                                   Text("Distance"),
                                   Text(
-                                   "${data.distance ?? 0} km"
+                                    // A missing distance used to render as
+                                    // "0 km", which reads as a measured zero
+                                    // rather than as nothing to show.
+                                    (data.distance != null && data.distance! > 0)
+                                        ? "${data.distance} km"
+                                        : "—",
                                   )
                                 ],
                               ),

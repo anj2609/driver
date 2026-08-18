@@ -46,10 +46,11 @@ class CustomDrawer extends StatelessWidget {
                             children: [
                               CircleAvatar(
                                 radius: 24,
-                                backgroundImage: imageUrl.isNotEmpty
+                                backgroundImage: controller
+                                            .resolvedProfileImageUrl !=
+                                        null
                                     ? NetworkImage(
-                                        ApiConstants.imageurl +
-                                            controller.profileimagee!,
+                                        controller.resolvedProfileImageUrl!,
                                       )
                                     : const NetworkImage(
                                         "https://cdn-icons-png.flaticon.com/512/9187/9187604.png",
@@ -96,7 +97,14 @@ class CustomDrawer extends StatelessWidget {
                           /// 🔥 EDIT BUTTON
                           GestureDetector(
                             onTap: () {
-                              Get.toNamed(RouteHelper.getProfileScreen());
+                              // Straight to the edit form. This used to open
+                              // ProfileScreen first, whose only job was a
+                              // "Public Profile" button that opened this same
+                              // edit screen — one tap and one screen of dead
+                              // weight between the driver and editing.
+                              Get.toNamed(
+                                RouteHelper.geteditProfileScreenScreen(),
+                              );
                             },
                             child: Container(
                               padding: EdgeInsets.symmetric(

@@ -54,39 +54,49 @@ class AcceptRideData {
   });
 
   AcceptRideData.fromJson(Map<String, dynamic> json) {
+    // The backend sends this response nested — pickup/drop/payment objects and
+    // ride_details.trip — the same shape the rider app's trip_detail_model
+    // already parses. This model was written for an older flat shape, so every
+    // field below read a top-level key that no longer exists and came back
+    // null: no pickup/drop coordinates (navigation had nothing to target), no
+    // distance or duration (the "0.0 km / —" on the pickup sheet), no OTP.
+    // Each field now reads the nested location first and falls back to the old
+    // flat key, so both formats work.
+    Map<String, dynamic>? obj(dynamic v) =>
+        v is Map ? Map<String, dynamic>.from(v) : null;
+    double? toDouble(dynamic v) =>
+        v == null ? null : double.tryParse(v.toString());
+
+    final pickup = obj(json['pickup']);
+    final drop = obj(json['drop']);
+    final payment = obj(json['payment']);
+    final trip = obj(obj(json['ride_details'])?['trip']);
+    // The other party on the card: the customer for the driver app, the driver
+    // for the rider app — whichever the response actually carries.
+    final party = obj(json['customer_info']) ??
+        obj(json['customer']) ??
+        obj(json['driver']);
+
     bookingId = json['booking_id'];
     status = json['status'];
-    otp = json['otp'];
+    otp = (json['pickup_otp'] ?? json['otp'])?.toString();
 
-    // Was `(json['lat'] as num).toDouble()` — a hard cast that throws
-    // (TypeError, not just a bad parse) the moment this backend ever sends
-    // lat/lng as a numeric-looking string instead of a raw JSON number,
-    // unlike dropLat/dropLng right below (already using the safe
-    // tryParse-on-toString pattern used everywhere else in this file/app).
-    // Since this whole fromJson() runs inside trackbookingRide()'s
-    // catch-all (home_controller.dart), a thrown TypeError here meant
-    // trackRideModel never got reassigned at all — silently, every single
-    // 15s poll — which is exactly what leaves pickup_screen.dart's
-    // InAppNavigationMap stuck on "Finding route…"/a spinner forever: the
-    // pickup destination coordinates it needs never arrive.
-    lat = json['lat'] != null ? double.tryParse(json['lat'].toString()) : null;
-    lng = json['lng'] != null ? double.tryParse(json['lng'].toString()) : null;
-    dropLat = json['drop_lat'] != null ? double.tryParse(json['drop_lat'].toString()) : null;
-    dropLng = json['drop_lng'] != null ? double.tryParse(json['drop_lng'].toString()) : null;
-    pickupaddress = json['pickup_address'];
-    dropaddress = json['drop_address'];
+    lat = toDouble(pickup?['lat'] ?? json['lat']);
+    lng = toDouble(pickup?['lng'] ?? json['lng']);
+    dropLat = toDouble(drop?['lat'] ?? json['drop_lat']);
+    dropLng = toDouble(drop?['lng'] ?? json['drop_lng']);
+    pickupaddress = (pickup?['address'] ?? json['pickup_address'])?.toString();
+    dropaddress = (drop?['address'] ?? json['drop_address'])?.toString();
 
-    customerInfo = json['customer_info'] != null
-        ? CustomerInfo.fromJson(json['customer_info'])
-        : null;
+    customerInfo = party != null ? CustomerInfo.fromJson(party) : null;
 
     baseFare = json['base_fare']?.toString();
-    totalFare = json['total_fare']?.toString();
-    distance = json['distance']?.toString();
-    time = json['time']?.toString();
+    totalFare = (payment?['total_fare'] ?? json['total_fare'])?.toString();
+    // ride_details.trip.distance / .duration — the values the user pointed at.
+    distance = (trip?['distance'] ?? json['distance'])?.toString();
+    time = (trip?['duration'] ?? json['time'])?.toString();
     paymentMode = (json['payment_mode'] ?? json['payment_type'] ?? json['payment_method'])?.toString();
   }
-
   Map<String, dynamic> toJson() {
     return {
       'booking_id': bookingId,
@@ -126,10 +136,13 @@ class CustomerInfo {
   });
 
   CustomerInfo.fromJson(Map<String, dynamic> json) {
-    customer = json['customer_id'];
-    profileImage = json['profile_image'];
-    name = json['name'];
-    phone = json['phone'];
+    // This object arrives labelled customer_info, customer or driver depending
+    // on the endpoint, and its id/image keys vary with it — read whichever
+    // form is present rather than one fixed spelling.
+    customer = json['customer_id'] ?? json['customer'] ?? json['id'];
+    profileImage = (json['profile_image'] ?? json['image'])?.toString();
+    name = json['name']?.toString();
+    phone = json['phone']?.toString();
 
     // Same hard-cast-throws-on-string fix as AcceptRideData.lat/lng above.
     lat = json['lat'] != null ? double.tryParse(json['lat'].toString()) : null;

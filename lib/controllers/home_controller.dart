@@ -47,66 +47,12 @@ class HomeController extends GetxController {
   bool isRingtonePlaying = false;
   bool hasActiveRide = false;
 
-  // Booking ids rideCompletedMarked() has succeeded for, kept permanently
-  // (not on a timer) and persisted so they survive an app restart. Guards
-  // driverBookingActives() below.
-  //
-  // This used to be a single _lastCompletedBookingId honored only within a
-  // 2-minute window, on the theory that a driver-booking-active read landing
-  // shortly after completion could still report the just-finished booking as
-  // "ongoing" because the backend hadn't caught up yet. That assumption is
-  // what broke: `homescreen` is a plain GetPage, so *every* return to Home —
-  // not just the one right after completing a ride — creates a fresh
-  // HomeMapScreen and re-arms its 10s driverBookingActives() check. Any later
-  // revisit past the 2-minute window (or a backend that simply takes longer
-  // than 2 minutes to mark a booking completed — which, given everything else
-  // found wrong with this backend's responses, is not a safe assumption to
-  // make) hit an expired guard and read that stale "ongoing" as real, yanking
-  // the driver straight back into the ride screen for a booking they'd
-  // already been paid for and left — reported as the payment prompt
-  // reappearing "after some time" back on Home.
-  //
-  // Once this app instance has completed a booking, there is no legitimate
-  // reason to ever route back into it again, no matter how long the backend
-  // takes to catch up — so remember it for good instead of on a clock.
-  static const String _completedBookingIdsPrefsKey = 'completed_booking_ids';
-  // Capped so this can't grow without bound over a long-lived install; a
-  // driver is never going to need protection against a completion older than
-  // its most recent few dozen rides.
-  static const int _maxRememberedCompletedBookingIds = 50;
-  final Set<String> _completedBookingIds = <String>{};
-  bool _completedBookingIdsLoaded = false;
-
-  Future<void> _ensureCompletedBookingIdsLoaded() async {
-    if (_completedBookingIdsLoaded) return;
-    _completedBookingIdsLoaded = true;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getStringList(_completedBookingIdsPrefsKey);
-      if (saved != null) _completedBookingIds.addAll(saved);
-    } catch (e) {
-      debugPrint('[CompletedRides] failed to load persisted ids: $e');
-    }
-  }
-
-  Future<void> _rememberCompletedBookingId(String bookingId) async {
-    _completedBookingIds.add(bookingId);
-    // Oldest-first eviction isn't tracked precisely (a Set has no order
-    // guarantee) — approximate is fine here, this is a safety net, not an
-    // audit log.
-    while (_completedBookingIds.length > _maxRememberedCompletedBookingIds) {
-      _completedBookingIds.remove(_completedBookingIds.first);
-    }
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(
-        _completedBookingIdsPrefsKey,
-        _completedBookingIds.toList(),
-      );
-    } catch (e) {
-      debugPrint('[CompletedRides] failed to persist ids: $e');
-    }
-  }
+  // Nothing local is remembered about completed bookings any more. This used
+  // to be a persisted set of ids that driverBookingActives() and the
+  // nearby-booking poll both consulted to override the server whenever it
+  // still reported a finished ride as live. The server is the record; if it
+  // reports a completed booking as active, that is a server-side problem to
+  // fix at the source rather than to hide here.
 
   // IDs of nearby trips that have already triggered the ringtone this
   // online session. A single "has it rung yet" boolean (the old approach)
@@ -116,14 +62,6 @@ class HomeController extends GetxController {
   // new request always rings, even while others are already pending.
   final Set<int> _ringedTripIds = {};
 
-  // IDs the driver has explicitly declined via rejectTrip(). There is no
-  // backend "decline this booking" endpoint — rejection is purely local —
-  // and the nearby-booking poll below re-fetches the full "still
-  // unassigned" list from the backend every ~3s. Without this filter, a
-  // rejected request reappears on the very next poll looking exactly like
-  // a brand new one (fresh ringtone, screen pops back open), making the
-  // reject button effectively a ~3-second snooze instead of a decline.
-  final Set<int> _rejectedTripIds = {};
 
   StreamSubscription<Position>? positionStream;
   NewBookingNearByListModel? newBookingNearByModel;
@@ -312,7 +250,6 @@ class HomeController extends GetxController {
     isOnline = false;
     stopListeningBookings();
     _ringedTripIds.clear();
-    _rejectedTripIds.clear();
     await saveOnlineStatus(false);
     update();
 
@@ -581,7 +518,6 @@ class HomeController extends GetxController {
           // clean slate rather than carrying forward ids rung/declined
           // during this now-ended one.
           _ringedTripIds.clear();
-          _rejectedTripIds.clear();
           if (Get.context != null) {
             AnimatedTopToast.show(
               context: Get.context!,
@@ -758,14 +694,20 @@ class HomeController extends GetxController {
   // place.
   bool _isPollingNearbyBookings = false;
 
-  // Cache for the is_busy pre-check below — see its comment for why this
-  // exists. 15s, i.e. one re-check per five poll cycles: long enough to cut
-  // the extra get-profile call by 80%, short enough that a driver who just
-  // got busy is skipped from new-booking-list within one cancellation-worthy
-  // window rather than riding on a minute-old value.
-  static const Duration _busyCheckInterval = Duration(seconds: 15);
-  DateTime? _lastBusyCheckAt;
-  bool _cachedIsBusy = false;
+
+  /// Takes every incoming request card off the map and silences the ringtone.
+  ///
+  /// The single place that tears these down, because doing it partially is
+  /// what caused trouble before: a card removed but the ringtone left playing,
+  /// or ids left in [_ringedTripIds] so a genuinely new request arriving
+  /// afterwards was treated as already-rung and never rang at all.
+  void _clearIncomingRequests() {
+    if (incomingTrips.isEmpty && _ringedTripIds.isEmpty) return;
+    incomingTrips = [];
+    _ringedTripIds.clear();
+    stopRingtone();
+    update();
+  }
 
   Future<void> _pollNearbyBookings() async {
     if (_isClosed) return;
@@ -774,50 +716,13 @@ class HomeController extends GetxController {
     _isPollingNearbyBookings = true;
 
     try {
-      // Do not search if the driver is busy with an accepted/ongoing ride.
-      // This is a secondary, best-effort guard (the backend's own
-      // new-booking-list query is what actually has to prevent double
-      // assignment) — so a failure to *determine* busy status must not be
-      // treated the same as *confirmed* busy. It used to `return` here on
-      // any exception (timeout, parse error, dropped connection), which
-      // silently skipped the entire poll cycle — including the actual
-      // new-booking-list fetch below — every single time this call had a
-      // hiccup, with nothing logged to say why. A driver hitting this on
-      // most/every cycle would see their incoming-request card simply never
-      // appear, indistinguishable from there being no nearby riders at all.
-      //
-      // Only re-fetched every _busyCheckInterval rather than on every single
-      // 3s tick — this alone was doubling the request rate of the whole
-      // dispatch loop (a full get-profile call purely to read one field,
-      // back-to-back with the new-booking-list call it gates) for as long as
-      // any driver was online. It's only a secondary guard, so a slightly
-      // stale cached value between real checks costs nothing the backend
-      // wasn't already covering.
-      final bool needsBusyCheck = _lastBusyCheckAt == null ||
-          DateTime.now().difference(_lastBusyCheckAt!) >= _busyCheckInterval;
-      if (needsBusyCheck) {
-        try {
-          final profileRes = await homeRepo.getDriverProfile();
-          _lastBusyCheckAt = DateTime.now();
-          if (profileRes.statusCode == 200 && profileRes.body != null) {
-            final profileData = profileRes.body['data'];
-            final isBusy = profileData?['is_busy'];
-            _cachedIsBusy =
-                isBusy == true || isBusy == 1 || isBusy?.toString() == '1';
-          }
-        } catch (e) {
-          debugPrint(
-            '[LocationPipeline] is_busy check failed ($e) — proceeding with '
-            'new-booking-list poll using the last known value instead of '
-            'silently skipping it',
-          );
-        }
-      }
-      if (_cachedIsBusy) {
-        debugPrint('Driver is_busy — skipping new-booking-list poll');
-        return;
-      }
-
+      // No client-side is_busy pre-check. It read the driver's busy state from
+      // get-profile, cached it for 15s, and used that copy to decide whether
+      // to even ask for nearby bookings — a second, always-slightly-stale
+      // opinion about something only the server knows. new-booking-list is
+      // itself the authority on what this driver may be offered, and it
+      // already excludes a driver mid-ride, so asking it directly is both
+      // more correct and one fewer request per cycle.
       try {
         debugPrint(
           '[LocationPipeline] match query run (new-booking-list) '
@@ -851,34 +756,19 @@ class HomeController extends GetxController {
         if (response.statusCode == 200 && responseCode == "200") {
           List data = response.body['data'] ?? [];
 
-          // Same permanent guard used in driverBookingActives() — see there
-          // for the full story. Reported: after completing and being paid
-          // for a ride, the exact same ride's card reappeared as if it were
-          // a fresh incoming request, and tapping it (or any other) then got
-          // rejected with "You already have an active ride" — the backend's
-          // own accept-ride check, which is direct evidence the booking
-          // never actually got closed out server-side, even though it was
-          // completed from this app's point of view. new-booking-list
-          // re-offering it is the same kind of staleness that
-          // driverBookingActives() already had to defend against, just on
-          // the "new request" side instead of the "resume an active ride"
-          // side. Filtering it out here means a booking we know we finished
-          // can never come back as a card, regardless of what the backend's
-          // own record still says.
-          await _ensureCompletedBookingIdsLoaded();
-
+          // Rendered exactly as returned. Two client-side filters used to sit
+          // here — one hiding trips declined this session, one hiding trips
+          // this app had ever completed — both of them local opinions that
+          // outranked the server's own answer. They are gone because
+          // new-booking-list is the authority on what this driver may be
+          // offered.
+          //
+          // That makes two server-side behaviours directly visible, by design:
+          // a declined trip returns on the next poll until there is a decline
+          // endpoint to tell the server about it, and a completed booking
+          // returns for as long as complete-ride leaves it open.
           List<NewBookingNearByModel> apiTrips = data
               .map((trip) => NewBookingNearByModel.fromJson(trip))
-              // Drop anything this driver already declined this session —
-              // the backend has no decline endpoint to exclude it for us,
-              // so without this it would resurface on the very next poll —
-              // and anything already completed by this app, ever.
-              .where(
-                (trip) =>
-                    trip.id == null ||
-                    (!_rejectedTripIds.contains(trip.id) &&
-                        !_completedBookingIds.contains(trip.id.toString())),
-              )
               .toList();
 
           debugPrint(
@@ -933,9 +823,34 @@ class HomeController extends GetxController {
           );
 
           update();
+        } else {
+          // Anything that is not the success shape means there is nothing to
+          // offer this driver, so the previous response is discarded — most
+          // importantly after the rider cancels, when the booking simply stops
+          // being returned.
+          //
+          // There used to be no else at all, so that case left incomingTrips
+          // holding whatever it had last time: the cancelled request kept its
+          // card on the map, kept the ringtone going, and tapping accept hit a
+          // booking the backend no longer considered open.
+          debugPrint(
+            '[LocationPipeline] no open bookings (status=${response.statusCode} '
+            'code=$responseCode) — clearing ${incomingTrips.length} card(s)',
+          );
+          _clearIncomingRequests();
         }
       } catch (e) {
-        debugPrint("Booking fetch error: $e");
+        // A failed request is treated exactly like an empty one: the cards on
+        // screen came from an earlier response that is no longer known to be
+        // true, and the backend is the only authority on what is still open.
+        // Holding them would trade a brief gap for the risk of showing a ride
+        // that has already been cancelled or taken — and that stale card is
+        // the whole bug. A live request that is genuinely still open comes
+        // straight back on the next tick.
+        debugPrint(
+          "Booking fetch error: $e — clearing ${incomingTrips.length} card(s)",
+        );
+        _clearIncomingRequests();
       }
     } finally {
       _isPollingNearbyBookings = false;
@@ -978,7 +893,6 @@ class HomeController extends GetxController {
 
   void resetRideState() {
     _ringedTripIds.clear();
-    _rejectedTripIds.clear();
     incomingTrips.clear();
     stopRingtone();
   }
@@ -986,11 +900,6 @@ class HomeController extends GetxController {
   void stopListeningBookings() {
     _dummyTimer?.cancel();
     _dummyTimer = null;
-    // So a stale busy=true from just before going offline (e.g. finishing a
-    // ride) can't survive into the next online session and silently suppress
-    // new-booking-list until the 15s cache would have expired anyway.
-    _lastBusyCheckAt = null;
-    _cachedIsBusy = false;
   }
 
   void returnToExistingHome() {
@@ -1144,8 +1053,10 @@ class HomeController extends GetxController {
   }
 
   void rejectTrip(NewBookingNearByModel trip) {
+    // Removed from view only. With no decline endpoint to tell the server
+    // about it, this trip comes straight back on the next poll — which is the
+    // missing endpoint showing through, not a bug in this method.
     incomingTrips.remove(trip);
-    if (trip.id != null) _rejectedTripIds.add(trip.id!);
 
     if (incomingTrips.isEmpty) {
       _ringedTripIds.clear();
@@ -1394,6 +1305,13 @@ class HomeController extends GetxController {
       } else if (response.body != null &&
           response.body['code']?.toString() == '401') {
         hasActiveRide = true;
+        // The backend has just told us this driver cannot take a trip right
+        // now, so no request card should still be sitting on the map. Without
+        // this the rejected card stays put and stays tappable, and every
+        // further tap returns the same 401 — the "card won't go away and
+        // accept keeps failing" report. The next poll re-asks the server what
+        // this driver may be offered, so whatever it returns then stands.
+        _clearIncomingRequests();
         if (context.mounted) {
           AnimatedTopToast.show(
             context: context,
@@ -1535,8 +1453,13 @@ class HomeController extends GetxController {
             Get.find<ProfileController>().tripDetailsModel = null;
           } catch (_) {}
 
-          // Stop ringtone if playing
-          stopRingtone();
+          // Take down any request card still on the map as well as the
+          // ringtone. Cancelling used to stop the sound but leave
+          // incomingTrips populated, so the driver landed back on Home with
+          // the card for the ride they had just cancelled still sitting
+          // there — and the poll only replaces that list on its next
+          // successful tick, so it stayed until then at best.
+          _clearIncomingRequests();
 
           // Navigate to home screen first (clears all routes including bottom sheet)
           Get.offAllNamed(RouteHelper.getHomeScreen());
@@ -1723,18 +1646,12 @@ class HomeController extends GetxController {
         // just moments after completion. Once we've completed a booking
         // ourselves there's no legitimate reason to ever navigate back into
         // it, so this is checked with no time limit.
-        await _ensureCompletedBookingIdsLoaded();
-        final bool isCompletedBooking =
-            bookingId.isNotEmpty && _completedBookingIds.contains(bookingId);
-
-        if (isCompletedBooking) {
-          debugPrint(
-            "ACTIVE RIDE IGNORED => booking $bookingId was already "
-            "completed by this app; treating this '$status' read as stale "
-            "rather than navigating back into it.",
-          );
-          return;
-        }
+        // No local completed-booking veto. driver-booking-active is the
+        // server's statement about what this driver is currently on, and it
+        // is now followed even when this app believes it finished that ride.
+        // If a completed booking is still reported active, the driver is
+        // routed back into it — which is the server's record showing through
+        // rather than being masked here.
 
         ///=============== TRACK RIDE API CALL =================///
         if (bookingId.isNotEmpty) {
@@ -1914,7 +1831,7 @@ class HomeController extends GetxController {
         // remembered permanently, even though every other trace of it is
         // about to be wiped below. Not awaited: this only writes to
         // SharedPreferences, and nothing below depends on it having landed.
-        _rememberCompletedBookingId(bookingId);
+
 
         // Clear saved ride data from SharedPreferences
         final prefs = await SharedPreferences.getInstance();

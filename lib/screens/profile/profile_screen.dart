@@ -71,9 +71,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             CircleAvatar(
                               radius: 34,
                               backgroundImage:
-                                  (controller.profileimagee != null &&
-                                      controller.profileimagee!.isNotEmpty)
-                                  ? NetworkImage( ApiConstants.imageurl + controller.profileimagee!)
+                                  (controller.resolvedProfileImageUrl != null)
+                                  ? NetworkImage(controller.resolvedProfileImageUrl!)
                                   : const NetworkImage(
                                       "https://cdn-icons-png.flaticon.com/512/9187/9187604.png",
                                     ),

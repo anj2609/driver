@@ -348,11 +348,25 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                         // which is what belongs beside their name. The trip's
                         // own length sits with the trip duration on the right,
                         // so the two pairs never get read as one figure.
+                        // Labelled so the number reads as what it is — how far
+                        // the driver is from the rider's pickup — rather than a
+                        // bare figure next to the name.
+                        Text(
+                          "PICKUP DISTANCE",
+                          style: PoppinsReguler.copyWith(
+                            fontSize: 10,
+                            letterSpacing: 0.4,
+                            color: ColorResources.textColorForGrey,
+                          ),
+                        ),
                         Row(
                           children: [
                             Icon(Icons.location_on, size: 14),
                             Text(
-                              trip.driverToPickupDistance != null
+                              // Zero means the backend gave no figure, not
+                              // that the rider is at the driver's feet.
+                              (trip.driverToPickupDistance != null &&
+                                      trip.driverToPickupDistance! > 0)
                                   ? "${trip.driverToPickupDistance!.toStringAsFixed(1)} km away"
                                   : "Nearby",
                               style: PoppinsReguler,
@@ -367,9 +381,17 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    // Fare was never shown at all — same root cause, the
-                    // model had nowhere to hold it.
-                    if (trip.fare != null && trip.fare!.isNotEmpty)
+                    // Fare, now under a label — a bare "₹120" on the right gave
+                    // no clue whether it was the fare, a distance, or a time.
+                    if (trip.fare != null && trip.fare!.isNotEmpty) ...[
+                      Text(
+                        "FARE",
+                        style: PoppinsReguler.copyWith(
+                          fontSize: 10,
+                          letterSpacing: 0.4,
+                          color: ColorResources.textColorForGrey,
+                        ),
+                      ),
                       Text(
                         "₹${trip.fare}",
                         style: PoppinsBold.copyWith(
@@ -377,25 +399,39 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                           fontSize: 16,
                         ),
                       ),
+                    ],
                     // The trip itself: how long it is and how long it takes,
-                    // kept together so they read as one journey. Either half
-                    // can be missing without leaving a stray separator.
+                    // under its own label so it isn't mistaken for the pickup
+                    // distance on the left. Either half can be missing without
+                    // leaving a stray separator.
                     if (trip.distance != null ||
-                        (trip.time?.isNotEmpty ?? false))
+                        (trip.time?.isNotEmpty ?? false)) ...[
                       Padding(
-                        padding: const EdgeInsets.only(top: 4),
+                        padding: const EdgeInsets.only(top: 6),
                         child: Text(
-                          [
-                            if (trip.distance != null)
-                              "${trip.distance!.toStringAsFixed(1)} km",
-                            if (trip.time?.isNotEmpty ?? false) trip.time!,
-                          ].join("  •  "),
+                          "TRIP",
                           style: PoppinsReguler.copyWith(
+                            fontSize: 10,
+                            letterSpacing: 0.4,
                             color: ColorResources.textColorForGrey,
-                            fontSize: 12,
                           ),
                         ),
                       ),
+                      Text(
+                        [
+                          // Left out entirely rather than shown as "0.0 km";
+                          // this line joins whatever it has, so an absent
+                          // distance simply doesn't appear.
+                          if (trip.distance != null && trip.distance! > 0)
+                            "${trip.distance!.toStringAsFixed(1)} km",
+                          if (trip.time?.isNotEmpty ?? false) trip.time!,
+                        ].join("  •  "),
+                        style: PoppinsReguler.copyWith(
+                          color: ColorResources.blackcolor,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ],

@@ -46,6 +46,23 @@ class ProfileController extends GetxController implements GetxService {
   AboutUsModel? aboutUsDetails;
   Rx<File?> profileImage = Rx<File?>(null);
   String? profileimagee;
+
+  /// The profile photo as a ready-to-load URL, or null when there is none.
+  ///
+  /// Every avatar used to build `imageurl + profileimagee` by hand, which
+  /// breaks the moment the backend returns an absolute URL (it becomes
+  /// `https://host/https://host/...`) or the literal string "null". After a
+  /// text-only profile edit the server can return the photo in a different
+  /// form than the get-profile that first loaded it, which is what made the
+  /// avatar vanish on Continue. Resolving it in one place — absolute URLs used
+  /// as-is, blank/"null" treated as no photo, everything else prefixed —
+  /// keeps every screen consistent regardless of which form comes back.
+  String? get resolvedProfileImageUrl {
+    final raw = profileimagee?.trim();
+    if (raw == null || raw.isEmpty || raw == 'null') return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    return '${ApiConstants.imageurl}$raw';
+  }
   String? userName;
   String? emailAddress;
   String selectedCategory = "ride";
@@ -179,6 +196,12 @@ class ProfileController extends GetxController implements GetxService {
             emailController.text = userData.email ?? "";
             genderController.text = userData.gender ?? "";
             profileimagee = userData.profileImage ?? "";
+            // If this logs empty right after a text-only edit, the backend
+            // dropped the photo on update (old_profile_image not honoured) —
+            // a server fix, not a client one. If it logs a full https URL,
+            // resolvedProfileImageUrl below now handles it instead of
+            // double-prefixing it into a broken link.
+            debugPrint('[Profile] profile_image from server = "${userData.profileImage}"');
             dobController.text = userData.dateOfBirth ?? "";
             userName = userData.name ?? "";
             emailAddress = userData.email ?? "";

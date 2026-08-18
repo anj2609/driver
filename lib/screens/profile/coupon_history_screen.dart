@@ -85,15 +85,14 @@ class _CouponHistoryScreenState extends State<CouponHistoryScreen> {
           if (controller.couponHistoryList.isEmpty) {
             return const Center(
               child: Text(
-                "No coupon history yet",
+                "No referral history yet",
                 style: TextStyle(color: Colors.grey),
               ),
             );
           }
 
           return RefreshIndicator(
-            onRefresh: () =>
-                controller.getCouponHistoryApi(context: context),
+            onRefresh: () => controller.getCouponHistoryApi(context: context),
             child: ListView.separated(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(16),
