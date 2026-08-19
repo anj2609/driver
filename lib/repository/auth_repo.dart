@@ -22,7 +22,6 @@ class AuthRepo extends GetxService {
     log('resend  otp number $phone');
     return apiClient.postsignUpData(ApiConstants.sendOtpUrl, {
       "phone": phone,
-      "type": type,
       "user_type": ApiConstants.driverLogin,
       "device_type": devicetype,
       "device_token": devicetoken,
@@ -39,7 +38,6 @@ class AuthRepo extends GetxService {
     // new code.
     return apiClient.postsignUpData(ApiConstants.reSendOtp, {
       "phone": phone,
-      "type": type,
       "user_type": ApiConstants.driverLogin,
     });
   }
@@ -53,8 +51,14 @@ class AuthRepo extends GetxService {
     String? division,
     String? city,
   }) async {
-    print('testing $city');
+    // Reached from ernwithmyride_screen, the very next screen after a new
+    // driver's verify-otp — same signup_token used by basic-info, since this
+    // driver has no session token yet either.
+    final prefs = await SharedPreferences.getInstance();
+    final String signupToken = prefs.getString(ApiConstants.signupToken) ?? "";
+
     return apiClient.myridepostData(ApiConstants.driveraddress, {
+      "signup_token": signupToken,
       "country": country.toString(),
       "division": division.toString(),
       "city": city.toString(),
@@ -155,13 +159,42 @@ class AuthRepo extends GetxService {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     dynamic userId = prefs.getString(ApiConstants.profileid);
 
-    return apiClient.postMultipartData(ApiConstants.basicInfo, {
+    // A brand-new driver has no user_id yet — they are carried by the
+    // signup_token verify-otp returned. Both are sent; the backend uses
+    // whichever applies.
+    final String signupToken = prefs.getString(ApiConstants.signupToken) ?? "";
+    final String phone = prefs.getString(ApiConstants.pendingPhone) ?? "";
+
+    // Same fix as the rider app's equivalent call: user_id was always sent,
+    // even empty, for a brand-new driver who has no account yet — a
+    // reference request confirmed working against the live backend omits
+    // it entirely in that case, sending only signup_token. Only include it
+    // when there's a real value.
+    final String resolvedUserId = (userId is String && userId.isNotEmpty)
+        ? userId
+        : ApiConstants.userIdSocial;
+
+    final Map<String, String> body = {
+      "phone": phone,
+      "user_type": ApiConstants.driverLogin,
+      "signup_token": signupToken,
       "name": name ?? "",
       "email": email ?? "",
       "gender": gender ?? "",
       "date_of_birth": dob ?? "",
-      "user_id": userId ?? ApiConstants.userIdSocial,
-    }, profile_image);
+    };
+    if (resolvedUserId.isNotEmpty) {
+      body["user_id"] = resolvedUserId;
+    }
+
+    return apiClient.postMultipartData(ApiConstants.basicInfo, body, profile_image);
+  }
+
+  Future<bool> savePendingPhone(String phone) async {
+    return await sharedPreferences.setString(
+      ApiConstants.pendingPhone,
+      phone,
+    );
   }
 
   /////==============  driver upload document =======////
@@ -269,6 +302,13 @@ class AuthRepo extends GetxService {
   }
 
   ////vehicleId
+  Future<bool> saveSignupToken(String signupToken) async {
+    return await sharedPreferences.setString(
+      ApiConstants.signupToken,
+      signupToken,
+    );
+  }
+
   Future<bool> saveUserprofileid(String profileid) async {
     apiClient.profileid = profileid.toString();
 

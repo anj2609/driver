@@ -9,6 +9,13 @@ class ApiConstants {
   static const String reSendOtp = 're-send';
   static const String loginapi = 'login';
   static const String basicInfo = 'basic-info';
+  // Short-lived token from verify-otp for a brand-new driver, used to
+  // authenticate their basic-info submission before a real session token.
+  static const String signupToken = 'signup_token';
+  // The phone number being verified, persisted so basic-info can send it —
+  // driverdetails_screen (where basic-info is submitted) is reached with no
+  // route argument carrying it, unlike the rider's equivalent screen.
+  static const String pendingPhone = 'pending_phone';
   static const String getUserProfileUrl = 'get-profile';
   static const String editProfileUrl = 'update-profile';
   static const String logOutUrl = 'logout';

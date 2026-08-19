@@ -235,6 +235,36 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                         }
 
                         var data = body["data"];
+
+                        // Mirrors the rider flow: a brand-new driver is sent to
+                        // start registration, carried by the signup_token until
+                        // it is complete. An existing driver falls through to
+                        // the profile_status routing below unchanged — the
+                        // "normal flow like now".
+                        final bool isNewUser = data?["is_new_user"] == true;
+                        if (isNewUser) {
+                          await prefs.setString(
+                            ApiConstants.signupToken,
+                            data?["signup_token"]?.toString() ?? "",
+                          );
+                          Get.offAllNamed(
+                            RouteHelper.getearnWithMyRideScreen(),
+                          );
+                          return;
+                        }
+
+                        // is_new_user: false means this driver is already
+                        // fully registered — no onboarding to resume, straight
+                        // into the app, mirroring the rider's own existing-user
+                        // path. The profile_status/document-resume routing
+                        // below is left in place only for the legacy
+                        // code == "401" (verified-but-incomplete) response;
+                        // it no longer runs for a normal code == "200" verify.
+                        if (code == "200") {
+                          Get.offAllNamed(RouteHelper.gethomescreen());
+                          return;
+                        }
+
                         String? profileStatus = data?["profile_status"]
                             ?.toString();
 

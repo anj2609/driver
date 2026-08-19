@@ -412,6 +412,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _buildStepper() {
     List<String> steps = ["Personal", "Vehicle", "Document", "Preview"];
 
+    // currentStep alone isn't enough to know where the driver actually is:
+    // driver-document upload has no bubble of its own in this 4-step layout
+    // and instead lives inside currentStep == 0, distinguished only by
+    // isPersonalSaved (see the Form's content switch above). The stepper used
+    // to read currentStep by itself, so once personal info was saved and the
+    // screen moved on to documents, "Personal" stayed lit as the active step
+    // — timeline showing "Personal" while the driver was actually filling
+    // out documents.
+    //
+    // There's nowhere to light up "you are on documents now" (no bubble
+    // represents it), so the honest fix is to stop claiming "Personal" is
+    // still in progress: it shows completed, and progress carries into the
+    // connecting line toward "Vehicle" — same as any step already finished
+    // — without falsely activating "Vehicle" itself before the driver has
+    // reached it.
+    final bool onDriverDocsSubStep = currentStep == 0 && isPersonalSaved;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
@@ -419,8 +436,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           /// STEP CIRCLE
           if (index.isEven) {
             int stepIndex = index ~/ 2;
-            bool isActive = stepIndex == currentStep;
-            bool isCompleted = stepIndex < currentStep;
+            bool isActive = stepIndex == currentStep && !onDriverDocsSubStep;
+            bool isCompleted =
+                stepIndex < currentStep || (stepIndex == 0 && onDriverDocsSubStep);
 
             return Column(
               children: [
@@ -459,7 +477,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
           /// CONNECTING LINE
           else {
             int lineIndex = (index - 1) ~/ 2;
-            bool isCompleted = lineIndex < currentStep;
+            bool isCompleted =
+                lineIndex < currentStep || (lineIndex == 0 && onDriverDocsSubStep);
 
             return Expanded(
               child: Container(
@@ -511,8 +530,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
         const SizedBox(height: 15),
 
-        /// Adhaar Number
-        _buildTextField(label: "Email", controller: emailController),
+        _buildTextField(
+          label: "Email",
+          controller: emailController,
+          // Was the same bare non-empty check as every other field on this
+          // step, so "asdf" or "a@b" passed as a valid email and only
+          // surfaced as a rejection once basic-info round-tripped to the
+          // backend. GetUtils.isEmail is the same check the rider app's
+          // equivalent screen already uses.
+          validator: (value) {
+            final email = value?.trim() ?? '';
+            if (email.isEmpty) return "Email is required";
+            if (!GetUtils.isEmail(email)) {
+              return "Please enter a valid email address";
+            }
+            return null;
+          },
+        ),
         const SizedBox(height: 15),
         // const SizedBox(height: 15),
         buildLabel("Date of Birth"),
@@ -818,15 +852,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _buildTextField({
     required String label,
     required TextEditingController controller,
+    // Was one generic "$label is required" check shared by every field on
+    // this step, Email included — so "asdf" passed as a valid email address
+    // the same way an empty box was rejected. A caller can now supply a
+    // field-specific check (see the Email field below); every other field
+    // keeps the plain required-check as before.
+    String? Function(String?)? validator,
   }) {
     return TextFormField(
       controller: controller,
-      validator: (value) {
-        if (value == null || value.isEmpty) {
-          return "$label is required";
-        }
-        return null;
-      },
+      validator: validator ??
+          (value) {
+            if (value == null || value.trim().isEmpty) {
+              return "$label is required";
+            }
+            return null;
+          },
       decoration: InputDecoration(
         labelText: label,
         filled: true,

@@ -953,6 +953,11 @@ class AuthController extends GetxController implements GetxService {
 
     try {
 
+    // Persisted unconditionally so it's available if this verify turns out
+    // to be a new driver's — basic-info needs it and has no other way to get
+    // it (see ApiConstants.pendingPhone).
+    await authRepo.savePendingPhone(mobileNumber);
+
     Response response = await authRepo.verifyOtpApi(
       phone: mobileNumber,
       otp: numOfOtp,
@@ -969,11 +974,25 @@ class AuthController extends GetxController implements GetxService {
 
     /// ================= SUCCESS (200) =================
     if (code == "200") {
-  String? tokenDriver = data?["token"]?.toString();
-  String? userIdDriver = data?["user"]?["id"]?.toString();
+  // Mirrors the rider flow: the backend states outright whether this is a
+  // first-time driver. A new driver has no session token yet, only a
+  // signup_token that carries them through registration; an existing driver
+  // gets the real token and user record. Navigation itself stays in
+  // otp_screen (profile_status / is_new_user).
+  final bool isNewUser = data?["is_new_user"] == true;
 
-  authRepo.saveUserToken(tokenDriver ?? "");
-  authRepo.saveUserprofileid(userIdDriver ?? "");
+  if (isNewUser) {
+    authRepo.saveSignupToken(data?["signup_token"]?.toString() ?? "");
+  } else {
+    final String? tokenDriver = data?["token"]?.toString();
+    final String? userIdDriver = data?["user"]?["id"]?.toString();
+    if (tokenDriver != null && tokenDriver.isNotEmpty && tokenDriver != 'null') {
+      authRepo.saveUserToken(tokenDriver);
+    }
+    if (userIdDriver != null && userIdDriver.isNotEmpty && userIdDriver != 'null') {
+      authRepo.saveUserprofileid(userIdDriver);
+    }
+  }
 
   if (context.mounted) AnimatedTopToast.show(
     context: context,
@@ -1190,6 +1209,22 @@ else {
       );
 
       if (response.body["code"]?.toString() == "200") {
+        // A new driver reaches basic-info carrying only a signup_token; the
+        // real session token is issued here, on completion — mirrors the
+        // rider's fillPersonalInfoApi. Without this, a brand-new driver would
+        // finish registration still holding no session token at all.
+        final personalData = response.body["data"];
+        final String? tokenDriver = personalData?["token"]?.toString();
+        final String? userIdDriver =
+            (personalData?["user"]?["id"] ?? personalData?["user_id"])
+                ?.toString();
+        if (tokenDriver != null && tokenDriver.isNotEmpty && tokenDriver != 'null') {
+          authRepo.saveUserToken(tokenDriver);
+        }
+        if (userIdDriver != null && userIdDriver.isNotEmpty && userIdDriver != 'null') {
+          authRepo.saveUserprofileid(userIdDriver);
+        }
+
         if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: "Personal information saved successfully.",
@@ -1201,12 +1236,73 @@ else {
 
         await Future.delayed(const Duration(milliseconds: 500));
       } else {
-        if (context.mounted) AnimatedTopToast.show(
-          context: context,
-          message: 'Unable to save your information. Please try again.',
-          backgroundColor: Colors.red,
-          icon: Icons.error_rounded,
-        );
+        // Was always the same generic line regardless of what the backend
+        // actually said — so a specific, actionable rejection (an account
+        // for this number already exists) looked identical to a transient
+        // failure, and "Please try again" was the only guidance offered for
+        // an error that retrying can never fix (resubmitting hits the same
+        // rejection every time — which is exactly what happened: five
+        // identical attempts, five identical 401s).
+        final String rawMessage = response.body?['message']?.toString() ?? '';
+        final bool alreadyExists = rawMessage.toLowerCase().contains('already exist') ||
+            rawMessage.toLowerCase().contains('already registered') ||
+            rawMessage.toLowerCase().contains('already in use');
+
+        if (alreadyExists) {
+          // This phone already has a completed account — signup_token is
+          // for a registration that has already happened, so there is
+          // nothing left for this screen to submit. Recover the same way
+          // sendOtpWithTypeDetection() already does for the equivalent
+          // send-otp case: send a fresh login OTP for the number and drop
+          // the driver into that flow, rather than leaving them stuck
+          // resubmitting a request that can only ever fail.
+          if (context.mounted) AnimatedTopToast.show(
+            context: context,
+            message: "This number is already registered. Sending a login OTP...",
+            backgroundColor: Colors.orange,
+            icon: Icons.info_outline,
+          );
+
+          final prefs = await SharedPreferences.getInstance();
+          final String phone = prefs.getString(ApiConstants.pendingPhone) ?? '';
+
+          if (phone.isNotEmpty) {
+            final loginOtpResponse = await authRepo.sendOtpApi(
+              phone: phone,
+              type: ApiConstants.UserLogin,
+              devicetoken: deviceToken,
+              devicetype: deviceType,
+            );
+
+            if (loginOtpResponse.body?['code']?.toString() == '200') {
+              await Future.delayed(const Duration(milliseconds: 500));
+              RouteHelper.getOtpVerification(phone, ApiConstants.UserLogin);
+            } else if (context.mounted) {
+              AnimatedTopToast.show(
+                context: context,
+                message: "Please log in with this number from the login screen.",
+                backgroundColor: Colors.red,
+                icon: Icons.error_rounded,
+              );
+            }
+          } else if (context.mounted) {
+            AnimatedTopToast.show(
+              context: context,
+              message: "Please log in with this number from the login screen.",
+              backgroundColor: Colors.red,
+              icon: Icons.error_rounded,
+            );
+          }
+        } else if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: rawMessage.isNotEmpty
+                ? rawMessage
+                : 'Unable to save your information. Please try again.',
+            backgroundColor: Colors.red,
+            icon: Icons.error_rounded,
+          );
+        }
       }
 
       return response;
