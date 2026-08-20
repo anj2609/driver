@@ -26,6 +26,19 @@ class Data {
   String? totalFare;
   int? distance;
 
+  // The real, live /trip-detail response (confirmed via the rider app's own
+  // model, which this mirrors) nests fare under `payment`, not at the top
+  // level: {data: {payment: {total_fare, final_amount, ...}, ...}}. The
+  // fields above were reading json['total_fare'] etc. from the top level,
+  // which is why they always came back null and the ride-complete screen
+  // fell back to a pre-completion snapshot instead. Added rather than
+  // replacing the fields above — mainactivity_detail_screen.dart already
+  // depends on those for other bookings/response shapes.
+  double? finalAmount;
+  double? paymentTotalFare;
+  double? promoDiscount;
+  double? walletUsed;
+
   Data(
       {this.bookingId,
       this.status,
@@ -36,7 +49,11 @@ class Data {
       this.baseFare,
       this.discountFare,
       this.totalFare,
-      this.distance});
+      this.distance,
+      this.finalAmount,
+      this.paymentTotalFare,
+      this.promoDiscount,
+      this.walletUsed});
 
   Data.fromJson(Map<String, dynamic> json) {
     bookingId = json['booking_id'];
@@ -52,7 +69,19 @@ class Data {
     ? null
     : int.tryParse(json['distance'].toString());
     //distance = json['distance'];
+
+    final payment = json['payment'];
+    if (payment is Map) {
+      finalAmount = _toDouble(payment['final_amount']);
+      paymentTotalFare = _toDouble(payment['total_fare']);
+      promoDiscount = _toDouble(payment['promo_discount']);
+      walletUsed = _toDouble(payment['wallet_used']);
+    }
   }
+}
 
-
+double? _toDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString());
 }

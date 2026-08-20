@@ -7,6 +7,7 @@ import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
+import 'package:myridedriverapp/controllers/profile_controller.dart';
 
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
@@ -297,6 +298,41 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
   // times a second while the location stream is live.
   bool _paymentPromptShown = false;
 
+  /// Fetches a fresh /trip-detail right before the payment prompt goes up, so
+  /// the amount shown is the backend's actual recalculated fare
+  /// (`payment.final_amount`) rather than track-booking-ride's last poll —
+  /// which, for a ride that ran longer or shorter than quoted, is the
+  /// original estimate, not what the rider actually owes. Same endpoint and
+  /// field the rider app already reads to show this same number.
+  ///
+  /// Falls back to [fallbackFare] if the fetch fails or genuinely has
+  /// nothing better to offer, so a slow/failed request never blocks the
+  /// prompt from appearing at all.
+  Future<void> _promptPaymentWithFinalFare(
+    HomeController controller,
+    String bookingId,
+    String fallbackFare,
+  ) async {
+    String resolvedFare = fallbackFare;
+
+    try {
+      final profileController = Get.find<ProfileController>();
+      await profileController.tripRideDetailsApi(
+        context: context,
+        bookingid: bookingId,
+      );
+      final finalAmount = profileController.tripDetailsModel?.data?.finalAmount;
+      if (finalAmount != null && finalAmount > 0) {
+        resolvedFare = finalAmount.toStringAsFixed(2);
+      }
+    } catch (e) {
+      debugPrint('[StartRide] fetching final fare failed, using fallback: $e');
+    }
+
+    if (!mounted) return;
+    await _showPaymentPrompt(controller, bookingId, resolvedFare);
+  }
+
   /// Raises the end-of-ride payment prompt.
   ///
   /// This replaces the inline Online/Cash buttons that used to sit in a bottom
@@ -386,6 +422,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
               Expanded(
                 child: CustomPrimaryButton(
                   text: 'Online Payment',
+                  fontSize: 13,
                   onTap: () => Navigator.of(dialogCtx).pop('online'),
                 ),
               ),
@@ -393,6 +430,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
               Expanded(
                 child: CustomPrimaryButton(
                   text: 'Cash Payment',
+                  fontSize: 13,
                   onTap: () => Navigator.of(dialogCtx).pop('cash'),
                 ),
               ),
@@ -461,7 +499,12 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
           });
 
           final bookingId = data.data!.bookingId.toString();
-          final totalFare = data.data?.totalFare?.toString() ?? '0';
+          // track-booking-ride's own total_fare is whatever was last polled
+          // (up to ~15s stale) and, per the rider app's own trip-detail
+          // model, isn't where the backend actually reports the recalculated
+          // fare — /trip-detail's `payment.final_amount` is. Used as the
+          // fallback only until that fresher figure is fetched below.
+          final fallbackFare = data.data?.totalFare?.toString() ?? '0';
 
           // The Online/Cash buttons and the bottom sheet that held them are
           // gone from this screen; the fare, the closing message and the
@@ -473,7 +516,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
           if (!_paymentPromptShown && !_isPaymentDone && !_isPaymentProcessing) {
             _paymentPromptShown = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              _showPaymentPrompt(controller, bookingId, totalFare);
+              _promptPaymentWithFinalFare(controller, bookingId, fallbackFare);
             });
           }
 

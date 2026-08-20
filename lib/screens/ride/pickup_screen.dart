@@ -635,6 +635,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
+import 'package:myridedriverapp/config/utils/duration_format.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/chat_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
@@ -644,6 +645,7 @@ import 'package:myridedriverapp/screens/home/ridedetails_screen.dart' show booki
 import 'package:myridedriverapp/widgets/canclerideconfirmations.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/inapp_navigation_map.dart';
+import 'package:myridedriverapp/widgets/toaster_animation.dart';
 import 'package:pinput/pinput.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -851,6 +853,30 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     return value != null && value > 0;
   }
 
+  /// The fare shown on this screen while the ride is ongoing, and the fare
+  /// resolved for the end-of-ride payment dialog (see
+  /// StartDriverRideScreen._promptPaymentWithFinalFare) used to come from two
+  /// different places — this one straight off track-booking-ride's
+  /// (unreconciled) `total_fare`, that one from /trip-detail's recalculated
+  /// `payment.final_amount` — so a driver could watch one number the whole
+  /// ride and then get handed a different one the moment it ended. Same
+  /// precedence as that dialog now: prefer /trip-detail's figure (already
+  /// fetched at OTP-verify time into this same ProfileController), so both
+  /// screens agree throughout.
+  String _ongoingFareText(HomeController controller, AcceptRideData? rideData) {
+    final tripData = Get.find<ProfileController>().tripDetailsModel?.data;
+    final fromTripDetail = tripData?.finalAmount ?? tripData?.paymentTotalFare;
+    if (fromTripDetail != null && fromTripDetail > 0) {
+      return fromTripDetail.toStringAsFixed(2);
+    }
+
+    if (rideData?.totalFare != null && rideData!.totalFare!.isNotEmpty) {
+      return rideData.totalFare!;
+    }
+    if (controller.estimatePrice.isNotEmpty) return controller.estimatePrice;
+    return '—';
+  }
+
   String _etaText(HomeController controller, AcceptRideData? rideData) {
     // The booking's own trip time (track-booking-ride's `time`) comes first,
     // and deliberately outranks the live figure. Before OTP the only live
@@ -860,19 +886,26 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // stable, authoritative answer for the journey the driver is taking on,
     // so it is shown until a live figure for the *same* journey exists (only
     // once the ride is ongoing and a real destination route is running).
-    if (_isRealValue(rideData?.time)) return '${rideData!.time!.trim()} min';
+    if (_isRealValue(rideData?.time)) {
+      return formatMinutesLabel(rideData!.time) ?? '${rideData.time!.trim()} min';
+    }
 
     final live = _liveEtaSeconds;
     if (isOtpVerified && live != null && live > 0) return _formatEta(live);
 
     if (_isRealValue(controller.etaToDestinationMinutes)) {
-      return '${controller.etaToDestinationMinutes.trim()} min';
+      return formatMinutesLabel(controller.etaToDestinationMinutes) ??
+          '${controller.etaToDestinationMinutes.trim()} min';
     }
 
     final estimate = controller.estimateDuration.trim();
     final estimateMinutes = double.tryParse(estimate);
     if (estimate.isNotEmpty && (estimateMinutes == null || estimateMinutes > 0)) {
-      return estimate;
+      // estimateDuration arrives pre-formatted by the backend ("2804 mins")
+      // — reformatted here rather than shown as-is, since a raw four-digit
+      // minute count is exactly the "2000 min" complaint this whole helper
+      // exists to fix.
+      return formatMinutesLabel(estimate) ?? estimate;
     }
 
     return '—';
@@ -896,13 +929,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     return '—';
   }
 
-  String _formatEta(int seconds) {
-    final minutes = (seconds / 60).ceil();
-    if (minutes < 60) return '$minutes min';
-    final hours = minutes ~/ 60;
-    final rem = minutes % 60;
-    return '${hours}h ${rem}m';
-  }
+  String _formatEta(int seconds) => formatSecondsLabel(seconds);
 
   String _formatKm(double meters) => (meters / 1000).toStringAsFixed(1);
 
@@ -1566,13 +1593,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       const SizedBox(height: 5),
 
                                       Text(
-                                        // Same fix — rideData.totalFare comes
-                                        // straight from track-booking-ride
-                                        // for this exact ride; the estimate
-                                        // flow (estimatePrice) is a separate,
-                                        // easy-to-leave-empty mechanism that
-                                        // was the only thing this ever read.
-                                        '₹ ${(rideData.totalFare != null && rideData.totalFare!.isNotEmpty) ? rideData.totalFare : (controller.estimatePrice.isNotEmpty ? controller.estimatePrice : '—')}',
+                                        '₹ ${_ongoingFareText(controller, rideData)}',
                                         style: PoppinsSemiBold.copyWith(
                                           fontSize: 14,
                                           color: ColorResources.blackcolor11,
@@ -1790,7 +1811,12 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                 String otp = _otpController.text.trim();
 
                                 if (otp.length != 4) {
-                                  // No toast — post-accept ride flow is toast-free.
+                                  AnimatedTopToast.show(
+                                    context: context,
+                                    message: "Please enter the 4-digit OTP.",
+                                    backgroundColor: ColorResources.redbuttoncolor,
+                                    icon: Icons.error_rounded,
+                                  );
                                   return;
                                 }
 
@@ -1830,7 +1856,23 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                     });
                                   }
                                 } else {
-                                  // No toast — post-accept ride flow is toast-free.
+                                  // Was silently ignored — tapping Start Ride
+                                  // with a wrong code did nothing at all, no
+                                  // toast, no field reset, nothing to tell
+                                  // the driver why the button appeared to do
+                                  // nothing. The OTP is checked entirely
+                                  // client-side against rideData.otp (see the
+                                  // `if` above), so this is the one place
+                                  // that can ever catch a wrong code — there
+                                  // is no backend round trip to report it
+                                  // from instead.
+                                  AnimatedTopToast.show(
+                                    context: context,
+                                    message: "Incorrect OTP. Please try again.",
+                                    backgroundColor: ColorResources.redbuttoncolor,
+                                    icon: Icons.error_rounded,
+                                  );
+                                  _otpController.clear();
                                 }
                               },
                             ),

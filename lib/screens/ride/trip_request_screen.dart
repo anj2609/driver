@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
+import 'package:myridedriverapp/config/utils/duration_format.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/model/newbooking_nearby_model.dart';
@@ -314,25 +315,50 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
             const SizedBox(height: 10),
 
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    // Was a hardcoded local asset — the model never parsed
-                    // a customer image at all, so nothing the backend sent
-                    // could ever have shown up here regardless.
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundImage:
-                          (trip.customerImage != null && trip.customerImage!.isNotEmpty)
-                              ? NetworkImage(ApiConstants.imageurl + trip.customerImage!)
-                                  as ImageProvider
-                              : const AssetImage("assets/images/profile.png"),
-                    ),
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                // Was two unconstrained children in a spaceBetween Row —
+                // each sized to its own content with nothing capping either
+                // one, so a long customer name or a long trip-stats line
+                // (a big fare, an unformatted multi-thousand-minute duration)
+                // simply overflowed the card's right edge instead of
+                // shrinking to fit. Expanded here / Flexible on the price
+                // side below makes that overflow structurally impossible —
+                // both sides now share the row's actual width instead of
+                // each claiming as much as they want.
+                Expanded(
+                  child: Row(
+                    children: [
+                      // Was a hardcoded local asset — the model never parsed
+                      // a customer image at all, so nothing the backend sent
+                      // could ever have shown up here regardless.
+                      // This card rebuilds on every poll (every ~3s, plus the
+                      // 5s location heartbeat), and new-booking-list doesn't
+                      // always have the rider's photo ready on the very first
+                      // response for a freshly-created booking — it shows up
+                      // a poll or two later. That's a genuine backend timing
+                      // gap, not something fixable from here, but the abrupt
+                      // placeholder→photo swap it produces can be smoothed:
+                      // keyed on the actual image identity, so this only
+                      // animates when the image genuinely changes rather than
+                      // on every unrelated rebuild the poll causes.
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: CircleAvatar(
+                          key: ValueKey(trip.customerImage ?? 'placeholder'),
+                          radius: 22,
+                          backgroundImage:
+                              (trip.customerImage != null && trip.customerImage!.isNotEmpty)
+                                  ? NetworkImage(ApiConstants.imageurl + trip.customerImage!)
+                                      as ImageProvider
+                                  : const AssetImage("assets/images/profile.png"),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                         // Was a hardcoded "Customer" label for the same
                         // reason — the name was never parsed from the
                         // response.
@@ -359,29 +385,38 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                             color: ColorResources.textColorForGrey,
                           ),
                         ),
-                        Row(
-                          children: [
-                            Icon(Icons.location_on, size: 14),
-                            Text(
-                              // Zero means the backend gave no figure, not
-                              // that the rider is at the driver's feet.
-                              (trip.driverToPickupDistance != null &&
-                                      trip.driverToPickupDistance! > 0)
-                                  ? "${trip.driverToPickupDistance!.toStringAsFixed(1)} km away"
-                                  : "Nearby",
-                              style: PoppinsReguler,
+                            Row(
+                              children: [
+                                Icon(Icons.location_on, size: 14),
+                                Flexible(
+                                  child: Text(
+                                    // Zero means the backend gave no figure,
+                                    // not that the rider is at the driver's
+                                    // feet.
+                                    (trip.driverToPickupDistance != null &&
+                                            trip.driverToPickupDistance! > 0)
+                                        ? "${trip.driverToPickupDistance!.toStringAsFixed(1)} km away"
+                                        : "Nearby",
+                                    style: PoppinsReguler,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
 
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // Fare, now under a label — a bare "₹120" on the right gave
+                const SizedBox(width: 8),
+
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      // Fare, now under a label — a bare "₹120" on the right gave
                     // no clue whether it was the fare, a distance, or a time.
                     if (trip.fare != null && trip.fare!.isNotEmpty) ...[
                       Text(
@@ -424,15 +459,22 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                           // distance simply doesn't appear.
                           if (trip.distance != null && trip.distance! > 0)
                             "${trip.distance!.toStringAsFixed(1)} km",
-                          if (trip.time?.isNotEmpty ?? false) trip.time!,
+                          // Now formatted through the shared duration helper
+                          // rather than shown as the raw minute count the
+                          // backend/model can still hand this widget — same
+                          // "2000 min" problem the pickup screen's ETA had.
+                          if (trip.time?.isNotEmpty ?? false)
+                            formatMinutesLabel(trip.time) ?? trip.time!,
                         ].join("  •  "),
                         style: PoppinsReguler.copyWith(
                           color: ColorResources.blackcolor,
                           fontSize: 12,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ],
+                ),
                 ),
               ],
             ),

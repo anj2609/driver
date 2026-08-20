@@ -655,33 +655,46 @@ class ProfileController extends GetxController implements GetxService {
     isNotificationLoading = true;
     update();
 
-    Response response = await profileRepo.getNotifications();
+    // Was no try/catch around this call at all — both resets below sat past
+    // the await, so a network failure or a malformed response (thrown from
+    // NotificationModel.fromJson) skipped both and left isNotificationLoading
+    // stuck true forever. The notification screen would spin on any hiccup
+    // with no way out short of restarting the app.
+    try {
+      Response response = await profileRepo.getNotifications();
 
-    if (response.statusCode == 200 &&
-        response.body['code']?.toString() == '200') {
-      notificationModel = NotificationModel.fromJson(response.body);
+      if (response.statusCode == 200 &&
+          response.body['code']?.toString() == '200') {
+        notificationModel = NotificationModel.fromJson(response.body);
 
-      notificationList = notificationModel?.data ?? [];
+        notificationList = notificationModel?.data ?? [];
 
-      deleteAllNotifications(context: context);
-      notificationList.clear();
+        deleteAllNotifications(context: context);
+        notificationList.clear();
+      } else {
+        Get.snackbar(
+          '',
+          response.body['message'] ?? "Something went wrong",
+          backgroundColor: ColorResources.textColorRed,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+        );
+      }
 
-      isNotificationLoading = false;
-      update();
-    } else {
+      return response;
+    } catch (e) {
       Get.snackbar(
         '',
-        response.body['message'] ?? "Something went wrong",
+        "Unable to load notifications. Please try again.",
         backgroundColor: ColorResources.textColorRed,
         colorText: Colors.white,
         snackPosition: SnackPosition.TOP,
       );
-
+      rethrow;
+    } finally {
       isNotificationLoading = false;
       update();
     }
-
-    return response;
   }
 
   Future<Response> deleteAllNotifications({
@@ -1030,40 +1043,42 @@ class ProfileController extends GetxController implements GetxService {
     isQrLoading = true;
     update();
 
-    Response response;
-
+    // Was rethrow with no reset above it — the two `isQrLoading = false`
+    // lines at the end were only ever reached on success, so any failure
+    // generating the payment QR (network drop, timeout) left this screen's
+    // loader spinning forever with no way to retry short of restarting the
+    // app. A driver waiting to collect payment is exactly the wrong place
+    // for that to happen silently.
     try {
-      response = await profileRepo.genrateQrCOde(
+      Response response = await profileRepo.genrateQrCOde(
         bookingid: id,
         actualDistance: actualDistance,
       );
+
+      final body = response.body;
+
+      if (response.statusCode == 200 && body['code'].toString() == "200") {
+        qrImage = body["data"]["qr_code"].toString();
+        // api response according adjust if key different
+
+        EasyLoading.dismiss();
+
+        Get.to(() => PaymentQrScreen(bookingId: id));
+      } else {
+        EasyLoading.dismiss();
+
+        Get.snackbar("Error", body["message"] ?? "Unable to generate QR code. Please try again.");
+      }
+
+      return response;
     } catch (e) {
-    //  EasyLoading.dismiss();
-
-     // Get.snackbar('Error', "$e", snackPosition: SnackPosition.TOP);
-
+      EasyLoading.dismiss();
+      Get.snackbar('Error', "Unable to generate QR code. Please try again.", snackPosition: SnackPosition.TOP);
       rethrow;
+    } finally {
+      isQrLoading = false;
+      update();
     }
-
-    final body = response.body;
-
-    if (response.statusCode == 200 && body['code'].toString() == "200") {
-      qrImage = body["data"]["qr_code"].toString();
-      // api response according adjust if key different
-
-      EasyLoading.dismiss();
-
-      Get.to(() => PaymentQrScreen(bookingId: id));
-    } else {
-      EasyLoading.dismiss();
-
-      Get.snackbar("Error", body["message"] ?? "Unable to generate QR code. Please try again.");
-    }
-
-    isQrLoading = false;
-    update();
-
-    return response;
   }
 
   Future<Response> verifyQrCodePayment({

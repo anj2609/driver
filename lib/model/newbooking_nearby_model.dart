@@ -102,22 +102,37 @@ class NewBookingNearByModel {
         ? double.tryParse(json['driver_to_pickup_distance'].toString())
         : null;
 
-    // The confirmed accept-ride response (AcceptRideData) nests this
-    // under a "customer_info" object ({customer_id, profile_image, name,
-    // phone, lat, lng}) — this endpoint isn't confirmed to use the exact
-    // same shape, so both the nested and several plausible flat key names
-    // are checked, whichever the backend actually sends here.
+    // CONFIRMED from a real live device response (a driver holding a session
+    // near an actual pending booking): this endpoint's shape is flat — there
+    // is no "customer_info" object at all — and the image key is "image_url",
+    // a name nothing here was ever checking:
+    //   {"name":"New Ji","image_url":"N/A","phone":"8178785849",...}
+    // The nested customer_info guess (copied from AcceptRideData's shape,
+    // never actually confirmed for this endpoint) is kept only as a fallback
+    // in case some other booking type does nest it.
+    customerName = json['name']?.toString();
+    customerImage = json['image_url']?.toString();
+
     final customerInfo = json['customer_info'];
     if (customerInfo is Map) {
-      customerName = customerInfo['name']?.toString();
-      customerImage = customerInfo['profile_image']?.toString();
+      customerName ??= customerInfo['name']?.toString();
+      customerImage ??= customerInfo['profile_image']?.toString();
     }
-    customerName ??= (json['customer_name'] ?? json['user_name'] ?? json['name'])
+    customerName ??= (json['customer_name'] ?? json['user_name'])?.toString();
+    customerImage ??= (json['customer_image'] ?? json['profile_image'] ?? json['user_image'])
         ?.toString();
-    customerImage ??= (json['customer_image'] ??
-            json['profile_image'] ??
-            json['user_image'])
-        ?.toString();
+
+    // The backend's actual "no photo" sentinel is the literal string "N/A"
+    // (confirmed above), not null/empty — every existing null-check in this
+    // model and in trip_request_screen.dart's isNotEmpty guard treats "N/A"
+    // as a real value and tries to load it as a URL, which fails silently
+    // and falls through to Flutter's broken-image state rather than the
+    // profile placeholder. Normalised to null here so every downstream
+    // check (isNotEmpty, the CircleAvatar fallback) behaves correctly
+    // without having to special-case this string everywhere it's read.
+    if (customerImage != null && customerImage!.trim().toUpperCase() == 'N/A') {
+      customerImage = null;
+    }
 
     // CONFIRMED from a real device log: this endpoint sends the fare as
     // "final_amount" — none of the previously-guessed keys below actually

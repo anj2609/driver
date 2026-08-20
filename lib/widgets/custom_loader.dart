@@ -99,7 +99,16 @@ class PremiumBlurLoader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: true,
+      // Was canPop: true, paired with a Cancel button below that called
+      // Navigator.pop() directly — that only ever closed *this dialog*, not
+      // the request it's covering (accept-ride, complete-ride, save-info, …
+      // used across ~23 call sites). Tapping it made the loader vanish while
+      // the real network call kept running with no more feedback at all —
+      // the driver would see nothing happen, then the actual result (an
+      // accepted ride, a saved record) would land moments later unannounced.
+      // This loader is meant to be a true "please wait", matching the
+      // barrierDismissible: false most call sites already use around it.
+      canPop: false,
       child: Material(
         type: MaterialType.transparency,
         // Was IgnorePointer -> BackdropFilter(ImageFilter.blur(...)) ->
@@ -149,16 +158,6 @@ class PremiumBlurLoader extends StatelessWidget {
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  /// Cancel / Back Button
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      // OR Get.back();
-                    },
-                    child: Text("Cancel", style: TextStyle(color: Colors.red)),
                   ),
                 ],
               ),

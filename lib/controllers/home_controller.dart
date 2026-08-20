@@ -730,6 +730,13 @@ class HomeController extends GetxController {
         );
         Response response = await homeRepo.newBookingNearByMe();
 
+        // Unlike track-booking-ride, this endpoint's customer_info shape
+        // (specifically whether it includes profile_image at all) was never
+        // confirmed against a real response — added to settle whether a
+        // missing rider photo on the request card is this endpoint simply
+        // not sending it, or something parsing it wrong further down.
+        debugPrint('[LocationPipeline] new-booking-list RAW RESPONSE ===> ${response.body}');
+
         // The await above is exactly where a cycle can outlive onClose().
         // Bail before touching any state or the ringtone — see _isClosed.
         if (_isClosed) return;

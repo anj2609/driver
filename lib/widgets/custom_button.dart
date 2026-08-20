@@ -127,12 +127,18 @@ class CustomPrimaryButton extends StatelessWidget {
   // spinner instead of the label, so the user sees the request is in
   // flight rather than staring at a button that looks dead while it waits.
   final bool isLoading;
+  // Was fixed to PoppinsSemiBold's default size everywhere, which is fine
+  // full-width but clips a two-word label ("Online Payment", "Cash Payment")
+  // once two of these sit side by side at half width, like the ride-complete
+  // dialog does. Optional so every existing call site keeps its current size.
+  final double? fontSize;
 
   const CustomPrimaryButton({
     Key? key,
     required this.text,
     required this.onTap,
     this.isLoading = false,
+    this.fontSize,
   }) : super(key: key);
 
   @override
@@ -163,7 +169,17 @@ class CustomPrimaryButton extends StatelessWidget {
               )
             : Text(
                 text,
-                style: PoppinsSemiBold.copyWith(color: ColorResources.buttonColors),
+                style: PoppinsSemiBold.copyWith(
+                  color: ColorResources.buttonColors,
+                  fontSize: fontSize,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                // A genuinely too-long label now ellipsizes instead of
+                // clipping against this button's fixed height — the letters
+                // used to just get cut off top/bottom with no visual cue
+                // anything was truncated.
+                overflow: TextOverflow.ellipsis,
               ),
       ),
     );

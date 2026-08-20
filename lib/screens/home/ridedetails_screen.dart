@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
+import 'package:myridedriverapp/config/utils/duration_format.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
@@ -165,15 +166,15 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
 
               final String distanceText =
                   hasValue(distance) ? '$distance km' : '—';
-              // The backend's `time` is a bare number of minutes, while
-              // estimateDuration already arrives formatted ("3 mins") — so
-              // only append the unit to the bare one, or this read "2856"
-              // with no indication of what it counted.
+              // Both a bare minute count from the backend's `time` and an
+              // already-formatted-but-still-raw string like estimateDuration's
+              // "2804 mins" go through the same hour+minute formatter now —
+              // previously a long trip showed as "2856 min" (or, for the
+              // estimate source, whatever raw string the backend sent),
+              // instead of "47h 36m".
               final String durationText = rawDuration.isEmpty
                   ? '—'
-                  : (double.tryParse(rawDuration) != null
-                      ? '$rawDuration min'
-                      : rawDuration);
+                  : (formatMinutesLabel(rawDuration) ?? rawDuration);
 
               return SingleChildScrollView(
                 padding: EdgeInsets.all(width * 0.04),
