@@ -263,6 +263,21 @@ class VehiclesScreen extends StatefulWidget {
 }
 
 class _VehiclesScreenState extends State<VehiclesScreen> {
+  /// get-vehicle-info returns each vehicle photo as a bare filename with no
+  /// directory — unlike every other image field in this app, which already
+  /// includes its own path segment. The actual files live under
+  /// storage/vehicles/, so that has to be added here to get a working URL:
+  /// https://app.nride.in/storage/vehicles/<filename>. Guarded in case the
+  /// backend ever starts sending a fuller path itself, so this can't
+  /// double-prefix into a broken link.
+  String _vehicleImageUrl(String rawImage) {
+    if (rawImage.startsWith('http://') || rawImage.startsWith('https://')) {
+      return rawImage;
+    }
+    final path = rawImage.contains('/') ? rawImage : 'storage/vehicles/$rawImage';
+    return '${ApiConstants.fileUrl}$path';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -397,7 +412,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                     ),
                                 itemBuilder: (context, index) {
                                   String imageUrl =
-                                      "${ApiConstants.fileUrl}${controller.vehicleImages[index]}";
+                                      _vehicleImageUrl(controller.vehicleImages[index]);
 
                                   return GestureDetector(
                                     onTap: () {

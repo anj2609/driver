@@ -538,9 +538,18 @@ class _TripDetailsScreenState
                   "₹${data.discountFare}"
                 ),
 
+                // Was data.totalFare — the flat, unrecalculated field from
+                // this endpoint's top level, the same staleness problem
+                // already fixed on the ongoing-ride and payment-dialog fare
+                // displays this session. payment.final_amount is the
+                // backend's actual settled figure; base fare above stays as
+                // real breakdown context, but the highlighted number here —
+                // the one figure most people will actually read — is now the
+                // final amount, not easily mistaken for the base fare two
+                // rows up.
                 _row(
-                  "Total Fare",
-                  "₹${data.totalFare}",
+                  "Final Amount",
+                  "₹${data.finalAmount?.toStringAsFixed(2) ?? data.paymentTotalFare?.toStringAsFixed(2) ?? data.totalFare}",
                   true
                 ),
 

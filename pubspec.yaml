@@ -49,6 +49,13 @@ dependencies:
   video_player: ^2.10.1
   file_picker: ^11.0.2
   # flutter_facebook_auth: ^7.1.6
+  # Floating "return to app" bubble shown over Google Maps during a live ride
+  # — the SYSTEM_ALERT_WINDOW overlay itself (Uber/Rapido-style).
+  flutter_overlay_window: ^0.5.0
+  # Reopens this app's own Activity from the overlay's separate Flutter
+  # engine when the bubble is tapped — a standard Android launcher intent,
+  # not something flutter_overlay_window itself documents a call for.
+  android_intent_plus: ^5.3.0
 
 dev_dependencies:
   flutter_test:

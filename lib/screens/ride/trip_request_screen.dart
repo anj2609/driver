@@ -325,8 +325,14 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 // shrinking to fit. Expanded here / Flexible on the price
                 // side below makes that overflow structurally impossible —
                 // both sides now share the row's actual width instead of
-                // each claiming as much as they want.
+                // each claiming as much as they want. flex: 3 vs the fare
+                // side's flex: 2 — this side carries the customer's name
+                // plus "X.X km away", genuinely more text than a fare figure
+                // and a short trip stat, so it gets the larger share rather
+                // than an even split that left "km away" too cramped and
+                // ellipsizing.
                 Expanded(
+                  flex: 3,
                   child: Row(
                     children: [
                       // Was a hardcoded local asset — the model never parsed
@@ -398,7 +404,16 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                                         ? "${trip.driverToPickupDistance!.toStringAsFixed(1)} km away"
                                         : "Nearby",
                                     style: PoppinsReguler,
-                                    overflow: TextOverflow.ellipsis,
+                                    // No ellipsis — a truncated "2.3 km..."
+                                    // hides the actual distance, the one
+                                    // number this line exists to show. The
+                                    // wider flex share above (3 vs the fare
+                                    // side's 2) is what actually prevents the
+                                    // overflow now, not truncation. maxLines
+                                    // stays 1 because the card itself has a
+                                    // fixed height (see the 300 above) that
+                                    // can't grow for a wrapped second line.
+                                    maxLines: 1,
                                   ),
                                 ),
                               ],
@@ -413,6 +428,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 const SizedBox(width: 8),
 
                 Flexible(
+                  flex: 2,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [

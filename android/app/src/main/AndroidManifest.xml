@@ -16,6 +16,17 @@
      removed it to avoid (see git history). -->
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+<!-- The "return to app" floating bubble shown over Google Maps once a ride
+     starts. SYSTEM_ALERT_WINDOW is a special permission — Android won't let
+     the app request it with a normal runtime dialog; the driver has to be
+     sent to a Settings screen to grant "Display over other apps" (see
+     FlutterOverlayWindow.requestPermission()) — and Play Console requires an
+     explicit declaration of the use case for it on submission. The two
+     FOREGROUND_SERVICE* permissions are what let the overlay keep running
+     once the app itself is backgrounded (which it will be — that's the
+     entire point of a bubble that persists over another app). -->
+<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
 <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <application
@@ -61,7 +72,24 @@
         <meta-data
     android:name="com.facebook.sdk.ApplicationId"
     android:value="2107195303185625"/>
-    <meta-data android:name="com.facebook.sdk.ClientToken" android:value="f74329131ab047355602b8d24213e293"/>  
+    <meta-data android:name="com.facebook.sdk.ClientToken" android:value="f74329131ab047355602b8d24213e293"/>
+
+        <!-- flutter_overlay_window's own service — hosts the bubble's
+             separate Flutter engine as a foreground service so Android
+             doesn't tear it down the moment this app itself backgrounds
+             (immediately, since launching Google Maps backgrounds it). The
+             "specialUse" subtype string is required as of Android 14's
+             stricter foreground-service-type rules and is what gets
+             reviewed against the Play Console declaration for this
+             permission. -->
+        <service
+            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent return-to-app bubble shown while the driver is navigating in Google Maps during an active ride"/>
+        </service>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
@@ -80,4 +108,15 @@
         <data android:scheme="https"/>
     </intent>
 </queries>
+    <!-- Without this, url_launcher's canLaunchUrl()/launchUrl() for a
+         "google.navigation:" URI can silently fail on Android 11+ — package
+         visibility is restricted by default, and an app has to explicitly
+         declare which intent schemes it needs to resolve against installed
+         apps rather than seeing the whole device's app list. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="google.navigation"/>
+        </intent>
+    </queries>
 </manifest>

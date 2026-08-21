@@ -904,6 +904,83 @@ class HomeController extends GetxController {
     stopRingtone();
   }
 
+  /// True once handleRideCancelledByRider has already fired for the current
+  /// ride, so the popup and redirect can only ever happen once per ride even
+  /// though this is called from a poll that keeps running until the screen
+  /// actually navigates away.
+  bool _handledCancellation = false;
+
+  /// The rider cancelling was never actually watched for — the accepted-ride
+  /// screen only ever checked for "arrived"/"ongoing", so a cancellation
+  /// changed nothing about what was on screen: the driver stayed on the OTP
+  /// entry step (or wherever they were) indefinitely, with no indication the
+  /// ride they were tracking no longer existed. Same cleanup as a completed
+  /// ride — this status is exactly as terminal — plus an explicit popup,
+  /// since unlike completion (which the driver caused themselves by tapping
+  /// something) a cancellation is something that happened to them and needs
+  /// to actually be announced.
+  Future<void> handleRideCancelledByRider(BuildContext context) async {
+    if (_handledCancellation) return;
+    _handledCancellation = true;
+
+    savedTripData = null;
+    savedAcceptData = null;
+    trackRideModel = null;
+    driverBookingActivesModel = null;
+    hasActiveRide = false;
+    computedDistance = '';
+    computedDuration = '';
+    estimatePrice = '';
+    estimateDistance = '';
+    estimateDuration = '';
+
+    try {
+      Get.find<ProfileController>().tripDetailsModel = null;
+    } catch (_) {}
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(ApiConstants.bookingid);
+    await prefs.remove(ApiConstants.acceptedtrip);
+    await prefs.remove('booking_id');
+    await prefs.remove('trip_data');
+    await clearRideData();
+
+    stopRingtone();
+    update();
+
+    if (context.mounted) {
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogCtx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Ride Cancelled'),
+          content: const Text(
+            'The rider has cancelled this ride. You will be returned to the home screen.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    returnToExistingHome();
+
+    if (isOnline) {
+      startListeningBookings();
+    }
+  }
+
+  /// Cleared whenever a new ride is picked up, so the guard above can fire
+  /// again for the next one.
+  void resetCancellationHandledFlag() {
+    _handledCancellation = false;
+  }
+
   void stopListeningBookings() {
     _dummyTimer?.cancel();
     _dummyTimer = null;
@@ -1726,6 +1803,17 @@ class HomeController extends GetxController {
 
             Get.offAllNamed(RouteHelper.gethomescreen());
 
+            break;
+
+          // Was missing entirely from this switch, same gap as the pickup
+          // screen's own poll — a driver returning to Home (or reopening the
+          // app) mid-ride, after the rider had already cancelled, would land
+          // right back on the ride screen for a booking that no longer
+          // existed, with this poll giving no indication why.
+          case "cancelled":
+            if (Get.context != null) {
+              await handleRideCancelledByRider(Get.context!);
+            }
             break;
 
           default:

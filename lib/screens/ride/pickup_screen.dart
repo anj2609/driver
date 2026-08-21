@@ -642,6 +642,7 @@ import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/acceptride_details_model.dart';
 import 'package:myridedriverapp/screens/home/ridedetails_screen.dart' show bookingIdStore;
+import 'package:myridedriverapp/services/nav_overlay_service.dart';
 import 'package:myridedriverapp/widgets/canclerideconfirmations.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/inapp_navigation_map.dart';
@@ -717,6 +718,12 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   @override
   void initState() {
     super.initState();
+    // This screen is pushed fresh for every accepted ride, so the guard that
+    // stops the cancellation popup from firing twice for the same ride needs
+    // to be cleared here — otherwise a driver's first cancelled ride would
+    // silently disable the popup for every ride after it, for the rest of
+    // the app session.
+    Get.find<HomeController>().resetCancellationHandledFlag();
     _initLocation();
     startTimer();
   }
@@ -784,6 +791,18 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
 
       // Check if backend has set status to 'arrived' — show OTP field
       final rideStatus = track.data!.status?.toLowerCase() ?? '';
+
+      // Was never checked at all — this screen only ever watched for
+      // "arrived"/"ongoing", so a rider cancelling here (any time before the
+      // ride actually starts, including mid-OTP-entry) changed nothing about
+      // what the driver saw. They stayed on this screen indefinitely,
+      // tracking a booking that no longer existed, with no popup and no way
+      // back to searching for a new ride short of force-closing the app.
+      if (rideStatus == 'cancelled') {
+        controller.handleRideCancelledByRider(context);
+        return;
+      }
+
       if (rideStatus == 'arrived' && !isArrived && mounted) {
         setState(() {
           isArrived = true;
@@ -834,6 +853,12 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   void dispose() {
     positionStream?.cancel();
     _timer?.cancel();
+    // Whatever route this screen is left by — ride completed, cancelled by
+    // the rider, or the driver backing out — the floating return bubble
+    // (see _startGoogleMapsNavigation) has nothing left to return to once
+    // this screen is gone, so it shouldn't outlive it. Safe to call even
+    // when navigation to Google Maps was never actually started.
+    NavOverlayService.stopNavigation();
     super.dispose();
   }
 
@@ -973,6 +998,44 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
       return (lat: ride.lat!, lng: ride.lng!);
     }
     return null;
+  }
+
+  /// Hands the driver off to real Google Maps turn-by-turn navigation once
+  /// the ride actually starts, leaving the Uber/Rapido-style floating
+  /// bubble behind so they can tap back into this screen. Failure at any
+  /// step (permission declined, no drop coordinates yet, Maps not
+  /// installed) just leaves the driver on this screen with its own in-app
+  /// map instead — that's still a fully working ride, so none of these are
+  /// treated as fatal.
+  Future<void> _startGoogleMapsNavigation(
+    ({double lat, double lng})? target,
+  ) async {
+    if (target == null) return;
+
+    if (!await NavOverlayService.hasOverlayPermission()) {
+      await NavOverlayService.requestOverlayPermission();
+      // The driver may have backed out of the Settings screen without
+      // granting anything — re-check rather than assume the request
+      // succeeded just because it returned.
+      if (!await NavOverlayService.hasOverlayPermission()) {
+        if (mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message:
+                "Enable 'Display over other apps' to get a floating "
+                "return button while navigating.",
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
+        return;
+      }
+    }
+
+    await NavOverlayService.startNavigation(
+      lat: target.lat,
+      lng: target.lng,
+    );
   }
 
   /// Drop-off resolved from [AcceptRideData.dropaddress] via Google Geocoding,
@@ -1855,6 +1918,17 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                       isOtpVerified = true;
                                     });
                                   }
+
+                                  // Uber/Rapido-style handoff to real Google
+                                  // Maps turn-by-turn now that the ride is
+                                  // actually underway — isOtpVerified is
+                                  // true above, so _navTarget now resolves
+                                  // to the drop coordinates, not the pickup.
+                                  unawaited(
+                                    _startGoogleMapsNavigation(
+                                      _navTarget(rideData),
+                                    ),
+                                  );
                                 } else {
                                   // Was silently ignored — tapping Start Ride
                                   // with a wrong code did nothing at all, no
