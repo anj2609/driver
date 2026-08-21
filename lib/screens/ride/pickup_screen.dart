@@ -674,6 +674,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   bool isOtpVerified = false;
   bool isChatLoading = false;
 
+
   // Live, route-aware ETA/distance from InAppNavigationMap's turn-by-turn
   // engine (real road-network data) — preferred over the older
   // estimate/backend-reported fields below once available, since those
@@ -724,8 +725,36 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // silently disable the popup for every ride after it, for the rest of
     // the app session.
     Get.find<HomeController>().resetCancellationHandledFlag();
+    _seedPhaseFromTrackedRide();
     _initLocation();
     startTimer();
+  }
+
+  /// Restores which stage of the ride this screen should show, from the
+  /// booking status already fetched into HomeController.
+  ///
+  /// isArrived/isOtpVerified are otherwise only ever set by the driver
+  /// tapping through this screen, so a State built fresh mid-ride started
+  /// back at "drive to pickup". That happens on a normal restore path:
+  /// driverBookingActives() fetches the ride and routes here, and the app
+  /// being killed and reopened mid-ride goes through exactly that. Seeded
+  /// here rather than waiting for the first poll tick (1.5s away) so the
+  /// driver never sees an "Arrived" button flash on a ride they're already
+  /// driving; the poll keeps them in sync from then on.
+  void _seedPhaseFromTrackedRide() {
+    final status = Get.find<HomeController>()
+            .trackRideModel
+            ?.data
+            ?.status
+            ?.toLowerCase() ??
+        '';
+
+    if (status == 'ongoing') {
+      isArrived = true;
+      isOtpVerified = true;
+    } else if (status == 'arrived') {
+      isArrived = true;
+    }
   }
 
   Future<void> _initLocation() async {
@@ -810,6 +839,22 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
         debugPrint('[Pickup] Backend status is arrived — showing OTP');
       }
 
+      // 'ongoing' means the OTP has already been verified and the passenger
+      // is aboard — the backend is the authority on that, not this screen's
+      // local flags. Without this the two could only ever be set by the
+      // driver physically tapping through Arrived and then Start Ride in
+      // this exact State object, so anything that rebuilt the screen from
+      // scratch mid-ride (app killed and reopened, ride restored from the
+      // active-booking poll) came back showing the "Arrived" button for a
+      // ride that was already underway.
+      if (rideStatus == 'ongoing' && !isOtpVerified && mounted) {
+        setState(() {
+          isArrived = true;
+          isOtpVerified = true;
+        });
+        debugPrint('[Pickup] Backend status is ongoing — showing End Ride');
+      }
+
       // Re-targeted per phase. This used to be hardcoded to the pickup, so
       // once the driver had the passenger aboard it kept re-measuring the
       // journey to a point they were already standing on — every 15 seconds,
@@ -858,7 +903,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // (see _startGoogleMapsNavigation) has nothing left to return to once
     // this screen is gone, so it shouldn't outlive it. Safe to call even
     // when navigation to Google Maps was never actually started.
-    NavOverlayService.stopNavigation();
+    NavOverlayService.hideReturnBubble();
     super.dispose();
   }
 
@@ -1001,41 +1046,41 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   }
 
   /// Hands the driver off to real Google Maps turn-by-turn navigation once
-  /// the ride actually starts, leaving the Uber/Rapido-style floating
-  /// bubble behind so they can tap back into this screen. Failure at any
-  /// step (permission declined, no drop coordinates yet, Maps not
-  /// installed) just leaves the driver on this screen with its own in-app
-  /// map instead — that's still a fully working ride, so none of these are
-  /// treated as fatal.
+  /// the ride actually starts, and — only if the "display over other apps"
+  /// permission already happens to be granted — leaves the floating bubble
+  /// behind so they can tap back into this screen.
+  ///
+  /// Order matters here. This used to check the overlay permission *first*,
+  /// push the driver into the system Settings screen to grant it, and return
+  /// early if they hadn't — so on any device without that permission already
+  /// on, Google Maps never opened at all and the driver just got an
+  /// unexplained permission prompt the moment they entered the rider's OTP.
+  /// Navigation is what Start Ride promises; the bubble is a convenience,
+  /// and it must never be able to block the thing it's decorating. Nothing
+  /// below is fatal either — a failure just leaves the driver on this screen
+  /// with its own working in-app map.
   Future<void> _startGoogleMapsNavigation(
     ({double lat, double lng})? target,
   ) async {
     if (target == null) return;
 
-    if (!await NavOverlayService.hasOverlayPermission()) {
-      await NavOverlayService.requestOverlayPermission();
-      // The driver may have backed out of the Settings screen without
-      // granting anything — re-check rather than assume the request
-      // succeeded just because it returned.
-      if (!await NavOverlayService.hasOverlayPermission()) {
-        if (mounted) {
-          AnimatedTopToast.show(
-            context: context,
-            message:
-                "Enable 'Display over other apps' to get a floating "
-                "return button while navigating.",
-            backgroundColor: ColorResources.redbuttoncolor,
-            icon: Icons.error_rounded,
-          );
-        }
-        return;
-      }
-    }
-
-    await NavOverlayService.startNavigation(
+    final launched = await NavOverlayService.launchGoogleMapsNavigation(
       lat: target.lat,
       lng: target.lng,
     );
+
+    if (!launched && mounted) {
+      AnimatedTopToast.show(
+        context: context,
+        message: "Could not open Google Maps. Use the in-app map to navigate.",
+        backgroundColor: ColorResources.redbuttoncolor,
+        icon: Icons.error_rounded,
+      );
+      return;
+    }
+
+    // Silent no-op when the permission isn't granted — never prompts.
+    await NavOverlayService.showReturnBubbleIfPermitted();
   }
 
   /// Drop-off resolved from [AcceptRideData.dropaddress] via Google Geocoding,
@@ -1849,6 +1894,14 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                           if (isArrived && !isOtpVerified) ...[
                             const SizedBox(height: 20),
 
+                            // The overlay ("display over other apps") opt-in
+                            // deliberately does NOT live here. It's asked for
+                            // once on the home screen, as a normal permission
+                            // dialog alongside the location one — see
+                            // _showOverlayPermissionDialog in home_screen.dart.
+                            // Anything permission-shaped on this screen lands
+                            // right as the driver is reading the rider's OTP
+                            // aloud, which is the worst possible moment for it.
                             Center(
                               child: Text(
                                 "Enter 4 Digit OTP",

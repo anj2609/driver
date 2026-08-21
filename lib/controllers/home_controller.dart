@@ -1743,32 +1743,54 @@ class HomeController extends GetxController {
         }
 
         ///=============== NAVIGATION HANDLE =================///
+        // Both live-ride states resolve to the same screen, which the driver
+        // may well already be looking at — this runs on every return to Home
+        // and on the active-ride check. Get.offNamed() to the route you are
+        // already on doesn't no-op: it replaces the current route with a
+        // fresh instance, tearing down the live screen's State and with it
+        // its polling timers, location stream and OTP field mid-entry.
+        final String rideRoute = RouteHelper.getgoingForPickupScreen();
+        final rideArguments = {
+          "trips": savedTripData,
+          "acceptData": savedAcceptData,
+        };
+
         switch (status) {
           /// DRIVER ACCEPTED RIDE
           case "accepted":
             debugPrint("NAVIGATE => GOING FOR PICKUP");
 
-            Get.offNamed(
-              RouteHelper.getgoingForPickupScreen(),
-              arguments: {
-                "trips": savedTripData,
-                "acceptData": savedAcceptData,
-              },
-            );
+            if (Get.currentRoute != rideRoute) {
+              Get.offNamed(rideRoute, arguments: rideArguments);
+            }
 
             break;
 
-          /// RIDE STARTED
+          /// RIDE STARTED — passenger aboard, driving to the drop.
           case "ongoing":
-            debugPrint("NAVIGATE => START DRIVER RIDE");
+            debugPrint("NAVIGATE => RIDE IN PROGRESS");
 
-            Get.offNamed(
-              RouteHelper.getstartDriverRideScreen(),
-              arguments: {
-                "trips": savedTripData,
-                "acceptData": savedAcceptData,
-              },
-            );
+            // Same screen as "accepted", not the start-ride/payment screen.
+            //
+            // In the normal in-app flow the driver never leaves this screen
+            // when the ride starts: verifying the OTP flips it in place to
+            // "Ride is ongoing..." with an End Ride button, and only
+            // pressing End Ride opens startDriverRideScreen to settle
+            // payment. Routing "ongoing" straight there skipped End Ride
+            // entirely — so a driver whose app was killed mid-ride (which
+            // is routine: they're in Google Maps, and Android reclaims the
+            // backgrounded app) reopened it staring at Cash/Online payment
+            // buttons for a ride still in progress, with no way back to the
+            // ride itself and the End Ride step silently bypassed.
+            //
+            // GoingForPickupScreen reads the same "ongoing" status and
+            // restores itself to the End Ride state — see
+            // _seedPhaseFromTrackedRide there. Which also means that when
+            // the driver is already on it, leaving it alone is correct: it
+            // syncs itself from the same status on its own poll.
+            if (Get.currentRoute != rideRoute) {
+              Get.offNamed(rideRoute, arguments: rideArguments);
+            }
 
             break;
 
@@ -2364,34 +2386,59 @@ class HomeController extends GetxController {
   ////////// ================ map   =============================////////////
   Future<void> loadCustomMarker() async {
     carIcon = await resizeMarker('assets/images/ridecar.png', 45);
+    // Without this the map keeps whatever it drew before the icon finished
+    // decoding — the plain red default pin — until something else happens
+    // to call update(). The car is the point; show it as soon as it exists.
+    update();
   }
 
   Future<BitmapDescriptor> resizeMarker(String path, int width) async {
-    final ByteData data = await rootBundle.load(path);
-    final codec = await instantiateImageCodec(
-      data.buffer.asUint8List(),
-      targetWidth: width,
-    );
-    final frame = await codec.getNextFrame();
+    try {
+      final ByteData data = await rootBundle.load(path);
+      // targetWidth alone: the codec scales height proportionally, so the
+      // decoded frame keeps the source's aspect ratio.
+      final codec = await instantiateImageCodec(
+        data.buffer.asUint8List(),
+        targetWidth: width,
+      );
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
 
-    final bytes = await frame.image.toByteData(format: ImageByteFormat.png);
+      final bytes = await image.toByteData(format: ImageByteFormat.png);
+      if (bytes == null) return BitmapDescriptor.defaultMarker;
 
-    // Was BitmapDescriptor.fromBytes() — same reasoning as
-    // getCustomIcon() in custom_loader.dart: deprecated, and on newer
-    // google_maps_flutter_android builds it can produce a descriptor the
-    // native side fails to decode ("Failed to decode image. The provided
-    // image must be a Bitmap."), crashing the instant a marker using it
-    // is added. width/height keep the rendered size the same as the
-    // targetWidth this was already being resized to above.
-    return BitmapDescriptor.bytes(
-      bytes!.buffer.asUint8List(),
-      width: width.toDouble(),
-      height: width.toDouble(),
-    );
+      // BitmapDescriptor.bytes (not the deprecated fromBytes) — same
+      // reasoning as getCustomIcon() in custom_loader.dart: on newer
+      // google_maps_flutter_android builds fromBytes can produce a
+      // descriptor the native side fails to decode ("Failed to decode
+      // image. The provided image must be a Bitmap."), crashing the instant
+      // a marker using it is added.
+      //
+      // The size comes from the decoded frame, NOT from `width` twice. This
+      // used to pass width for both dimensions, forcing every marker into a
+      // square — and ridecar.png is 260x501, a portrait image roughly 1:1.93.
+      // Squeezing that into 45x45 crushed the car to about half its proper
+      // height, so the driver's own position on the home map read as an
+      // unidentifiable blob rather than the car the rider app shows for the
+      // same thing. locationpickup.png (loadUserMarker) was distorted the
+      // same way.
+      return BitmapDescriptor.bytes(
+        bytes.buffer.asUint8List(),
+        width: image.width.toDouble(),
+        height: image.height.toDouble(),
+      );
+    } catch (e) {
+      // An asset that fails to load must not take out onInit — this is
+      // called there un-awaited, so a throw here becomes an unhandled
+      // async error rather than anything the caller can react to.
+      debugPrint('Marker resize error for "$path": $e');
+      return BitmapDescriptor.defaultMarker;
+    }
   }
 
   Future<void> loadUserMarker() async {
     userIcon = await resizeMarker('assets/images/locationpickup.png', 100);
+    update();
   }
 
   Future<void> getRouteCoordinates({

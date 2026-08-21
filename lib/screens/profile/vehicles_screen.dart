@@ -263,18 +263,23 @@ class VehiclesScreen extends StatefulWidget {
 }
 
 class _VehiclesScreenState extends State<VehiclesScreen> {
-  /// get-vehicle-info returns each vehicle photo as a bare filename with no
-  /// directory — unlike every other image field in this app, which already
-  /// includes its own path segment. The actual files live under
-  /// storage/vehicles/, so that has to be added here to get a working URL:
-  /// https://app.nride.in/storage/vehicles/<filename>. Guarded in case the
-  /// backend ever starts sending a fuller path itself, so this can't
-  /// double-prefix into a broken link.
+  /// get-vehicle-info returns each vehicle photo as "vehicles/<filename>"
+  /// (CONFIRMED against a real, live response) — relative to storage/,
+  /// which it never includes itself. Previously guarded against
+  /// double-prefixing by skipping the "storage/" prefix entirely whenever
+  /// the raw value already contained a '/', on the wrong assumption that
+  /// meant the backend had sent a fuller path already; in reality every
+  /// real value contains '/' (it's always "vehicles/..."), so that guard
+  /// was silently never adding "storage/" at all and every photo 404'd.
+  /// The real URL: https://app.nride.in/storage/vehicles/<filename>.
   String _vehicleImageUrl(String rawImage) {
     if (rawImage.startsWith('http://') || rawImage.startsWith('https://')) {
       return rawImage;
     }
-    final path = rawImage.contains('/') ? rawImage : 'storage/vehicles/$rawImage';
+    final normalized =
+        rawImage.startsWith('/') ? rawImage.substring(1) : rawImage;
+    final path =
+        normalized.startsWith('storage/') ? normalized : 'storage/$normalized';
     return '${ApiConstants.fileUrl}$path';
   }
 
@@ -297,6 +302,12 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
     return GetBuilder<ProfileController>(
       builder: (controller) {
         final vehicle = controller.vehicleData;
+        // Resolved once per build so the grid thumbnails and the zoomed
+        // full-screen viewer (FullImageViewer) are always showing the same
+        // URLs, built by the one place that knows the real storage/vehicles/
+        // path shape — see _vehicleImageUrl.
+        final vehicleImageUrls =
+            controller.vehicleImages.map(_vehicleImageUrl).toList();
 
         return Scaffold(
           backgroundColor: const Color(0xffF5F5F5),
@@ -411,14 +422,13 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                                       childAspectRatio: 1.08,
                                     ),
                                 itemBuilder: (context, index) {
-                                  String imageUrl =
-                                      _vehicleImageUrl(controller.vehicleImages[index]);
+                                  String imageUrl = vehicleImageUrls[index];
 
                                   return GestureDetector(
                                     onTap: () {
                                       Get.to(
                                         () => FullImageViewer(
-                                          images: controller.vehicleImages,
+                                          images: vehicleImageUrls,
                                           initialIndex: index,
                                         ),
                                       );

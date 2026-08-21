@@ -141,7 +141,17 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 left: 0,
                 right: 0,
                 child: SizedBox(
-                  height: 300,
+                  // Was a hardcoded 300. That is a large slice of a short
+                  // screen and a small one of a tall screen, so on compact
+                  // phones the card ate the map while still being too short
+                  // for its own content. Proportional with a floor and a
+                  // ceiling: it tracks the screen, without collapsing on a
+                  // very small device or ballooning on a tablet. The card's
+                  // content scrolls inside this (SingleChildScrollView in
+                  // _rideCard), so anything that still doesn't fit stays
+                  // reachable rather than overflowing.
+                  height: (MediaQuery.of(context).size.height * 0.42)
+                      .clamp(280.0, 380.0),
                   // No ValueKey on the trip count any more. It forced a full
                   // PageView teardown/rebuild every time a request arrived or
                   // was dismissed, which with a State-owned controller risks
@@ -192,27 +202,45 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // spaceBetween, not spaceAround: the two pills belong on the
+            // card's own left and right edges, lining up with everything
+            // below them. spaceAround also padded the outside of each pill,
+            // so on a narrow phone the pair ran out of room and overflowed
+            // the card rather than simply sitting closer together.
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xffF4C430),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.person, size: 16),
-                      SizedBox(width: 6),
-                      Text("New Booking", style: PoppinsReguler),
-                    ],
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xffF4C430),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.person, size: 16),
+                        SizedBox(width: 6),
+                        // scaleDown rather than ellipsis: on a small screen
+                        // the label shrinks a little instead of becoming
+                        // "New Boo…", and on every normal screen it renders
+                        // at its natural size and this does nothing.
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text("New Booking", style: PoppinsReguler),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
+                const SizedBox(width: 8),
                 GestureDetector(
                   onTap: () async {
                     // Without this, a second tap while the first accept
@@ -311,6 +339,7 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                 ),
               ],
             ),
+
 
             const SizedBox(height: 10),
 
@@ -427,7 +456,19 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
 
                 const SizedBox(width: 8),
 
-                Flexible(
+                // Expanded, not Flexible — this is the whole "ride details
+                // are shifted left and don't line up with the card" bug.
+                // Flexible lets its child shrink-wrap, so this column sized
+                // itself to its widest line (a short fare, a short duration)
+                // and then, since the row lays children out from the start,
+                // the leftover width was dumped *after* it — leaving the
+                // FARE/TRIP block floating short of the card's right edge
+                // while everything else sat flush against it, and leaving
+                // the amount of that gap dependent on the text. Expanded
+                // makes the column actually occupy its 2/5 share, so
+                // CrossAxisAlignment.end lands it on the card edge on every
+                // screen size regardless of how long the values are.
+                Expanded(
                   flex: 2,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -468,26 +509,38 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
                           ),
                         ),
                       ),
-                      Text(
-                        [
-                          // Left out entirely rather than shown as "0.0 km";
-                          // this line joins whatever it has, so an absent
-                          // distance simply doesn't appear.
-                          if (trip.distance != null && trip.distance! > 0)
-                            "${trip.distance!.toStringAsFixed(1)} km",
-                          // Now formatted through the shared duration helper
-                          // rather than shown as the raw minute count the
-                          // backend/model can still hand this widget — same
-                          // "2000 min" problem the pickup screen's ETA had.
-                          if (trip.time?.isNotEmpty ?? false)
-                            formatMinutesLabel(trip.time) ?? trip.time!,
-                        ].join("  •  "),
-                        style: PoppinsReguler.copyWith(
-                          color: ColorResources.blackcolor,
-                          fontSize: 12,
+                      // Distance and duration are now two separate lines
+                      // rather than one "2396.7 km  •  47h 0m" string joined
+                      // with a bullet. That joined line was the last place
+                      // still ellipsizing: a genuinely long outstation trip
+                      // (the 2396 km / 47h Ghaziabad → Agartala booking this
+                      // was reported on) simply cannot fit on one line in
+                      // this column's share of the row, so it truncated to
+                      // "…47h…" and hid the very figures it exists to show.
+                      // Splitting them means each line is short enough to
+                      // render in full, so no overflow handling is needed at
+                      // all. The card's content is already inside a
+                      // SingleChildScrollView, so the extra line is free.
+                      if (trip.distance != null && trip.distance! > 0)
+                        Text(
+                          "${trip.distance!.toStringAsFixed(1)} km",
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.blackcolor,
+                            fontSize: 12,
+                          ),
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      // The model has already turned the backend's raw
+                      // minute count into "47h 0m" / "35 min"; formatting
+                      // again here is the fallback for the other, unformatted
+                      // keys it can fall back to.
+                      if (trip.time?.isNotEmpty ?? false)
+                        Text(
+                          formatMinutesLabel(trip.time) ?? trip.time!,
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.blackcolor,
+                            fontSize: 12,
+                          ),
+                        ),
                     ],
                   ],
                 ),
@@ -497,66 +550,79 @@ class _IncomingBookingScreenState extends State<IncomingBookingScreen> {
 
             const SizedBox(height: 10),
 
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: ColorResources.appColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    Container(
-                      width: 2,
-                      height: 30,
-                      color: Colors.blue.shade200,
-                    ),
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: ColorResources.appColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 12),
-
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            // IntrinsicHeight so the connector line between the two dots can
+            // stretch to whatever height the addresses actually need. It was
+            // a hardcoded 30px, sized for single-line addresses — a real
+            // pickup or drop that wrapped to two or three lines (routine on a
+            // narrow screen) pushed the bottom dot far above the "Drop" row
+            // it is supposed to mark, so the timeline stopped lining up with
+            // the text beside it.
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Column(
                     children: [
-                      Text(
-                        "Pickup",
-                        style: PoppinsReguler.copyWith(
-                          color: ColorResources.textColorForGrey,
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: ColorResources.appColor,
+                          shape: BoxShape.circle,
                         ),
                       ),
-                      Text(trip.pickupAddress ?? "N/A", style: PoppinsReguler),
-
-                      const SizedBox(height: 15),
-
-                      Text(
-                        "Drop",
-                        style: PoppinsReguler.copyWith(
-                          color: ColorResources.blackcolor,
+                      Expanded(
+                        child: Container(
+                          width: 2,
+                          color: Colors.blue.shade200,
                         ),
                       ),
-                      Text(
-                        trip.dropAddress ?? "N/A",
-                        style: PoppinsReguler.copyWith(
-                          color: ColorResources.textColorForGrey,
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: ColorResources.appColor,
+                          shape: BoxShape.circle,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  const SizedBox(width: 12),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Pickup",
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.textColorForGrey,
+                          ),
+                        ),
+                        Text(
+                          trip.pickupAddress ?? "N/A",
+                          style: PoppinsReguler,
+                        ),
+
+                        const SizedBox(height: 15),
+
+                        Text(
+                          "Drop",
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.blackcolor,
+                          ),
+                        ),
+                        Text(
+                          trip.dropAddress ?? "N/A",
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.textColorForGrey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
 
             const SizedBox(height: 15),

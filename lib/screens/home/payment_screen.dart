@@ -246,9 +246,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ],
       ),
       body: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: size.width * 0.05,
-          vertical: size.height * 0.02,
+        // The app runs edge-to-edge (SystemUiMode.edgeToEdge in main.dart),
+        // so the Scaffold body extends underneath the system navigation bar
+        // rather than stopping above it. The Spacer() further down pins the
+        // confirm button to the very bottom of that body — which put it
+        // behind the gesture pill / nav buttons on devices that have them,
+        // making the one button this screen exists for hard or impossible
+        // to press. padding.bottom is that inset, and is 0 on devices with
+        // no such bar, so this costs nothing where it isn't needed.
+        padding: EdgeInsets.fromLTRB(
+          size.width * 0.05,
+          size.height * 0.02,
+          size.width * 0.05,
+          size.height * 0.02 + MediaQuery.of(context).padding.bottom,
         ),
         child: Column(
           children: [

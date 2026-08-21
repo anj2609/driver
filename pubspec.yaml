@@ -2,7 +2,7 @@ name: myridedriverapp
 description: "NRide Driver - Accept rides, navigate to passengers, and manage your earnings."
 publish_to: 'none'
 
-version: 1.0.19+20
+version: 1.0.20+21
 
 environment:
   sdk: ^3.9.0
@@ -18,7 +18,6 @@ dependencies:
   google_places_flutter: ^2.1.1
   intl_phone_field: ^3.2.0
   image_picker: ^1.2.1
-  sms_autofill: ^2.4.1
   pinput: ^6.0.2
   intl: ^0.20.2
   google_maps_flutter: ^2.14.2
@@ -52,10 +51,11 @@ dependencies:
   # Floating "return to app" bubble shown over Google Maps during a live ride
   # — the SYSTEM_ALERT_WINDOW overlay itself (Uber/Rapido-style).
   flutter_overlay_window: ^0.5.0
-  # Reopens this app's own Activity from the overlay's separate Flutter
-  # engine when the bubble is tapped — a standard Android launcher intent,
-  # not something flutter_overlay_window itself documents a call for.
-  android_intent_plus: ^5.3.0
+  # Backs OTP SMS autofill via Android's SMS User Consent API — the API
+  # Pinput's own `smsRetriever` hook is designed around. Replaces
+  # sms_autofill, which used the SMS Retriever API and so required the
+  # backend to append this app's signing-key hash to every OTP message.
+  smart_auth: ^3.2.0
 
 dev_dependencies:
   flutter_test:

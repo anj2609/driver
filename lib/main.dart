@@ -18,7 +18,7 @@ import 'package:myridedriverapp/config/utils/app_constants.dart';
 import 'package:myridedriverapp/widgets/nav_return_bubble.dart';
 
 /// Entry point for the floating "return to app" bubble shown over Google
-/// Maps once a ride starts (see NavOverlayService.startNavigation()).
+/// Maps once a ride starts (see NavOverlayService.showReturnBubbleIfPermitted()).
 /// `flutter_overlay_window` runs this in its own separate Flutter engine —
 /// a completely different isolate/widget tree than the one `main()` starts
 /// — which is why it can't be a normal widget reached through GetMaterialApp

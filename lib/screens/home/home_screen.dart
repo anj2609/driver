@@ -10,10 +10,12 @@ import 'package:myridedriverapp/controllers/home_controller.dart';
 
 import 'package:myridedriverapp/model/trip_model.dart';
 import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
+import 'package:myridedriverapp/services/nav_overlay_service.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 
 import 'package:myridedriverapp/widgets/custum_header.dart';
 import 'package:myridedriverapp/widgets/onlineoffline_custombutton.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeMapScreen extends StatefulWidget {
   const HomeMapScreen({super.key});
@@ -88,6 +90,67 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   // while online (see home_controller.dart) — a completely redundant call
   // to the same data on a slower clock, and one that kept running even while
   // offline, when nothing needed it at all.)
+
+  /// Asks — once, and only ever from here — for "display over other apps",
+  /// which is what lets the floating return-to-app bubble sit over Google
+  /// Maps during a ride.
+  ///
+  /// Presented as a normal explain-then-ask dialog, like the location one
+  /// below it. It used to be requested from the pickup screen at the moment
+  /// the driver pressed Start Ride, which dropped an unexplained system
+  /// Settings screen on them mid-OTP — the worst possible moment, while
+  /// they're reading a code off the rider's phone.
+  ///
+  /// Asked at most once per install: this is a convenience, not a
+  /// requirement (rides and Google Maps navigation work identically without
+  /// it), so a driver who says no should not be asked again on every launch.
+  Future<void> _maybeAskOverlayPermission() async {
+    if (await NavOverlayService.hasOverlayPermission()) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(ApiConstants.overlayPermissionAsked) ?? false) return;
+    await prefs.setBool(ApiConstants.overlayPermissionAsked, true);
+
+    if (!mounted) return;
+    final wantsIt = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            "Show Floating Return Button",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            "Allow Nride driver to display over other apps, so you get a "
+            "floating button to jump straight back here while navigating "
+            "in Google Maps.",
+            textAlign: TextAlign.center,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text("Not Now"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text("Allow"),
+            ),
+          ],
+        );
+      },
+    );
+
+    // Only now does the driver get sent to Settings, and only because they
+    // asked to be — there is no runtime dialog for this permission, so a
+    // Settings trip is the only way to grant it.
+    if (wantsIt == true) {
+      await NavOverlayService.requestOverlayPermission();
+    }
+  }
 
   void _showLocationDialog() {
     showDialog(
@@ -233,6 +296,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
     await initLocationFlow();
     startLocationStream();
+
+    // Queued behind location deliberately — location is what the app can't
+    // function without, so it gets the driver's attention first and alone.
+    // This one only ever surfaces once location is already settled.
+    await _maybeAskOverlayPermission();
   }
 
   @override

@@ -9,10 +9,10 @@ import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/controllers/auth_controller.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
+import 'package:myridedriverapp/services/otp_sms_retriever.dart';
 import 'package:myridedriverapp/widgets/custom_popup.dart';
 import 'package:pinput/pinput.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sms_autofill/sms_autofill.dart';
 
 class OtpScreen extends StatefulWidget {
   final String? type;
@@ -23,7 +23,7 @@ class OtpScreen extends StatefulWidget {
   State<OtpScreen> createState() => _OtpScreenState();
 }
 
-class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
+class _OtpScreenState extends State<OtpScreen> {
   int _secondsRemaining = 28;
   Timer? _timer;
   bool _enableResend = false;
@@ -32,10 +32,17 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
   final TextEditingController _otpController = TextEditingController();
   final FocusNode _pinFocusNode = FocusNode();
 
+  /// Handed to Pinput below, which owns the whole listen/fill lifecycle —
+  /// it starts listening when the field mounts and disposes the listener
+  /// with the field. Replaces the old `sms_autofill` CodeAutoFill mixin,
+  /// which used the SMS Retriever API and so only ever fires for messages
+  /// carrying this app's signing-key hash; see OtpSmsRetriever for why that
+  /// is the wrong API to depend on here.
+  final OtpSmsRetriever _smsRetriever = const OtpSmsRetriever();
+
   @override
   void initState() {
     super.initState();
-    listenForCode();
     startTimer();
     // Clear any cached SMS autofill value so the field is always fresh on open
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -82,14 +89,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
   }
 
   @override
-  void codeUpdated() {
-    // Only update the text; onCompleted on the Pinput widget handles verification.
-    _otpController.text = code ?? "";
-  }
-
-  @override
   void dispose() {
-    cancel();
     _timer?.cancel();
     _otpController.dispose();
     _pinFocusNode.dispose();
@@ -155,6 +155,11 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
                 child: Pinput(
                   controller: _otpController,
                   focusNode: _pinFocusNode,
+                  // Android: fills the field from the OTP SMS via the User
+                  // Consent API. Pinput only accepts a code whose length
+                  // matches `length` below, so a stray number picked out of
+                  // the message can't partially fill the boxes.
+                  smsRetriever: _smsRetriever,
                   length: 4,
                   // Focus is requested explicitly in initState() once the
                   // route's push transition has settled instead — see the

@@ -143,6 +143,11 @@ class ApiConstants {
   // brand-new accounts), this is the one unambiguous "registration fully
   // submitted, now under review" signal splash routing can trust.
   static const String docsSubmittedForReview = 'docs_submitted_for_review';
+  // Set once the driver has been shown the "display over other apps" prompt,
+  // whichever way they answered. The floating return-to-app bubble is a
+  // convenience, not a requirement, so a driver who declined shouldn't be
+  // asked again on every launch.
+  static const String overlayPermissionAsked = 'overlay_permission_asked';
   static String socialtoken = "";
   static String gmailAddres = "";
   static String userName = "";

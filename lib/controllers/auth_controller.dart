@@ -1681,12 +1681,25 @@ else {
     isLoading = true;
     update();
     try {
+      // Hits driverDocument + vehicaletype — the required-document-types
+      // endpoint (RC, Insurance, PUC, ...), NOT vehical-type-list. This used
+      // to parse the response into `vehicleTypeModel`/`vehicleTypeList` —
+      // the exact same fields the real vehical-type-list call (vehicleType()
+      // below) and the Car/Bike selection grids at signup and in the
+      // Vehicles > edit sheet all read from. Nothing anywhere actually reads
+      // this endpoint's response, so its only real effect was to silently
+      // overwrite the real vehicle-type list with document-type data
+      // whenever this ran — which it always does, right before the vehicle-
+      // type step during signup (see driverdetails_screen.dart). Once
+      // overwritten, that corrupted list stuck around for the rest of the
+      // driver's session (AuthController is a singleton), so id-matching
+      // vehicle_type_id against it (e.g. to preselect the type in Vehicles >
+      // edit) failed from then on — showing the dropdown with no value
+      // selected. Fetched here (for whatever server-side purpose the call
+      // itself serves) but its result is intentionally discarded now.
       Response response = await authRepo.vehicalDocument();
-      if (response.statusCode == 200 &&
-          response.body['code']?.toString() == '200') {
-        vehicleTypeModel = VehicalTypeModel.fromJson(response.body);
-        vehicleTypeList = vehicleTypeModel?.data ?? [];
-      } else {
+      if (!(response.statusCode == 200 &&
+          response.body['code']?.toString() == '200')) {
         if (context.mounted) AnimatedTopToast.show(
           context: context,
           message: 'Unable to load vehicle types. Please try again.',
