@@ -31,6 +31,12 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
 
   final TextEditingController fullNameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
+  // Google sign-in never collects a phone number, unlike the phone-OTP
+  // signup flow (which has one by definition — that's how the driver got
+  // an OTP in the first place). Without somewhere to type one, this screen
+  // was submitting basic-info with an empty phone for every Google-signup
+  // driver. See fillPersonalApi's own note on how this reaches the request.
+  final TextEditingController phoneController = TextEditingController();
   final TextEditingController licenseController = TextEditingController();
   final TextEditingController modelCOntroller = TextEditingController();
 
@@ -412,6 +418,23 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
 
         const SizedBox(height: 15),
 
+        // Google sign-in only ever hands this app a name, email and
+        // profile photo — never a phone number, so it's collected here
+        // instead. Only ever shown on this Google-signup path: a driver
+        // logging back in with an existing account never reaches this
+        // screen at all (see the profile_status routing in
+        // auth_controller.dart — an already-registered driver goes
+        // straight to Home), so there's no "login" case on this screen to
+        // hide it from.
+        _buildTextFieldnameEmail(
+          label: "Phone Number",
+          controller: phoneController,
+          keyboardType: TextInputType.phone,
+          maxLength: 10,
+        ),
+
+        const SizedBox(height: 15),
+
         _buildTextFieldnameEmail(label: "Email", controller: emailController),
         const SizedBox(height: 15),
         // const SizedBox(height: 15),
@@ -533,6 +556,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                 const SizedBox(height: 12),
 
                 _previewRow("Full Name", fullNameController.text),
+                _previewRow("Phone Number", phoneController.text),
                 _previewRow("Email", emailController.text),
                 _previewRow("Date Of Birth", dobController.text),
                 _previewRow("Gender", selectedGender ?? ""),
@@ -719,9 +743,13 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
   Widget _buildTextFieldnameEmail({
     required String label,
     required TextEditingController controller,
+    TextInputType? keyboardType,
+    int? maxLength,
   }) {
     return TextFormField(
       controller: controller,
+      keyboardType: keyboardType,
+      maxLength: maxLength,
       validator: (value) {
         if (value == null || value.isEmpty) {
           return "$label is required";
@@ -733,6 +761,10 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
         filled: true,
         fillColor: Colors.white,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        // Blank when maxLength is null — TextFormField renders its own
+        // "x/y" counter under the field the moment maxLength is set at
+        // all, which only Phone actually wants.
+        counterText: maxLength == null ? '' : null,
       ),
     );
   }
@@ -785,6 +817,22 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                     return;
                   }
 
+                  // The form's own required-field validator (see
+                  // _buildTextFieldnameEmail) already catches an empty
+                  // phone; this catches an incomplete/malformed one —
+                  // exactly 10 digits, matching what a 🇮🇳 number always is
+                  // — before it goes anywhere near the backend.
+                  final phoneDigits = phoneController.text.trim();
+                  if (phoneDigits.length != 10 ||
+                      int.tryParse(phoneDigits) == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Please enter a valid 10-digit phone number"),
+                      ),
+                    );
+                    return;
+                  }
+
                   if (selectedGender == null) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text("Please select gender")),
@@ -807,6 +855,7 @@ class _SocialDetailScreenState extends State<SocialDetailScreen> {
                     gender: selectedGender.toString(),
                     dob: dob,
                     profileimage: profileImage,
+                    phone: phoneDigits,
                     context: context,
                   );
 

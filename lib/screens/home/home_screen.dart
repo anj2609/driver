@@ -46,7 +46,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   // time this screen was ever shown.
   final HomeController controller = Get.find<HomeController>();
   final DriveController controllerdriver = Get.put(DriveController());
-  StreamSubscription<Position>? _positionStream;
 
   final CameraPosition _initialPosition = const CameraPosition(
     target: LatLng(28.6139, 77.2090),
@@ -63,7 +62,35 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   @override
   void initState() {
     super.initState();
-    checkLocationPermission();
+    // Was checkLocationPermission() — this screen's own full copy of a
+    // permission-check → request → getCurrentPosition() → getPositionStream()
+    // pipeline, entirely separate from HomeController.startLocationUpdates(),
+    // which is already running by this point (HomeController is fetched via
+    // Get.find() in this State's field initializers, which runs its onInit()
+    // — and with it startLocationUpdates() — before initState() ever fires).
+    //
+    // Both pipelines called Geolocator.requestPermission() independently.
+    // On a genuinely first-ever launch (no permission decision made yet),
+    // that meant two concurrent requests for the same native Android
+    // permission dialog — a request already in flight when a second one
+    // arrives typically fails outright for the second caller instead of
+    // queuing behind it. Whichever of the two lost that race got "denied"
+    // back, even though the driver had just tapped Allow. Restarting the
+    // app "fixed" it for exactly the reason a race does: by then the
+    // permission decision was already persisted, so both pipelines' checks
+    // agreed immediately and neither needed to call requestPermission() at
+    // all.
+    //
+    // This pipeline also wrote its results into a State-local
+    // driverLatitude/driverLongitude of its own without ever calling
+    // controller.update() — so even on a run where it won the race and
+    // succeeded, it couldn't be what actually put the driver on the map:
+    // the marker below reads controller.latitude/longitude, which only
+    // HomeController's own pipeline (already the sole writer used
+    // everywhere else — pickup_screen, startride_screen) ever updates.
+    // Removing the duplicate here doesn't lose anything the app depends on;
+    // it removes the only thing that could race it.
+    _awaitLocationThenAskOverlayPermission();
     activeRideTimer = Timer(const Duration(seconds: 10), () async {
       if (!mounted) return;
 
@@ -152,160 +179,66 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     }
   }
 
-  void _showLocationDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: const Text(
-            "Allow Location Access",
-            textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          content: const Text(
-            "Allow Veyo Driving app your location access for using this App!",
-            textAlign: TextAlign.center,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text("Don’t Allow"),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await checkLocationPermission();
-              },
-              child: const Text("Allow"),
-            ),
-          ],
-        );
-      },
-    );
-  }
+  /// Waits for HomeController's own location pipeline to report a first fix
+  /// (or gives up after a bound wait) before offering the overlay opt-in —
+  /// preserves the original "location gets the driver's attention first and
+  /// alone" ordering without this screen running a second location pipeline
+  /// of its own to get there. Polling rather than a real listener/Future
+  /// because GetxController doesn't expose "notify me once" for a single
+  /// field change — only its blanket update() stream, which this doesn't
+  /// need to subscribe to for what is a one-time wait.
+  ///
+  /// If the wait times out, checks (read-only — never calls
+  /// requestPermission() itself) whether the driver is in one of the two
+  /// states HomeController's own retry loop can never climb out of on its
+  /// own — permission permanently denied, or location services switched
+  /// off entirely — and if so, offers a way to Settings. Those states used
+  /// to be surfaced by this screen's own now-removed location pipeline;
+  /// losing that pipeline (see initState()'s note on why) must not also
+  /// lose the driver's only path to noticing and fixing either one.
+  Future<void> _awaitLocationThenAskOverlayPermission() async {
+    const maxWait = Duration(seconds: 10);
+    const pollEvery = Duration(milliseconds: 300);
+    final deadline = DateTime.now().add(maxWait);
 
-  Future<void> startLocationStream() async {
-    try {
-      await _positionStream?.cancel();
-
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
-      if (!serviceEnabled) {
-        Get.snackbar("Location Disabled", "Please enable location service");
-
-        await Geolocator.openLocationSettings();
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-
-        if (permission == LocationPermission.denied) {
-          Get.snackbar("Permission Denied", "Location permission is required");
-          return;
-        }
-      }
-
-      /// Permanently denied
-      if (permission == LocationPermission.deniedForever) {
-        Get.snackbar(
-          "Permission Denied Forever",
-          "Enable permission from app settings",
-        );
-
-        await Geolocator.openAppSettings();
-        return;
-      }
-
-      /// Start stream
-      _positionStream =
-          Geolocator.getPositionStream(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              distanceFilter: 10,
-            ),
-          ).listen(
-            (Position position) {
-              driverLatitude = position.latitude;
-              driverLongitude = position.longitude;
-
-              // print("📍 Live: ${position.latitude}, ${position.longitude}");
-            },
-
-            onError: (error) async {
-              if (error.toString().contains("denied")) {
-                await _positionStream?.cancel();
-              }
-            },
-          );
-    } catch (e) {
-      // print("❌ Location Exception: $e");
+    while (mounted &&
+        controller.latitude == null &&
+        DateTime.now().isBefore(deadline)) {
+      await Future.delayed(pollEvery);
     }
-  }
+    if (!mounted) return;
 
-  Future<void> initLocationFlow() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition();
-
-      driverLatitude = position.latitude;
-      driverLongitude = position.longitude;
-      //driverLatitude driverLongitude
-      debugPrint("📍 Current: ${position.latitude}, ${position.longitude}");
-      debugPrint("📍suchi  Current: $driverLatitude, $driverLongitude");
-    } catch (e) {
-      debugPrint("❌ Error: $e");
+    if (controller.latitude == null) {
+      await _checkForStuckLocationState();
+      if (!mounted) return;
     }
+
+    await _maybeAskOverlayPermission();
   }
 
-  Future<void> checkLocationPermission() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
-    if (!serviceEnabled) {
-      debugPrint("❌ Location services are OFF");
+  Future<void> _checkForStuckLocationState() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      Get.snackbar("Location Disabled", "Please enable location services");
       await Geolocator.openLocationSettings();
       return;
     }
 
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied) {
-      debugPrint("❌ Permission denied");
-      _showLocationDialog();
-      return;
-    }
-
+    // Read-only — deliberately not requestPermission(). HomeController's
+    // own pipeline (already running) owns every actual permission request;
+    // this only ever reads the outcome to decide whether to point the
+    // driver at Settings for a state it can't recover from by retrying.
+    final permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.deniedForever) {
-      debugPrint("❌ Permission permanently denied");
+      Get.snackbar(
+        "Permission Denied Forever",
+        "Enable location permission from app settings",
+      );
       await Geolocator.openAppSettings();
-      return;
     }
-
-    debugPrint("✅ Permission granted");
-
-    await initLocationFlow();
-    startLocationStream();
-
-    // Queued behind location deliberately — location is what the app can't
-    // function without, so it gets the driver's attention first and alone.
-    // This one only ever surfaces once location is already settled.
-    await _maybeAskOverlayPermission();
   }
 
   @override
   void dispose() {
-    _positionStream?.cancel();
     activeRideTimer?.cancel();
     super.dispose();
   }

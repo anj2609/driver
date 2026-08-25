@@ -430,7 +430,7 @@ class _TripDetailsScreenState
                       SizedBox(height:20),
 
                       Text(
-                        "₹${data.totalFare ?? "0"}",
+                        "₹${data.displayFare}",
                         style: TextStyle(
                           fontSize:30,
                           fontWeight: FontWeight.bold,
@@ -538,18 +538,14 @@ class _TripDetailsScreenState
                   "₹${data.discountFare}"
                 ),
 
-                // Was data.totalFare — the flat, unrecalculated field from
-                // this endpoint's top level, the same staleness problem
-                // already fixed on the ongoing-ride and payment-dialog fare
-                // displays this session. payment.final_amount is the
-                // backend's actual settled figure; base fare above stays as
-                // real breakdown context, but the highlighted number here —
-                // the one figure most people will actually read — is now the
-                // final amount, not easily mistaken for the base fare two
-                // rows up.
+                // Both this and the big number above the map now read
+                // Data.displayFare — same final_amount-first fallback, so
+                // the two can no longer show two different figures on the
+                // same screen the way they used to when only this row had
+                // been fixed.
                 _row(
                   "Final Amount",
-                  "₹${data.finalAmount?.toStringAsFixed(2) ?? data.paymentTotalFare?.toStringAsFixed(2) ?? data.totalFare}",
+                  "₹${data.displayFare}",
                   true
                 ),
 

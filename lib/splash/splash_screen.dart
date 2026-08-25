@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -11,6 +12,7 @@ import 'package:myridedriverapp/screens/auth/ernwithmyride_screen.dart';
 import 'package:myridedriverapp/screens/auth/socialauth_screen.dart';
 import 'package:myridedriverapp/screens/auth/sign_up_screen.dart';
 import 'package:myridedriverapp/screens/home/home_screen.dart';
+import 'package:myridedriverapp/services/version_check_service.dart';
 import 'package:myridedriverapp/splash/onbording_screen.dart';
 import 'package:myridedriverapp/main.dart' show initializeAppCore;
 
@@ -171,6 +173,30 @@ class _SplashScreenState extends State<SplashScreen> {
         if (!mounted) return;
         setState(() => _initFailed = true);
         return;
+      }
+    }
+
+    // Checked right after DI is confirmed ready (ApiClient needs it) and
+    // before any navigation decision, so a forced update can block every
+    // path below — logged-in, mid-registration, or brand-new — not just
+    // one of them. A forced update never returns from this call: the
+    // dialog it shows has no dismiss and no back button, so this frame
+    // just... doesn't proceed, until the driver updates and reopens.
+    // Failure here is silent by design (see VersionCheckService) — a
+    // version-check outage must never be able to take the app down with it.
+    if (Platform.isAndroid) {
+      final versionResult = await VersionCheckService.check();
+      if (versionResult != null && versionResult.updateAvailable && mounted) {
+        // Not awaited for an optional update — the dialog and the rest of
+        // this function proceed independently, so a driver who taps
+        // "Later" (or just leaves it open) still lands wherever they were
+        // headed instead of being stuck waiting on a dialog they dismissed.
+        final dialogFuture =
+            VersionCheckService.showUpdateDialog(context, versionResult);
+        if (versionResult.mustBlock) {
+          await dialogFuture;
+          return;
+        }
       }
     }
 

@@ -78,6 +78,19 @@ class Data {
       walletUsed = _toDouble(payment['wallet_used']);
     }
   }
+
+  /// The one figure every fare/amount display for this booking should
+  /// show, consistently — final_amount first, falling back through the
+  /// less-authoritative fields only when it isn't present. Single accessor
+  /// so every screen reading this model shows the same number the same
+  /// way, rather than each repeating its own fallback chain (and risking
+  /// two different figures on the same screen, as mainactivity_detail_
+  /// screen.dart's top amount and its own "Final Amount" row used to).
+  String get displayFare =>
+      finalAmount?.toStringAsFixed(2) ??
+      paymentTotalFare?.toStringAsFixed(2) ??
+      totalFare ??
+      '0';
 }
 
 double? _toDouble(dynamic value) {

@@ -940,8 +940,10 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
       return fromTripDetail.toStringAsFixed(2);
     }
 
-    if (rideData?.totalFare != null && rideData!.totalFare!.isNotEmpty) {
-      return rideData.totalFare!;
+    if (rideData != null &&
+        ((rideData.finalAmount?.isNotEmpty ?? false) ||
+            (rideData.totalFare?.isNotEmpty ?? false))) {
+      return rideData.displayFare;
     }
     if (controller.estimatePrice.isNotEmpty) return controller.estimatePrice;
     return '—';
@@ -1217,11 +1219,16 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
           if (data == null || data.data == null) {
             return Stack(
               children: [
-                const Positioned.fill(
+                Positioned.fill(
                   child: InAppNavigationMap(
                     destLat: null,
                     destLng: null,
                     destLabel: '',
+                    // Rough estimate of the loading card below — no
+                    // destination is set yet at this point anyway, so
+                    // there's no route marker to protect, just the
+                    // driver's own position.
+                    bottomOffset: 200,
                   ),
                 ),
                 Positioned(
@@ -1421,6 +1428,21 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                   // Leaves room for the address/distance box below, which
                   // now sits at the very top like it originally did.
                   topOffset: 155,
+                  // Matches the bottom sheet's own maxHeight below (up to
+                  // half the screen) — without this, the camera centres
+                  // the driver/destination markers on the full view,
+                  // putting them right behind that sheet on a tall device
+                  // or a long address.
+                  bottomOffset: MediaQuery.of(context).size.height * 0.50,
+                  // Shown while driving to the pickup — this app is still
+                  // the driver's own navigation screen at that point. Once
+                  // the ride is actually underway (OTP verified), the
+                  // driver has already been handed off to real Google Maps
+                  // for turn-by-turn (see _startGoogleMapsNavigation), so a
+                  // second "159 m, turn right" banner in an app they're not
+                  // looking at anymore is just clutter over the map — the
+                  // map itself stays, only the banner goes.
+                  showInstructionBanner: !isOtpVerified,
                   onUpdate: (snapshot) {
                     if (!mounted) return;
 

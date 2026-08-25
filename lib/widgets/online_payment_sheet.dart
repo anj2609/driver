@@ -187,32 +187,16 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
   }
 
   Widget _buildThankYouView() {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 16,
-        bottom: MediaQuery.of(context).padding.bottom + 32,
-      ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Drag handle — matches other bottom sheets
-          Container(
-            height: 5,
-            width: 50,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          const SizedBox(height: 32),
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -237,7 +221,10 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
             style: PoppinsReguler.copyWith(fontSize: 15, color: Colors.black54),
           ),
           const SizedBox(height: 32),
-        ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -263,36 +250,53 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
     if (_isPaymentConfirmed) return _buildThankYouView();
 
     final qr = _currentQrData;
-    final hasQr = (qr.imageUrl ?? '').isNotEmpty;
+    // Prefer the real, already-rendered QR image the backend sent — only
+    // fall back to drawing one from upi_link when there's genuinely no
+    // image to show. See QrPaymentData's own note on why these two can no
+    // longer be treated as interchangeable.
+    final bool hasImage = (qr.imageUrl ?? '').isNotEmpty;
+    final bool hasUpiLink = (qr.upiLink ?? '').isNotEmpty;
+    final hasQr = hasImage || hasUpiLink;
 
-    return Container(
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 16,
-        bottom: MediaQuery.of(context).viewInsets.bottom +
-            MediaQuery.of(context).padding.bottom + 24,
-      ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
+    // A bottom sheet only ever got a fraction of the screen — the amount
+    // card, timer and instructions above/below it all ate into that same
+    // limited height, on top of which this used to size purely off screen
+    // *width*. On a short/small device that meant a QR square capped by a
+    // width that never actually became the binding constraint, while the
+    // sheet's own height was the real ceiling — reported as "very small
+    // and not visible". A full page fixed the height ceiling, but the size
+    // was still capped well below the screen's actual width (shortestSide
+    // * 0.78, maxing out at 380) — still reading small on most phones.
+    // Now driven by width first: the real available width inside this
+    // card, after this page's own 20+20 padding and the card's own
+    // 16+16 — filling essentially all of it — with a height-based ceiling
+    // only to keep a short/landscape screen from overflowing.
+    final Size screenSize = MediaQuery.of(context).size;
+    final double widthBudget = screenSize.width - 72;
+    final double heightBudget = screenSize.height * 0.55;
+    final double qrSize =
+        (widthBudget < heightBudget ? widthBudget : heightBudget)
+            .clamp(260.0, 480.0);
+
+    // Was isDismissible: false as a bottom sheet — a payment in flight
+    // shouldn't disappear on a stray back-swipe. canPop: false is the full-
+    // page equivalent; the explicit close (X) below is still the one way
+    // out, same as before.
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+          ),
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Drag handle
-            Container(
-              height: 5,
-              width: 50,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
             // Header row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -361,13 +365,86 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
                 ),
                 child: Column(
                   children: [
-                    QrImageView(
-                      data: qr.imageUrl!,
-                      version: QrVersions.auto,
-                      size: 210,
-                      backgroundColor: Colors.white,
-                      errorCorrectionLevel: QrErrorCorrectLevel.M,
-                    ),
+                    // Show the real payment QR the backend already rendered
+                    // whenever there is one — this used to always run
+                    // QrImageView(data: qr.imageUrl!) regardless, which
+                    // doesn't display an image at all: it draws a brand new
+                    // QR code that *encodes the image_url string itself*.
+                    // Scanning that redrew-a-QR-of-a-URL result just opened
+                    // that URL (Razorpay's own hosted page) in a browser,
+                    // instead of showing the passenger the actual scannable
+                    // payment QR. QrImageView is still correct — just only
+                    // for upi_link, a plain link that's genuinely meant to
+                    // be encoded into a QR the app draws itself.
+                    if (hasImage)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          qr.imageUrl!,
+                          width: qrSize,
+                          height: qrSize,
+                          // Was BoxFit.cover + Alignment.bottomCenter, on
+                          // the assumption the source image had a header
+                          // above a bottom-anchored QR — confirmed wrong:
+                          // the crop was cutting into the actual code, not
+                          // just whatever sits above it, which can make a
+                          // QR fail to scan outright (finder patterns in
+                          // the corners have to stay intact). contain
+                          // guarantees the *whole* image renders, code
+                          // included, at some cost to how much of the
+                          // square it fills — a smaller-but-complete QR
+                          // beats a bigger-but-broken one, and qrSize is
+                          // already sized generously (up to 480) since the
+                          // move to a full page, so "small" shouldn't be
+                          // the complaint this time.
+                          fit: BoxFit.contain,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return SizedBox(
+                              width: qrSize,
+                              height: qrSize,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            // Falls back to drawing the link as a QR rather
+                            // than showing nothing, if the image itself
+                            // fails to load but a link is also available.
+                            if (hasUpiLink) {
+                              return QrImageView(
+                                data: qr.upiLink!,
+                                version: QrVersions.auto,
+                                size: qrSize,
+                                backgroundColor: Colors.white,
+                                errorCorrectionLevel: QrErrorCorrectLevel.M,
+                              );
+                            }
+                            return SizedBox(
+                              width: qrSize,
+                              height: qrSize,
+                              child: Center(
+                                child: Icon(
+                                  Icons.image_not_supported_outlined,
+                                  size: 40,
+                                  color: Colors.black26,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                    else
+                      QrImageView(
+                        data: qr.upiLink!,
+                        version: QrVersions.auto,
+                        size: qrSize,
+                        backgroundColor: Colors.white,
+                        errorCorrectionLevel: QrErrorCorrectLevel.M,
+                      ),
 
                     const SizedBox(height: 10),
 
@@ -508,7 +585,9 @@ class _OnlinePaymentSheetState extends State<OnlinePaymentSheet> {
 
             const SizedBox(height: 8),
           ],
+          ),
         ),
+      ),
       ),
     );
   }

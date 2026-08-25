@@ -56,6 +56,9 @@ dependencies:
   # sms_autofill, which used the SMS Retriever API and so required the
   # backend to append this app's signing-key hash to every OTP message.
   smart_auth: ^3.2.0
+  # Reads the app's own installed version number for the Play Store
+  # version-check on launch (see VersionCheckService).
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:

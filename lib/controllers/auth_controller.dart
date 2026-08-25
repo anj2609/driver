@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -323,17 +324,52 @@ class AuthController extends GetxController implements GetxService {
     String? provider,
   }) async {
     try {
-      final GoogleSignInAccount? account = await _googleSignIn.signIn();
+      // Clear any cached Google session before opening the picker. A stale
+      // one (revoked grant, account removed from the device, a
+      // half-finished earlier attempt) can leave signIn() unresolved rather
+      // than failing — the button sits on "Signing in..." with no picker and
+      // no error, which is the reported infinite loading. Harmless on a
+      // clean state, and guarantees the account chooser actually appears.
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {
+        // Nothing to sign out of — not a failure worth reporting.
+      }
+
+      // Neither platform call has a timeout of its own, so a hang inside
+      // Play Services had nothing to break it: the await never returned and
+      // the calling screen's finally never reset its button.
+      final GoogleSignInAccount? account = await _googleSignIn
+          .signIn()
+          .timeout(const Duration(seconds: 90));
 
       if (account == null) {
+        // Genuine user cancellation — silent by design.
         debugPrint("User cancelled login");
         return null;
       }
 
-      final GoogleSignInAuthentication auth = await account.authentication;
+      final GoogleSignInAuthentication auth =
+          await account.authentication.timeout(const Duration(seconds: 30));
 
       final String? idToken = auth.idToken;
       final String? accessToken = auth.accessToken;
+
+      // The backend authenticates on id_token. Without one there is nothing
+      // to send — this used to post the literal string "null" and rely on
+      // the backend to reject it.
+      if (idToken == null || idToken.isEmpty) {
+        if (context.mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: "Couldn't verify your Google account. Please try again "
+                "or sign in with your mobile number.",
+            backgroundColor: ColorResources.redbuttoncolor,
+            icon: Icons.error_rounded,
+          );
+        }
+        return null;
+      }
 
       /// ===== STORE DATA =====
       ApiConstants.socialtoken = accessToken.toString();
@@ -362,7 +398,24 @@ class AuthController extends GetxController implements GetxService {
 
       return response;
     } catch (e) {
-      debugPrint("Error: $e");
+      // Was `debugPrint(e); return null;` — a SHA-1 fingerprint not
+      // registered for this build (PlatformException ApiException: 10),
+      // missing Play Services, a timeout from above, or a dropped network
+      // all produced the same silent no-op. The screen reset its button and
+      // the driver was left looking at a page that visibly did nothing,
+      // with no error and no reason to think a retry would help.
+      debugPrint("Google sign-in failed: $e");
+      if (context.mounted) {
+        AnimatedTopToast.show(
+          context: context,
+          message: e is TimeoutException
+              ? "Google sign-in timed out. Check your connection and try again."
+              : "Google sign-in failed. Please try again, or sign in with "
+                  "your mobile number.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
       return null;
     }
   }
@@ -389,7 +442,13 @@ class AuthController extends GetxController implements GetxService {
     debugPrint("API RESPONSE => ${response.body}");
 
     if (response.body != null && (response.body['code']?.toString() == '200')) {
-      ApiConstants.userTokenSocial = response.body['data']['api_token']
+      // CONFIRMED: social-auth names this field "token", not "api_token" —
+      // same mismatch already fixed in the code=='401' branch below (see
+      // its own note). This branch (a fully existing, already-registered
+      // driver) was never live-tested in this exact flow, but there's no
+      // reason to expect the same endpoint to name the field differently
+      // depending on which branch of its own response is taken.
+      ApiConstants.userTokenSocial = response.body['data']['token']
           .toString();
       ApiConstants.userIdSocial = response.body['data']['id'].toString();
       authRepo.saveUserToken(ApiConstants.userTokenSocial);
@@ -401,7 +460,14 @@ class AuthController extends GetxController implements GetxService {
         icon: Icons.check_circle_rounded,
       );
       update();
-    } else if (response.body['code']?.toString() == '401') {
+    } else if (response.body['code']?.toString() == '401' &&
+        response.body['data'] is Map) {
+      // Guarded on `data` actually being a Map, split out from a genuine
+      // hard failure below. A legitimate 401 here means "verified, but
+      // registration is incomplete" — the backend always attaches a `data`
+      // object describing which step to resume at (is_complete,
+      // vehicle_id, profile_status). Everything from here on assumes that
+      // shape and reads straight into it.
       debugPrint("FULL RESPONSE => ${response.body}");
 
 
@@ -1192,6 +1258,10 @@ else {
     String? gender,
     String? dob,
     File? profileimage,
+    // Only the Google-signup path (socialauth_screen.dart) ever passes
+    // this — see fillPersonalApi's own note on why phone-OTP call sites
+    // must keep leaving it null.
+    String? phone,
   }) async {
     if (isSubmittingPersonalInfo) {
       return Response(statusCode: 0, body: {'code': 'busy'});
@@ -1206,6 +1276,7 @@ else {
         gender: gender!.trim(),
         dob: dob!.trim(),
         profile_image: profileimage,
+        phoneOverride: phone?.trim(),
       );
 
       if (response.body["code"]?.toString() == "200") {

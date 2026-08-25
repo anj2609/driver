@@ -38,12 +38,35 @@ class InAppNavigationMap extends StatefulWidget {
   /// draw on top of each other.
   final double topOffset;
 
+  /// Vertical space (in logical pixels) to leave clear at the bottom of
+  /// the map — set this to the screen's own bottom sheet/details-panel
+  /// height. This map is always drawn full-bleed (Positioned.fill) behind
+  /// whatever overlay the screen draws on top of it, and the camera
+  /// otherwise centres the driver/destination markers on the *whole* view
+  /// including the area that panel covers — on a booked/ongoing ride,
+  /// where that panel can run to half the screen, the markers end up
+  /// sitting behind it instead of in the visible area above it. Passed
+  /// straight to GoogleMap's own `padding`, which shifts what the SDK
+  /// treats as the visible/interactive map area accordingly.
+  final double bottomOffset;
+
   /// Called on every navigation update — remaining distance, ETA,
   /// progress, current instruction, etc. Optional; screens that want to
   /// show their own "Estimated Arrival Time"/distance fields using this
   /// widget's real, route-aware numbers (rather than a separate estimate
   /// flow) can read them from here.
   final ValueChanged<NavSnapshot>? onUpdate;
+
+  /// Whether to draw the turn-by-turn instruction banner ("159 m, Turn
+  /// right onto...") over the map. Defaults on, but the driver's actual
+  /// turn-by-turn guidance now comes from real Google Maps once a ride
+  /// starts (see NavOverlayService) — this app's own map keeps running
+  /// underneath purely for the driver marker, route line, and arrival
+  /// detection the rest of this screen relies on, so a second,
+  /// independent set of turn instructions the driver isn't even looking
+  /// at (they're in Google Maps) is just clutter at that point. Screens
+  /// pass false once the ride is actually in progress.
+  final bool showInstructionBanner;
 
   const InAppNavigationMap({
     super.key,
@@ -52,7 +75,9 @@ class InAppNavigationMap extends StatefulWidget {
     required this.destLabel,
     this.onArrived,
     this.topOffset = 12,
+    this.bottomOffset = 0,
     this.onUpdate,
+    this.showInstructionBanner = true,
   });
 
   @override
@@ -181,6 +206,7 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
               target: LatLng(lat, lng),
               zoom: 15,
             ),
+            padding: EdgeInsets.only(bottom: widget.bottomOffset),
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
           );
@@ -189,6 +215,7 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
         if (lat == null || lng == null) {
           return GoogleMap(
             initialCameraPosition: CameraPosition(target: dest, zoom: 14),
+            padding: EdgeInsets.only(bottom: widget.bottomOffset),
             myLocationEnabled: true,
           );
         }
@@ -281,6 +308,7 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
                 // recenter, instead of yanking the map back under them.
                 if (_followMode) setState(() => _followMode = false);
               },
+              padding: EdgeInsets.only(bottom: widget.bottomOffset),
               myLocationEnabled: false,
               myLocationButtonEnabled: false,
               markers: markers,
@@ -288,18 +316,23 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
             ),
 
             // ---- Turn-by-turn instruction banner ----
-            Positioned(
-              top: widget.topOffset,
-              left: 12,
-              right: 12,
-              child: _InstructionBanner(snapshot: snapshot),
-            ),
+            if (widget.showInstructionBanner)
+              Positioned(
+                top: widget.topOffset,
+                left: 12,
+                right: 12,
+                child: _InstructionBanner(snapshot: snapshot),
+              ),
 
             // ---- Recenter button ----
+            // The +173 offset clears the instruction banner's own height —
+            // without the banner there's nothing to clear, so the button
+            // would otherwise float with a large, pointless gap above it.
             if (!_followMode)
               Positioned(
                 right: 16,
-                top: widget.topOffset + 173,
+                top: widget.topOffset +
+                    (widget.showInstructionBanner ? 173 : 0),
                 child: FloatingActionButton(
                   mini: true,
                   heroTag: 'nav_recenter_${widget.destLabel}',

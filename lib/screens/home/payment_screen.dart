@@ -29,7 +29,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       (widget.acceptData?.data?.paymentMode ?? '').toLowerCase();
 
   String get _totalFare =>
-      widget.acceptData?.data?.totalFare?.toString() ?? '0';
+      widget.acceptData?.data?.displayFare ?? '0';
 
   /// Whether the customer chose online payment
   bool get _isOnlinePayment => _paymentMode == 'online';
@@ -97,15 +97,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
       }
 
       if (context.mounted) {
-        await showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          isDismissible: false,
-          builder: (_) => OnlinePaymentSheet(
-            bookingId: _bookingId,
-            qrData: qrData,
-            homeController: controller,
+        // Full page rather than a bottom sheet — the QR needs the whole
+        // screen's room to render clearly scannable-sized (see
+        // OnlinePaymentSheet's own note on why the sheet made it small).
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OnlinePaymentSheet(
+              bookingId: _bookingId,
+              qrData: qrData,
+              homeController: controller,
+            ),
           ),
         );
       }

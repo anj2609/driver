@@ -3,6 +3,12 @@ class ApiConstants {
 
   static const String baseUrl = 'https://app.nride.in/api/';
 
+  // GET, query params platform + version — CONFIRMED shape:
+  // {"success":"200","message":"...","data":{"current_version",
+  // "latest_version","minimum_version","update_available","force_update",
+  // "store_url","message"}}. See VersionCheckService.
+  static const String appVersionCheck = 'app/version';
+
   ////========= api End Point ==================================
   static const String sendOtpUrl = 'send-otp';
   static const String verityOtpUrl = 'verify-otp';

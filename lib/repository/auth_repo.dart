@@ -51,18 +51,41 @@ class AuthRepo extends GetxService {
     String? division,
     String? city,
   }) async {
-    // Reached from ernwithmyride_screen, the very next screen after a new
-    // driver's verify-otp — same signup_token used by basic-info, since this
-    // driver has no session token yet either.
+    // ernwithmyride_screen (where this is called from) is reached by two
+    // genuinely different identities, not one:
+    //   - a brand-new phone-OTP driver, who has no session yet — only the
+    //     signup_token verify-otp handed back;
+    //   - a driver who signed up via Google, whose social-auth response
+    //     (profile_status: 1) instead hands back a real session (id +
+    //     token) and never issues a signup_token at all — there is no
+    //     value here for that driver to ever have.
+    // Sending only signup_token meant a social-auth driver's request always
+    // carried an empty one, and the backend hard-rejected it with "The
+    // signup token field is required" even though the request was already
+    // properly authenticated (id + authorizationToken headers, sent
+    // regardless — see ApiClient._mainHeadersMain). api_token/id are sent
+    // now too, so the backend can identify a session-authenticated driver
+    // this way instead of demanding a signup_token that was never given to
+    // them in the first place. Both sets are sent; a driver only ever has
+    // a real value for one of them, so this doesn't change what a
+    // phone-OTP driver sends today.
     final prefs = await SharedPreferences.getInstance();
     final String signupToken = prefs.getString(ApiConstants.signupToken) ?? "";
 
-    return apiClient.myridepostData(ApiConstants.driveraddress, {
+    final Map<String, String> body = {
       "signup_token": signupToken,
       "country": country.toString(),
       "division": division.toString(),
       "city": city.toString(),
-    });
+    };
+    if (ApiConstants.userTokenSocial.isNotEmpty) {
+      body["api_token"] = ApiConstants.userTokenSocial;
+    }
+    if (ApiConstants.userIdSocial.isNotEmpty) {
+      body["id"] = ApiConstants.userIdSocial;
+    }
+
+    return apiClient.myridepostData(ApiConstants.driveraddress, body);
   }
 
   Future<Response> fetchDriverDocumentStatus(String userId) async {
@@ -155,6 +178,14 @@ class AuthRepo extends GetxService {
     String? gender,
     String? dob,
     File? profile_image,
+    // Explicit phone, for the Google-signup path — see socialauth_screen.dart.
+    // A phone-OTP driver already has one on file (savePendingPhone(), set
+    // at verify-otp) and never passes this; a Google-signup driver has none
+    // anywhere at all, since Google never collects one, so this is the only
+    // source of truth for them. Preferred over pendingPhone when given,
+    // rather than replacing it outright, so the existing phone-OTP call
+    // sites (which never pass this) keep working exactly as before.
+    String? phoneOverride,
   }) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     dynamic userId = prefs.getString(ApiConstants.profileid);
@@ -163,7 +194,9 @@ class AuthRepo extends GetxService {
     // signup_token verify-otp returned. Both are sent; the backend uses
     // whichever applies.
     final String signupToken = prefs.getString(ApiConstants.signupToken) ?? "";
-    final String phone = prefs.getString(ApiConstants.pendingPhone) ?? "";
+    final String phone = (phoneOverride != null && phoneOverride.isNotEmpty)
+        ? phoneOverride
+        : (prefs.getString(ApiConstants.pendingPhone) ?? "");
 
     // Same fix as the rider app's equivalent call: user_id was always sent,
     // even empty, for a brand-new driver who has no account yet — a
@@ -185,6 +218,25 @@ class AuthRepo extends GetxService {
     };
     if (resolvedUserId.isNotEmpty) {
       body["user_id"] = resolvedUserId;
+    }
+
+    // Same identity gap already found and fixed on driver-address: a
+    // Google-signup driver has no signup_token (social-auth never issues
+    // one — see driveraddressApi's own note), so this request previously
+    // identified them only by "user_id". That's apparently not what the
+    // backend actually checks for a social session — confirmed live: with
+    // user_id sent as ApiConstants.userIdSocial and no signup_token, this
+    // came back {"code":"401","message":"Driver account not found."}, even
+    // though it's the exact same account social-auth just returned that id
+    // for. driver-address needed "api_token" + "id" specifically (not
+    // user_id) to be recognized as the same session; sent here too,
+    // additively — user_id stays, in case some other backend path still
+    // reads it.
+    if (ApiConstants.userTokenSocial.isNotEmpty) {
+      body["api_token"] = ApiConstants.userTokenSocial;
+    }
+    if (ApiConstants.userIdSocial.isNotEmpty) {
+      body["id"] = ApiConstants.userIdSocial;
     }
 
     return apiClient.postMultipartData(ApiConstants.basicInfo, body, profile_image);

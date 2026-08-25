@@ -31,6 +31,13 @@ class AcceptRideData {
   CustomerInfo? customerInfo;
   String? baseFare;
   String? totalFare;
+
+  /// What the driver/customer was actually charged — payment.final_amount.
+  /// Same role as totalFare (payment.total_fare) plays above, but the two
+  /// aren't always equal (a promo or wallet deduction), and final_amount is
+  /// the one every "Total Fare"/amount display is meant to prefer — see
+  /// [displayFare].
+  String? finalAmount;
   String? distance;
   String? time;
   String? paymentMode;
@@ -48,6 +55,7 @@ class AcceptRideData {
     this.customerInfo,
     this.baseFare,
     this.totalFare,
+    this.finalAmount,
     this.distance,
     this.time,
     this.paymentMode,
@@ -92,11 +100,20 @@ class AcceptRideData {
 
     baseFare = json['base_fare']?.toString();
     totalFare = (payment?['total_fare'] ?? json['total_fare'])?.toString();
+    finalAmount = (payment?['final_amount'] ?? json['final_amount'])?.toString();
     // ride_details.trip.distance / .duration — the values the user pointed at.
     distance = (trip?['distance'] ?? json['distance'])?.toString();
     time = (trip?['duration'] ?? json['time'])?.toString();
     paymentMode = (json['payment_mode'] ?? json['payment_type'] ?? json['payment_method'])?.toString();
   }
+
+  /// The one figure every fare/amount display for this booking should
+  /// show, consistently — final_amount first, falling back to totalFare
+  /// only when it isn't present. See [finalAmount]'s own note.
+  String get displayFare => (finalAmount?.isNotEmpty ?? false)
+      ? finalAmount!
+      : (totalFare ?? '0');
+
   Map<String, dynamic> toJson() {
     return {
       'booking_id': bookingId,
@@ -111,6 +128,7 @@ class AcceptRideData {
       'customer_info': customerInfo?.toJson(),
       'base_fare': baseFare,
       'total_fare': totalFare,
+      'final_amount': finalAmount,
       'distance': distance,
       'time': time,
       'payment_mode': paymentMode,

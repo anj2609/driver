@@ -40,6 +40,26 @@ class _OtpScreenState extends State<OtpScreen> {
   /// is the wrong API to depend on here.
   final OtpSmsRetriever _smsRetriever = const OtpSmsRetriever();
 
+  /// Same fix already proven in trip_request_screen.dart's accept-ride
+  /// loader (see its own comment): `Get.isDialogOpen` tracks dialogs opened
+  /// through GetX's own Get.dialog()/Get.generalDialog() — it does not
+  /// reliably reflect one opened via plain showDialog() with a raw
+  /// BuildContext, which is what this screen does. On a wrong OTP
+  /// specifically (`isWrongOtp` returns early, no navigation happens, so
+  /// this same OtpScreen stays on screen with its dialog still up),
+  /// `if (Get.isDialogOpen ?? false) Get.back()` could silently no-op,
+  /// leaving PremiumBlurLoader's non-dismissible barrier on screen forever
+  /// — reported as "infinite loading on incorrect OTP" that not even the
+  /// resend timer finishing could clear, since the barrier sits on top of
+  /// the whole screen including the resend button. Capturing the dialog's
+  /// own context and popping that directly closes the dialog unconditionally,
+  /// regardless of whether GetX's tracking agrees it's open.
+  void _closeLoader(BuildContext? ctx) {
+    if (ctx == null || !ctx.mounted) return;
+    final navigator = Navigator.maybeOf(ctx);
+    if (navigator != null && navigator.canPop()) navigator.pop();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -172,10 +192,14 @@ class _OtpScreenState extends State<OtpScreen> {
                     if (_isVerifying) return;
                     setState(() => _isVerifying = true);
 
+                    BuildContext? dialogContext;
                     showDialog(
                       context: context,
                       barrierDismissible: false,
-                      builder: (_) => PremiumBlurLoader(),
+                      builder: (dCtx) {
+                        dialogContext = dCtx;
+                        return PremiumBlurLoader();
+                      },
                     );
 
                     try {
@@ -188,9 +212,7 @@ class _OtpScreenState extends State<OtpScreen> {
                           );
 
                       // Hide Loader
-                      if (Get.isDialogOpen ?? false) {
-                        Get.back();
-                      }
+                      _closeLoader(dialogContext);
 
                       if (response.body != null) {
                         Map<String, dynamic> body =
@@ -350,7 +372,7 @@ class _OtpScreenState extends State<OtpScreen> {
                         }
                       }
                     } catch (e) {
-                      if (Get.isDialogOpen ?? false) Get.back();
+                      _closeLoader(dialogContext);
                       _otpController.clear();
                     } finally {
                       if (mounted) setState(() => _isVerifying = false);

@@ -141,8 +141,9 @@ class _BookingTripDetailsScreenState extends State<BookingTripDetailsScreen> {
               // bookings' backend data never happens, leaving this whole
               // card permanently blank ("₹ --" / "—" / "—") even though
               // trackRideModel already has real values sitting right here.
-              final String ridePrice = (acceptData.data?.totalFare?.isNotEmpty ?? false)
-                  ? acceptData.data!.totalFare!
+              final String ridePrice = ((acceptData.data?.finalAmount?.isNotEmpty ?? false) ||
+                      (acceptData.data?.totalFare?.isNotEmpty ?? false))
+                  ? acceptData.data!.displayFare
                   : homeController.estimatePrice;
 
               // "Present" has to mean more than "not an empty string" here.

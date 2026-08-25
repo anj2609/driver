@@ -157,15 +157,16 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
       }
 
       if (context.mounted) {
-        await showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          isDismissible: false,
-          builder: (_) => OnlinePaymentSheet(
-            bookingId: bookingId,
-            qrData: qrData,
-            homeController: controller,
+        // Full page rather than a bottom sheet — the QR needs the whole
+        // screen's room to render clearly scannable-sized (see
+        // OnlinePaymentSheet's own note on why the sheet made it small).
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OnlinePaymentSheet(
+              bookingId: bookingId,
+              qrData: qrData,
+              homeController: controller,
+            ),
           ),
         );
         // On a genuinely confirmed payment, OnlinePaymentSheet itself already
@@ -504,7 +505,7 @@ class _StartDriverRideScreenState extends State<StartDriverRideScreen> {
           // model, isn't where the backend actually reports the recalculated
           // fare — /trip-detail's `payment.final_amount` is. Used as the
           // fallback only until that fresher figure is fetched below.
-          final fallbackFare = data.data?.totalFare?.toString() ?? '0';
+          final fallbackFare = data.data?.displayFare ?? '0';
 
           // The Online/Cash buttons and the bottom sheet that held them are
           // gone from this screen; the fare, the closing message and the

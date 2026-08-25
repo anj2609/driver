@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:developer';
 import 'dart:io';
 import 'package:flutter/foundation.dart' as foundation;
 import 'package:flutter/material.dart';
@@ -608,7 +607,13 @@ class ApiClient extends GetxService {
       return Response(statusCode: -1, statusText: 'you are using vpn');
     }
 
-    log('testing   $body');
+    // Was log('testing   $body') — dart:developer's log() doesn't reliably
+    // mirror to Android's logcat outside a debugger-attached `flutter run`
+    // session, so this request's actual body was invisible in every device
+    // log pulled for this exact call, over several rounds of live
+    // debugging. debugPrint matches what every other successful capture in
+    // this app's troubleshooting has actually used.
+    debugPrint('basic-info request body: $body');
     try {
       // Was `{'Accept': 'application/json'}` only — every other multipart
       // method in this file (postdrivervehicale, postDriverDocuments,

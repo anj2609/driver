@@ -1756,8 +1756,23 @@ class HomeController extends GetxController {
         };
 
         switch (status) {
-          /// DRIVER ACCEPTED RIDE
+          /// DRIVER ACCEPTED RIDE, or has already reached the pickup and is
+          /// waiting on the OTP. "arrived" was missing from this switch
+          /// entirely — it fell through to default ("NO ACTIVE RIDE
+          /// FOUND"), which does nothing at all, not even navigate. A
+          /// driver whose app got killed while sitting at the pickup
+          /// (reported live: rider's screen still showed "Driver has
+          /// arrived") reopened it, this check found no case to handle
+          /// "arrived", and the app just carried on to Home and started
+          /// listening for new bookings — for a ride the backend still had
+          /// this driver actively on. GoingForPickupScreen (the same
+          /// screen "accepted" already routes to) reads status from its own
+          /// poll and restores the right visual state itself — the "OTP to
+          /// start ride" card for "arrived", same as it does for
+          /// "accepted" — so no separate handling is needed here beyond
+          /// getting the driver back onto that screen at all.
           case "accepted":
+          case "arrived":
             debugPrint("NAVIGATE => GOING FOR PICKUP");
 
             if (Get.currentRoute != rideRoute) {
@@ -2223,6 +2238,7 @@ class HomeController extends GetxController {
         if (body is Map) {
           final directData = QrPaymentData.fromJson(body.cast<String, dynamic>());
           if ((directData.imageUrl ?? '').isNotEmpty ||
+              (directData.upiLink ?? '').isNotEmpty ||
               (directData.qrCode ?? '').isNotEmpty ||
               (directData.qrId ?? '').isNotEmpty) {
             return directData;

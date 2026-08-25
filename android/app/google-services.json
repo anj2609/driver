@@ -37,6 +37,13 @@
             {
               "client_id": "532090628700-36e2vmrqbao3hm5gfk7i5ljc2eph7r1g.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "532090628700-e5ag8i9scianlcaap61pvskekq8e556d.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "online.nride.driver"
+              }
             }
           ]
         }
@@ -74,6 +81,13 @@
             {
               "client_id": "532090628700-36e2vmrqbao3hm5gfk7i5ljc2eph7r1g.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "532090628700-e5ag8i9scianlcaap61pvskekq8e556d.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "online.nride.driver"
+              }
             }
           ]
         }
@@ -88,11 +102,27 @@
       },
       "oauth_client": [
         {
+          "client_id": "532090628700-0o8o2d7phb75ihe2aupbpiu1dquitb80.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "online.nride.driver",
+            "certificate_hash": "e633332398dbcd7374848fab6d57828c92121aae"
+          }
+        },
+        {
           "client_id": "532090628700-a8drd7fslhemtik56v4sntinrqr1sfaq.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "online.nride.driver",
             "certificate_hash": "85e5f201c79ffe8142e145b02028dd1c28b78ae5"
+          }
+        },
+        {
+          "client_id": "532090628700-acnvdgth802dnpf8mshnrro6gh0c4i47.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "online.nride.driver",
+            "certificate_hash": "bd3187e668ea7a5011947e41d11b4c51cfc7f70e"
           }
         },
         {
@@ -111,6 +141,13 @@
             {
               "client_id": "532090628700-36e2vmrqbao3hm5gfk7i5ljc2eph7r1g.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "532090628700-e5ag8i9scianlcaap61pvskekq8e556d.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "online.nride.driver"
+              }
             }
           ]
         }
@@ -148,6 +185,13 @@
             {
               "client_id": "532090628700-36e2vmrqbao3hm5gfk7i5ljc2eph7r1g.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "532090628700-e5ag8i9scianlcaap61pvskekq8e556d.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "online.nride.driver"
+              }
             }
           ]
         }
