@@ -1406,6 +1406,12 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
             });
           }
 
+          // Same "underway" definition _navTarget uses internally: the
+          // passenger actually aboard (OTP verified), not just the driver
+          // having reached the pickup (`arrived`, still waiting on them).
+          final bool navUnderway = isOtpVerified ||
+              (rideData.status?.toLowerCase() == 'ongoing');
+
           return Stack(
             children: [
               // Real turn-by-turn navigation to the pickup point — replaces
@@ -1420,7 +1426,22 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                   // passenger is aboard.
                   destLat: _navTarget(rideData)?.lat ?? rideData.lat,
                   destLng: _navTarget(rideData)?.lng ?? rideData.lng,
-                  destLabel: 'Pickup',
+                  // Was hardcoded "Pickup" even once destLat/destLng had
+                  // already switched to the drop coordinates post-OTP — now
+                  // always names whichever point destLat/destLng actually
+                  // is.
+                  destLabel: navUnderway ? 'Drop' : 'Pickup',
+                  // The other end of the trip, kept visible alongside the
+                  // current nav target — see InAppNavigationMap's own note
+                  // on why this can't just be "wherever the car already
+                  // knows to head".
+                  secondaryLat: navUnderway
+                      ? rideData.lat
+                      : (rideData.dropLat ?? _geocodedDrop?.latitude),
+                  secondaryLng: navUnderway
+                      ? rideData.lng
+                      : (rideData.dropLng ?? _geocodedDrop?.longitude),
+                  secondaryLabel: navUnderway ? 'Pickup' : 'Drop',
                   // Auto-detected arrival calls the exact same guarded path
                   // as tapping "Arrived" by hand — see _markArrived().
                   onArrived: () =>

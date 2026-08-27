@@ -2401,7 +2401,12 @@ class HomeController extends GetxController {
 
   ////////// ================ map   =============================////////////
   Future<void> loadCustomMarker() async {
-    carIcon = await resizeMarker('assets/images/ridecar.png', 45);
+    // Was 45 — noticeably larger than the same ridecar.png asset renders
+    // at in the rider app (targetWidth: 20, in findingdriver_screen.dart's
+    // getCustomMarker()), which is what made the driver app's own car icon
+    // read as oversized on the map. Matched to that same width so the same
+    // asset reads the same size in both apps.
+    carIcon = await resizeMarker('assets/images/ridecar.png', 20);
     // Without this the map keeps whatever it drew before the icon finished
     // decoding — the plain red default pin — until something else happens
     // to call update(). The car is the point; show it as soon as it exists.

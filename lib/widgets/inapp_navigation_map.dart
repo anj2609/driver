@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -24,6 +26,15 @@ class InAppNavigationMap extends StatefulWidget {
   final double? destLat;
   final double? destLng;
   final String destLabel;
+
+  /// The *other* end of the trip — whichever of pickup/drop isn't the
+  /// current navigation target. Optional: when known, the camera keeps
+  /// both this and [destLat]/[destLng] in frame together with the car
+  /// (see [_fitCameraToRideBounds]) rather than tracking the car alone,
+  /// so neither pin can end up pushed off-screen at any stage of the ride.
+  final double? secondaryLat;
+  final double? secondaryLng;
+  final String secondaryLabel;
 
   /// Called once, the first time the driver is detected to have arrived
   /// at the destination. Deliberately just a signal — this widget never
@@ -73,6 +84,9 @@ class InAppNavigationMap extends StatefulWidget {
     required this.destLat,
     required this.destLng,
     required this.destLabel,
+    this.secondaryLat,
+    this.secondaryLng,
+    this.secondaryLabel = '',
     this.onArrived,
     this.topOffset = 12,
     this.bottomOffset = 0,
@@ -84,7 +98,8 @@ class InAppNavigationMap extends StatefulWidget {
   State<InAppNavigationMap> createState() => _InAppNavigationMapState();
 }
 
-class _InAppNavigationMapState extends State<InAppNavigationMap> {
+class _InAppNavigationMapState extends State<InAppNavigationMap>
+    with TickerProviderStateMixin {
   NavigationEngine? _engine;
   LatLng? _destination;
   GoogleMapController? _mapController;
@@ -94,9 +109,41 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
   bool _routeRequested = false;
   bool _cameraInitialized = false;
 
+  // ==================== Smooth driver-marker animation ====================
+  //
+  // onLocationUpdate() (and this whole widget, via the GetBuilder it's
+  // rebuilt inside) fires on every raw GPS fix from HomeController's
+  // stream — several times a second per this class's own doc comment. Each
+  // one used to be handed straight to the marker and the camera
+  // (_animateCamera, below), which for a genuinely live, frequent stream
+  // reads reasonably smoothly already, but still moves in discrete jumps
+  // between fixes rather than gliding, and doesn't correct GPS fixes that
+  // land a few metres off the road the driver is actually on. This
+  // interpolates between fixes over the time actually elapsed since the
+  // last one, snapping each fix onto the current route first.
+  AnimationController? _carAnimController;
+  LatLng? _displayedPosition;
+  double _displayedBearing = 0;
+  LatLng? _animFrom;
+  LatLng? _animTo;
+  double _bearingFrom = 0;
+  double _bearingTo = 0;
+  DateTime? _lastFixAt;
+
+  @override
+  void dispose() {
+    _carAnimController?.dispose();
+    super.dispose();
+  }
+
   LatLng? get _destLatLng =>
       (widget.destLat != null && widget.destLng != null)
           ? LatLng(widget.destLat!, widget.destLng!)
+          : null;
+
+  LatLng? get _secondaryLatLng =>
+      (widget.secondaryLat != null && widget.secondaryLng != null)
+          ? LatLng(widget.secondaryLat!, widget.secondaryLng!)
           : null;
 
   void _ensureEngine() {
@@ -158,25 +205,209 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
     }
   }
 
-  void _animateCamera(NavSnapshot snapshot) {
+  /// Frames the car together with both ends of the trip — the current nav
+  /// target ([InAppNavigationMap.destLat]/destLng) and, when known, the
+  /// other one ([InAppNavigationMap.secondaryLat]/secondaryLng) — so
+  /// neither pin can end up pushed off-screen the way tightly tracking the
+  /// car alone would once it's far from one or the other. Falls back to a
+  /// plain centred fly-to on whatever single point is actually known yet.
+  ///
+  /// This replaces what used to be a tight, tilted (tilt: 45) car-follow —
+  /// deliberately: a close driving-style view and "always show both pins"
+  /// aren't reconcilable (fitting two potentially city-apart points in
+  /// frame means zooming out, which a tilted close-up view can't do), and
+  /// this widget already isn't the driver's primary turn-by-turn source
+  /// once the ride is under way (see [InAppNavigationMap.showInstructionBanner]'s
+  /// own note) — that's real Google Maps at that point, so this map's job
+  /// is closer to a live overview than a driving cockpit.
+  void _fitCameraToRideBounds(LatLng car, double bearing) {
     final map = _mapController;
     if (map == null || !_followMode) return;
+
+    final points = <LatLng>[
+      car,
+      if (_destLatLng != null) _destLatLng!,
+      if (_secondaryLatLng != null) _secondaryLatLng!,
+    ];
+
     _programmaticCameraMove = true;
+
+    if (points.length == 1) {
+      map.animateCamera(
+        CameraUpdate.newCameraPosition(CameraPosition(target: car, zoom: 16)),
+      );
+      return;
+    }
+
+    double minLat = points.first.latitude, maxLat = points.first.latitude;
+    double minLng = points.first.longitude, maxLng = points.first.longitude;
+    for (final p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
     map.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: snapshot.driverPosition,
-          zoom: 17,
-          bearing: snapshot.bearing,
-          tilt: 45,
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
         ),
+        80,
       ),
     );
   }
 
   void _recenter(NavSnapshot? snapshot) {
     setState(() => _followMode = true);
-    if (snapshot != null) _animateCamera(snapshot);
+    final position = _displayedPosition ?? snapshot?.driverPosition;
+    if (position != null) {
+      _fitCameraToRideBounds(position, _displayedBearing);
+    }
+  }
+
+  /// Interpolates an angle the short way round, so a marker crossing due
+  /// north (359° -> 2°) turns 3° forward instead of spinning the long way
+  /// back through 180°.
+  double _lerpAngle(double from, double to, double t) {
+    double diff = (to - from) % 360;
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+    return (from + diff * t) % 360;
+  }
+
+  /// Projects [point] onto the nearest segment of [route], so the marker
+  /// tracks the road the driver is actually on rather than a raw GPS fix
+  /// that can sit a few metres off to either side of it. Lat/lng aren't a
+  /// flat plane, but at street scale treating them as one — scaling the
+  /// longitude delta by cos(latitude) so a degree of longitude isn't
+  /// overweighted away from the equator — is accurate enough for this and
+  /// far cheaper than a real geodesic projection. Falls back to the
+  /// untouched point when there's no usable route yet, or when the fix
+  /// lands nowhere near the route currently drawn (a stale route, or GPS
+  /// drift genuinely off the road) — more honest than silently teleporting
+  /// onto a road the driver isn't actually on.
+  LatLng _snapToRoute(LatLng point, List<LatLng> route) {
+    if (route.length < 2) return point;
+
+    final latCos = math.cos(point.latitude * math.pi / 180);
+    double bestDistSq = double.infinity;
+    LatLng best = point;
+
+    for (var i = 0; i < route.length - 1; i++) {
+      final a = route[i];
+      final b = route[i + 1];
+
+      final ax = a.longitude * latCos;
+      final ay = a.latitude;
+      final bx = b.longitude * latCos;
+      final by = b.latitude;
+      final px = point.longitude * latCos;
+      final py = point.latitude;
+
+      final dx = bx - ax;
+      final dy = by - ay;
+      final lengthSq = dx * dx + dy * dy;
+
+      double t = lengthSq == 0
+          ? 0
+          : ((px - ax) * dx + (py - ay) * dy) / lengthSq;
+      t = t.clamp(0.0, 1.0);
+
+      final projX = ax + t * dx;
+      final projY = ay + t * dy;
+      final distSq = (px - projX) * (px - projX) + (py - projY) * (py - projY);
+
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = LatLng(projY, projX / latCos);
+      }
+    }
+
+    // ~120m — comfortably wider than normal GPS/road-snap error, tight
+    // enough to catch a genuinely stale/wrong route.
+    const maxSnapDistanceDegrees = 0.0011;
+    if (bestDistSq > maxSnapDistanceDegrees * maxSnapDistanceDegrees) {
+      return point;
+    }
+    return best;
+  }
+
+  /// Feeds a fresh (raw) snapshot into the smoothing layer. Called once per
+  /// genuine new GPS fix — from inside the GetBuilder's builder, alongside
+  /// onLocationUpdate() itself — never from inside the animation tick, so
+  /// this can't retrigger the engine's own per-fix bookkeeping (bearing
+  /// hysteresis, progress, off-route strikes) on every animation frame.
+  void _updateAnimationTarget(NavSnapshot snapshot) {
+    final target = _snapToRoute(snapshot.driverPosition, snapshot.routePoints);
+    final from = _displayedPosition;
+
+    if (from == null) {
+      // First fix this widget has ever seen — nothing to animate from.
+      _displayedPosition = target;
+      _displayedBearing = snapshot.bearing;
+      _lastFixAt = DateTime.now();
+      return;
+    }
+
+    // HomeController.update() can fire without the position genuinely
+    // having moved (a heading-only update, or simply a duplicate tick) —
+    // restarting the animation from a value to itself would just reset its
+    // clock for no visible reason.
+    if (from.latitude == target.latitude &&
+        from.longitude == target.longitude &&
+        _displayedBearing == snapshot.bearing) {
+      return;
+    }
+
+    final now = DateTime.now();
+    // Much tighter than a polled source would need — this is fed by a live
+    // GPS stream that can update multiple times a second (see this
+    // widget's own doc comment), so the interpolation has to keep pace
+    // rather than linger between fixes the way a slow poll's would.
+    final elapsedMs =
+        _lastFixAt == null ? 800 : now.difference(_lastFixAt!).inMilliseconds;
+    _lastFixAt = now;
+    final durationMs = elapsedMs.clamp(150, 1200);
+
+    _animFrom = from;
+    _animTo = target;
+    _bearingFrom = _displayedBearing;
+    _bearingTo = snapshot.bearing;
+
+    final controller = _carAnimController ??=
+        AnimationController(vsync: this)..addListener(_onAnimTick);
+    controller
+      ..duration = Duration(milliseconds: durationMs)
+      ..value = 0
+      ..forward();
+
+    // Once per genuine fix, not once per animation frame — see
+    // _fitCameraToRideBounds's own note on why a bounds-fit can't run at
+    // that frequency the way a plain centre-follow could.
+    if (_cameraInitialized) {
+      _fitCameraToRideBounds(target, snapshot.bearing);
+    }
+  }
+
+  void _onAnimTick() {
+    if (!mounted) return;
+    final from = _animFrom;
+    final to = _animTo;
+    final controller = _carAnimController;
+    if (from == null || to == null || controller == null) return;
+
+    final t = controller.value;
+    _displayedPosition = LatLng(
+      from.latitude + (to.latitude - from.latitude) * t,
+      from.longitude + (to.longitude - from.longitude) * t,
+    );
+    _displayedBearing = _lerpAngle(_bearingFrom, _bearingTo, t);
+    // Camera framing (car + both trip ends) happens once per genuine fix in
+    // _updateAnimationTarget, not every animation frame here — a bounds-fit
+    // is its own eased camera transition (newLatLngBounds), and
+    // re-triggering an eased transition dozens of times a second would
+    // just fight itself instead of tracking smoothly.
   }
 
   @override
@@ -209,6 +440,9 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
             padding: EdgeInsets.only(bottom: widget.bottomOffset),
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+            compassEnabled: false,
           );
         }
 
@@ -217,6 +451,10 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
             initialCameraPosition: CameraPosition(target: dest, zoom: 14),
             padding: EdgeInsets.only(bottom: widget.bottomOffset),
             myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+            compassEnabled: false,
           );
         }
 
@@ -249,32 +487,25 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
           });
         }
 
+        // Feeds the smoothing layer from this genuine new fix — once per
+        // real GetBuilder rebuild, never from inside the animation tick
+        // itself (see _updateAnimationTarget's own note on why that
+        // distinction matters here).
+        _updateAnimationTarget(snapshot);
+
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          if (!_cameraInitialized && _mapController != null) {
+          if (!mounted || _mapController == null) return;
+          if (!_cameraInitialized) {
+            // The first framing — every camera move after this is the
+            // once-per-fix bounds refit in _updateAnimationTarget (or the
+            // Recenter button's own one-shot fly-to).
             _cameraInitialized = true;
-            _animateCamera(snapshot);
-          } else {
-            _animateCamera(snapshot);
+            _fitCameraToRideBounds(
+              _displayedPosition ?? snapshot.driverPosition,
+              _displayedBearing,
+            );
           }
         });
-
-        final markers = <Marker>{
-          Marker(
-            markerId: const MarkerId('nav_driver'),
-            position: snapshot.driverPosition,
-            icon: controller.carIcon ?? BitmapDescriptor.defaultMarker,
-            rotation: snapshot.bearing,
-            anchor: const Offset(0.5, 0.5),
-            flat: true,
-          ),
-          Marker(
-            markerId: const MarkerId('nav_destination'),
-            position: dest,
-            icon: controller.userIcon ?? BitmapDescriptor.defaultMarker,
-            infoWindow: InfoWindow(title: widget.destLabel),
-          ),
-        };
 
         final polylines = <Polyline>{
           if (snapshot.routePoints.isNotEmpty)
@@ -291,58 +522,115 @@ class _InAppNavigationMapState extends State<InAppNavigationMap> {
             ),
         };
 
-        return Stack(
-          children: [
-            GoogleMap(
-              initialCameraPosition: CameraPosition(target: driverPos, zoom: 16),
-              onMapCreated: (c) {
-                _mapController = c;
-              },
-              onCameraMoveStarted: () {
-                if (_programmaticCameraMove) {
-                  _programmaticCameraMove = false;
-                  return;
-                }
-                // A move we didn't trigger — the driver panned/zoomed
-                // manually. Drop out of follow mode until they tap
-                // recenter, instead of yanking the map back under them.
-                if (_followMode) setState(() => _followMode = false);
-              },
-              padding: EdgeInsets.only(bottom: widget.bottomOffset),
-              myLocationEnabled: false,
-              myLocationButtonEnabled: false,
-              markers: markers,
-              polylines: polylines,
-            ),
+        // Rebuilds every animation frame while the marker is gliding
+        // between fixes — scoped to just this subtree (map, markers,
+        // banner), not the GetBuilder above it, so the engine's own
+        // per-fix bookkeeping in onLocationUpdate() only ever runs once
+        // per real GPS update rather than once per frame.
+        return AnimatedBuilder(
+          animation: _carAnimController ?? kAlwaysCompleteAnimation,
+          builder: (context, _) {
+            final displayPosition = _displayedPosition ?? snapshot.driverPosition;
+            final displayBearing = _displayedPosition != null
+                ? _displayedBearing
+                : snapshot.bearing;
 
-            // ---- Turn-by-turn instruction banner ----
-            if (widget.showInstructionBanner)
-              Positioned(
-                top: widget.topOffset,
-                left: 12,
-                right: 12,
-                child: _InstructionBanner(snapshot: snapshot),
+            final markers = <Marker>{
+              Marker(
+                markerId: const MarkerId('nav_driver'),
+                position: displayPosition,
+                icon: controller.carIcon ?? BitmapDescriptor.defaultMarker,
+                rotation: displayBearing,
+                anchor: const Offset(0.5, 0.5),
+                flat: true,
               ),
-
-            // ---- Recenter button ----
-            // The +173 offset clears the instruction banner's own height —
-            // without the banner there's nothing to clear, so the button
-            // would otherwise float with a large, pointless gap above it.
-            if (!_followMode)
-              Positioned(
-                right: 16,
-                top: widget.topOffset +
-                    (widget.showInstructionBanner ? 173 : 0),
-                child: FloatingActionButton(
-                  mini: true,
-                  heroTag: 'nav_recenter_${widget.destLabel}',
-                  backgroundColor: Colors.white,
-                  foregroundColor: ColorResources.appColor,
-                  onPressed: () => _recenter(snapshot),
-                  child: const Icon(Icons.navigation_rounded),
+              Marker(
+                markerId: const MarkerId('nav_destination'),
+                position: dest,
+                icon: controller.userIcon ?? BitmapDescriptor.defaultMarker,
+                infoWindow: InfoWindow(title: widget.destLabel),
+              ),
+              // The other end of the trip — shown alongside the current
+              // nav target so both pickup and drop stay visible together
+              // with the car, at every stage of the ride (see
+              // _fitCameraToRideBounds's own note).
+              if (_secondaryLatLng != null)
+                Marker(
+                  markerId: const MarkerId('nav_secondary'),
+                  position: _secondaryLatLng!,
+                  icon: controller.userIcon ?? BitmapDescriptor.defaultMarker,
+                  infoWindow: InfoWindow(title: widget.secondaryLabel),
                 ),
-              ),
-          ],
+            };
+
+            return Stack(
+              children: [
+                GoogleMap(
+                  initialCameraPosition:
+                      CameraPosition(target: driverPos, zoom: 16),
+                  onMapCreated: (c) {
+                    _mapController = c;
+                  },
+                  onCameraMoveStarted: () {
+                    if (_programmaticCameraMove) {
+                      _programmaticCameraMove = false;
+                      return;
+                    }
+                    // A move we didn't trigger — the driver panned/zoomed
+                    // manually. Drop out of follow mode until they tap
+                    // recenter, instead of yanking the map back under them.
+                    if (_followMode) setState(() => _followMode = false);
+                  },
+                  padding: EdgeInsets.only(bottom: widget.bottomOffset),
+                  myLocationEnabled: false,
+                  myLocationButtonEnabled: false,
+                  // None of these three were disabled on this instance —
+                  // tapping the driver/destination markers can raise the
+                  // native "open in Maps" toolbar button, and tilting or
+                  // rotating the map (it's shown tilted, per _animateCamera's
+                  // own tilt: 45) reveals a compass button; both are native
+                  // chrome positioned by the platform SDK itself, so
+                  // neither reliably respects whatever the screen's own
+                  // Flutter-drawn overlay (bottom sheet, controls) is
+                  // meant to be covering.
+                  zoomControlsEnabled: false,
+                  mapToolbarEnabled: false,
+                  compassEnabled: false,
+                  markers: markers,
+                  polylines: polylines,
+                ),
+
+                // ---- Turn-by-turn instruction banner ----
+                if (widget.showInstructionBanner)
+                  Positioned(
+                    top: widget.topOffset,
+                    left: 12,
+                    right: 12,
+                    child: _InstructionBanner(snapshot: snapshot),
+                  ),
+
+                // ---- Recenter button ----
+                // The +173 offset clears the instruction banner's own
+                // height — without the banner there's nothing to clear, so
+                // the button would otherwise float with a large, pointless
+                // gap above it.
+                if (!_followMode)
+                  Positioned(
+                    right: 16,
+                    top: widget.topOffset +
+                        (widget.showInstructionBanner ? 173 : 0),
+                    child: FloatingActionButton(
+                      mini: true,
+                      heroTag: 'nav_recenter_${widget.destLabel}',
+                      backgroundColor: Colors.white,
+                      foregroundColor: ColorResources.appColor,
+                      onPressed: () => _recenter(snapshot),
+                      child: const Icon(Icons.navigation_rounded),
+                    ),
+                  ),
+              ],
+            );
+          },
         );
       },
     );

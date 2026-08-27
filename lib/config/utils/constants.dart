@@ -85,6 +85,7 @@ class ApiConstants {
   static const String chatMessages = 'chat/messages?';
   static const String messageList = 'chat/list';
   static const String chatRead = 'chat/read';
+  static const String driverChatMasterList = 'driver-chat-master-list';
   static const String driverWalletBalance = 'driver-wallet-balance';
   static const String driverEarningHistory = 'driver-earning-history';
   static const String driverRequestWithdraw = 'driver-request-withdraw';

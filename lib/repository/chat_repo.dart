@@ -59,4 +59,10 @@ class ChatRepo extends GetxService {
   Future<Response> chatRead({String? chatId}) async {
     return apiClient.postData(ApiConstants.chatRead, {"chat_id": chatId});
   }
+
+  ////// ===================  Quick/Preset Message List Api ==================
+
+  Future<Response> quickMessagesList() async {
+    return apiClient.getData(ApiConstants.driverChatMasterList);
+  }
 }
