@@ -1008,6 +1008,45 @@ class AuthController extends GetxController implements GetxService {
     return response;
   }
 
+  /// Mirrors userLogOut's flow above — same session cleanup, same
+  /// navigation to the login screen — except the backend call is
+  /// delete-account instead of logout, since the account itself no longer
+  /// exists after this succeeds.
+  Future<Response> deleteAccount({required BuildContext context}) async {
+    update();
+
+    Response response = await authRepo.deleteAccount();
+
+    if (response.body is Map && response.body['code']?.toString() == '200') {
+      logOut();
+      if (context.mounted) AnimatedTopToast.show(
+        context: context,
+        message: "Your account has been deleted.",
+        backgroundColor: Colors.green,
+        icon: Icons.check_circle_rounded,
+      );
+
+      Get.offAllNamed(RouteHelper.getmyRideLoginScreen());
+    } else if (response.statusCode == 500) {
+      if (context.mounted) AnimatedTopToast.show(
+        context: context,
+        message: "Server error. Please try again later.",
+        backgroundColor: Colors.red,
+        icon: Icons.error_rounded,
+      );
+    } else {
+      if (context.mounted) AnimatedTopToast.show(
+        context: context,
+        message: "Could not delete account. Please try again.",
+        backgroundColor: Colors.red,
+        icon: Icons.error_rounded,
+      );
+    }
+
+    update();
+    return response;
+  }
+
   Future<Response> verifyOtpApi({
     required BuildContext context,
     required String mobileNumber,

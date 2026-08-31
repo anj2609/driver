@@ -289,6 +289,8 @@
 // }
 
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -321,6 +323,43 @@ class _TripDetailsScreenState
   List<LatLng>? _roadPoints;
   String? _roadPointsForBookingId;
   bool _isFetchingRoad = false;
+
+  // The map's fixed zoom=12 initialCameraPosition only ever centred on
+  // pickup — when drop was far enough away it simply fell outside the
+  // viewport, so only one of the two markers was ever actually visible
+  // despite both being added to the `markers` set. Once the controller is
+  // available (onMapCreated) and both coordinates are known, animate the
+  // camera to a bounds that contains both pickup and drop instead of
+  // trusting the initial fixed zoom to happen to cover them.
+  GoogleMapController? _mapController;
+  String? _boundsFittedForBookingId;
+
+  void _fitBothMarkers(String bookingId, LatLng pickup, LatLng drop) {
+    if (_boundsFittedForBookingId == bookingId || _mapController == null) {
+      return;
+    }
+    // (0,0) is this screen's "coordinate not parsed yet" placeholder (see
+    // the `?? 0` fallbacks in build()), not a real location — fitting
+    // bounds to it would zoom the map out to the Gulf of Guinea.
+    if ((pickup.latitude == 0 && pickup.longitude == 0) ||
+        (drop.latitude == 0 && drop.longitude == 0)) {
+      return;
+    }
+    _boundsFittedForBookingId = bookingId;
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(
+        math.min(pickup.latitude, drop.latitude),
+        math.min(pickup.longitude, drop.longitude),
+      ),
+      northeast: LatLng(
+        math.max(pickup.latitude, drop.latitude),
+        math.max(pickup.longitude, drop.longitude),
+      ),
+    );
+
+    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 60));
+  }
 
   Future<void> _ensureRoadRoute(String bookingId, LatLng pickup, LatLng drop) async {
     if (_roadPointsForBookingId == bookingId || _isFetchingRoad) return;
@@ -400,6 +439,7 @@ class _TripDetailsScreenState
           if ((data.pickupLat ?? 0) != 0 && (data.dropLat ?? 0) != 0) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _ensureRoadRoute(bookingIdStr, pickup, drop);
+              _fitBothMarkers(bookingIdStr, pickup, drop);
             });
           }
 
@@ -450,11 +490,15 @@ class _TripDetailsScreenState
                                 children: [
                                   Text("Distance"),
                                   Text(
-                                    // A missing distance used to render as
-                                    // "0 km", which reads as a measured zero
-                                    // rather than as nothing to show.
-                                    (data.distance != null && data.distance! > 0)
-                                        ? "${data.distance} km"
+                                    // Haversine distance between pickup and
+                                    // drop coordinates, not the backend's own
+                                    // distance figure — see Data.distanceKm's
+                                    // note. A missing distance shows "—"
+                                    // rather than "0 km", which would read as
+                                    // a measured zero instead of nothing to
+                                    // show.
+                                    (data.distanceKm != null && data.distanceKm! > 0)
+                                        ? "${data.distanceKm!.toStringAsFixed(1)} km"
                                         : "—",
                                   )
                                 ],
@@ -496,6 +540,11 @@ class _TripDetailsScreenState
                        zoom: 12,
                      ),
 
+                    onMapCreated: (map) {
+                      _mapController = map;
+                      _fitBothMarkers(bookingIdStr, pickup, drop);
+                    },
+
                     markers: {
                       Marker(
                         markerId:
@@ -528,15 +577,30 @@ class _TripDetailsScreenState
                   ),
                 ),
 
+                // /trip-detail's confirmed live shape only ever carries a
+                // "payment" object here (total_fare, final_amount,
+                // promo_discount, wallet_used) — there's no base_fare or
+                // discount_fare on this endpoint, which is why those two
+                // rows used to always print "₹null". Subtotal is
+                // payment.total_fare; promo/wallet only show when they
+                // actually deducted something, same as the rider app's
+                // PriceBreakdownCard fallback rows.
                 _row(
-                  "Base Fare",
-                  "₹${data.baseFare}"
+                  "Subtotal Fare",
+                  "₹${(data.paymentTotalFare ?? 0).toStringAsFixed(2)}"
                 ),
 
-                _row(
-                  "Discount Fare",
-                  "₹${data.discountFare}"
-                ),
+                if ((data.promoDiscount ?? 0) > 0)
+                  _row(
+                    "Promo Discount",
+                    "- ₹${data.promoDiscount!.toStringAsFixed(2)}"
+                  ),
+
+                if ((data.walletUsed ?? 0) > 0)
+                  _row(
+                    "Wallet Used",
+                    "- ₹${data.walletUsed!.toStringAsFixed(2)}"
+                  ),
 
                 // Both this and the big number above the map now read
                 // Data.displayFare — same final_amount-first fallback, so

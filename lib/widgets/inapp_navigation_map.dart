@@ -113,12 +113,14 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
   //
   // onLocationUpdate() (and this whole widget, via the GetBuilder it's
   // rebuilt inside) fires on every raw GPS fix from HomeController's
-  // stream — several times a second per this class's own doc comment. Each
-  // one used to be handed straight to the marker and the camera
-  // (_animateCamera, below), which for a genuinely live, frequent stream
-  // reads reasonably smoothly already, but still moves in discrete jumps
-  // between fixes rather than gliding, and doesn't correct GPS fixes that
-  // land a few metres off the road the driver is actually on. This
+  // stream — roughly every 5s in practice (its own Geolocator settings:
+  // distanceFilter 5m, intervalDuration 5s), not the "several times a
+  // second" this used to assume — see _updateAnimationTarget's own note
+  // on why that assumption mattered. Each fix used to be handed straight
+  // to the marker and the camera (_animateCamera, below), which moved in
+  // a discrete jump every ~5s rather than gliding, and doesn't correct
+  // GPS fixes that land a few metres off the road the driver is actually
+  // on. This
   // interpolates between fixes over the time actually elapsed since the
   // last one, snapping each fix onto the current route first.
   AnimationController? _carAnimController;
@@ -357,18 +359,32 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
     if (from.latitude == target.latitude &&
         from.longitude == target.longitude &&
         _displayedBearing == snapshot.bearing) {
+      debugPrint(
+        '[Nav] fix ignored as unchanged — raw=${snapshot.driverPosition}, '
+        'snapped=$target, bearing=${snapshot.bearing}',
+      );
       return;
     }
 
+    debugPrint(
+      '[Nav] animating car: from=$from to=$target '
+      '(raw fix was ${snapshot.driverPosition})',
+    );
+
     final now = DateTime.now();
-    // Much tighter than a polled source would need — this is fed by a live
-    // GPS stream that can update multiple times a second (see this
-    // widget's own doc comment), so the interpolation has to keep pace
-    // rather than linger between fixes the way a slow poll's would.
+    // Was clamped to a 150-1200ms ceiling on the assumption this GPS
+    // stream delivers several fixes a second — it doesn't. HomeController's
+    // own Geolocator settings (distanceFilter: 5, intervalDuration: 5s)
+    // mean a real fix arrives roughly every 5 seconds. Capping the glide
+    // at 1.2s meant the car sat still for the other ~3.8s of every real
+    // gap, then dashed through its whole movement in a burst — reported
+    // as "the car jumps to a different location" (accurately: for most of
+    // each interval, it wasn't animating at all). Widened to actually
+    // span a real gap between fixes instead of truncating it.
     final elapsedMs =
-        _lastFixAt == null ? 800 : now.difference(_lastFixAt!).inMilliseconds;
+        _lastFixAt == null ? 5000 : now.difference(_lastFixAt!).inMilliseconds;
     _lastFixAt = now;
-    final durationMs = elapsedMs.clamp(150, 1200);
+    final durationMs = elapsedMs.clamp(600, 6000);
 
     _animFrom = from;
     _animTo = target;
@@ -513,9 +529,10 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
               polylineId: const PolylineId('nav_route'),
               points: snapshot.routePoints,
               width: 6,
-              color: snapshot.isOffRoute
-                  ? Colors.orange
-                  : ColorResources.appColor,
+              // Off-route stays a distinct warning colour — a real,
+              // useful signal, not just decoration — but the normal path
+              // is now plain black, matching the reference design.
+              color: snapshot.isOffRoute ? Colors.orange : Colors.black,
               startCap: Cap.roundCap,
               endCap: Cap.roundCap,
               jointType: JointType.round,
@@ -543,12 +560,20 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
                 rotation: displayBearing,
                 anchor: const Offset(0.5, 0.5),
                 flat: true,
+                // Explicit, not left to insertion-order tie-breaking — the
+                // car is the one thing that must never render underneath
+                // the destination/secondary dots.
+                zIndexInt: 2,
               ),
               Marker(
                 markerId: const MarkerId('nav_destination'),
                 position: dest,
+                // A plain dot icon needs centring on its coordinate, not
+                // anchored at its base the way a pin-shaped icon would be.
                 icon: controller.userIcon ?? BitmapDescriptor.defaultMarker,
+                anchor: const Offset(0.5, 0.5),
                 infoWindow: InfoWindow(title: widget.destLabel),
+                zIndexInt: 1,
               ),
               // The other end of the trip — shown alongside the current
               // nav target so both pickup and drop stay visible together
@@ -559,7 +584,9 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
                   markerId: const MarkerId('nav_secondary'),
                   position: _secondaryLatLng!,
                   icon: controller.userIcon ?? BitmapDescriptor.defaultMarker,
+                  anchor: const Offset(0.5, 0.5),
                   infoWindow: InfoWindow(title: widget.secondaryLabel),
+                  zIndexInt: 1,
                 ),
             };
 

@@ -1434,14 +1434,21 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                   // The other end of the trip, kept visible alongside the
                   // current nav target — see InAppNavigationMap's own note
                   // on why this can't just be "wherever the car already
-                  // knows to head".
+                  // knows to head". Only before the ride is under way,
+                  // though: once it is, the "other end" would be the
+                  // pickup — already visited, not going anywhere — and
+                  // keeping it in the bounds-fit meant framing the entire
+                  // pickup-to-drop trip (often real cross-town distance)
+                  // at once. That zoom level made the car's actual
+                  // per-poll movement look negligible, reported as "the
+                  // car isn't moving" even though it genuinely was.
                   secondaryLat: navUnderway
-                      ? rideData.lat
+                      ? null
                       : (rideData.dropLat ?? _geocodedDrop?.latitude),
                   secondaryLng: navUnderway
-                      ? rideData.lng
+                      ? null
                       : (rideData.dropLng ?? _geocodedDrop?.longitude),
-                  secondaryLabel: navUnderway ? 'Pickup' : 'Drop',
+                  secondaryLabel: navUnderway ? '' : 'Drop',
                   // Auto-detected arrival calls the exact same guarded path
                   // as tapping "Arrived" by hand — see _markArrived().
                   onArrived: () =>

@@ -90,6 +90,22 @@ class AccountScreen extends StatelessWidget {
                       },
                     ),
 
+                    /// 🔹 Delete Account
+                    ListTile(
+                      leading: const Icon(
+                        Icons.delete_forever,
+                        color: Colors.red,
+                      ),
+                      title: const Text(
+                        "Delete Account",
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      onTap: () => _confirmDeleteAccount(context),
+                    ),
+
                     const SizedBox(height: 20),
                   ],
                 ),
@@ -97,6 +113,39 @@ class AccountScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 🔹 Delete Account confirmation — deleting is irreversible, unlike
+  /// signing out, so this gets its own "are you sure" step rather than
+  /// firing the request straight off the tap the way Sign Out does.
+  void _confirmDeleteAccount(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("Delete Account"),
+        content: const Text(
+          "This will permanently delete your account and all associated "
+          "data. This action cannot be undone. Are you sure you want to "
+          "continue?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Get.find<AuthController>().deleteAccount(context: context);
+            },
+            child: const Text(
+              "Delete",
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
       ),
     );
   }

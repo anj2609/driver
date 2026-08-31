@@ -26,6 +26,13 @@ class VehicleDetailsData {
   // The vehicle type category (Car/Bike/etc.) id — still needed by the
   // vehical-info endpoint's payload on every submit, create or edit.
   dynamic vehicleTypeId;
+  // The category's display name (Car/Bike/Auto/Electric Auto/...), used to
+  // pick the right marker icon for this driver's own vehicle on the map
+  // (see vehicle_marker_assets.dart). Only set when vehicle_type comes back
+  // as a nested {id, name, ...} object rather than a bare id — profile_
+  // controller.dart falls back to resolving the name from vehicleTypeId
+  // against the vehicle-type list when this is null.
+  String? vehicleTypeName;
   // The vehicle's own record id, now returned by get-vehicle-info. Sending
   // this back on an edit is what lets the backend treat the submission as
   // an update to this exact vehicle instead of validating it as a new one
@@ -43,6 +50,7 @@ class VehicleDetailsData {
       this.color,
       this.images,
       this.vehicleTypeId,
+      this.vehicleTypeName,
       this.vehicleId});
 
   VehicleDetailsData.fromJson(Map<String, dynamic> json) {
@@ -64,7 +72,13 @@ class VehicleDetailsData {
     images = rawImages is List
         ? rawImages.map((e) => e.toString()).toList()
         : [];
-    vehicleTypeId = json['vehicle_type_id'] ?? json['vehicle_type'];
+    final rawVehicleType = json['vehicle_type'];
+    if (rawVehicleType is Map) {
+      vehicleTypeId = json['vehicle_type_id'] ?? rawVehicleType['id'];
+      vehicleTypeName = rawVehicleType['name']?.toString();
+    } else {
+      vehicleTypeId = json['vehicle_type_id'] ?? rawVehicleType;
+    }
     vehicleId = json['id'] ?? json['vehicle_id'];
   }
 }

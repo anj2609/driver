@@ -88,7 +88,19 @@ class NavOverlayService {
   static Future<void> showReturnBubbleIfPermitted() async {
     if (!await hasOverlayPermission()) return;
     try {
-      if (await FlutterOverlayWindow.isActive()) return;
+      // Was `if (await FlutterOverlayWindow.isActive()) return;` — a guard
+      // against creating a second overlay on top of one already showing.
+      // The bubble closes *itself*, though (see NavReturnBubble._returnToApp,
+      // which calls FlutterOverlayWindow.closeOverlay() from the overlay's
+      // own separate Flutter engine/isolate, not this one) — and after that,
+      // isActive() queried from here would sometimes still report true. The
+      // driver's first Google Maps trip would then show the bubble fine, but
+      // the *next* one — after they'd tapped the bubble to come back once —
+      // would hit this now-stale `true` and skip showOverlay() entirely,
+      // leaving no bubble at all. Closing first unconditionally (a no-op if
+      // nothing is showing — see hideReturnBubble) sidesteps trusting that
+      // cross-isolate state and guarantees a fresh overlay every time.
+      await FlutterOverlayWindow.closeOverlay();
       await FlutterOverlayWindow.showOverlay(
         height: 150,
         width: 150,

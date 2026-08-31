@@ -23,6 +23,7 @@ import 'package:myridedriverapp/screens/profile/account_screen.dart';
 import 'package:myridedriverapp/screens/profile/add_bank_screen.dart';
 import 'package:myridedriverapp/screens/profile/chat_screen.dart';
 import 'package:myridedriverapp/screens/profile/coupon_history_screen.dart';
+import 'package:myridedriverapp/screens/profile/driver_activity_screen.dart';
 import 'package:myridedriverapp/screens/profile/edit_profile.dart';
 import 'package:myridedriverapp/screens/profile/vehicles_screen.dart';
 import 'package:myridedriverapp/screens/profile/edit_address_screen.dart';
@@ -78,6 +79,7 @@ class RouteHelper {
   static const String aboutUsScreen = '/aboutUsScreen';
   static const String paymentScreen = '/paymentScreen';
   static const String socialDetailScreen = '/socialDetailScreen';
+  static const String driverActivityScreen = '/driverActivityScreen';
 
   static getSplashRoute() => splash;
   static getOnboardingRoute() => onbordingscreen;
@@ -110,6 +112,8 @@ class RouteHelper {
   // static getmainActivityTripDetailsScreen(EarningModel data) {
   //   Get.toNamed(mainActivityTripDetails, arguments: data);
   // }
+
+  static getDriverActivityScreen() => driverActivityScreen;
 
   static getvehiclesScreen() => vehiclesScreen;
   static getcouponHistoryScreen() => couponHistoryScreen;
@@ -290,6 +294,14 @@ class RouteHelper {
     GetPage(
       name: erningMainActivityscreen,
       page: () => EarningActivityScreen(),
+      transitionDuration: Duration(
+        milliseconds: ApiConstants.screenTransitionTime,
+      ),
+      transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: driverActivityScreen,
+      page: () => const DriverActivityScreen(),
       transitionDuration: Duration(
         milliseconds: ApiConstants.screenTransitionTime,
       ),

@@ -25,6 +25,10 @@ class ApiConstants {
   static const String getUserProfileUrl = 'get-profile';
   static const String editProfileUrl = 'update-profile';
   static const String logOutUrl = 'logout';
+  // GET, id + authorizationToken headers only (same as every other
+  // apiClient.getData() call) — no body/params, per the confirmed Postman
+  // request (My Ride API > Auth > Delete Account).
+  static const String deleteAccountUrl = 'delete-account';
   static const String socialAuth = 'social-auth';
   static const String estimateUrl = 'estimate-ride-list';
   static const String trackRide = 'track-ride';
@@ -77,6 +81,11 @@ class ApiConstants {
   static const String cancellation = 'cancellation-type-list?type=$driverLogin';
   static const String trackBookingRide = 'track-booking-ride';
   static const String driverBookingActive = 'driver-booking-active';
+  // Mirrors the rider app's customerbookingliststatus
+  // ('customer-booking-list?status=') — same naming convention every other
+  // driver-side/customer-side endpoint pair in this file follows. NOT yet
+  // confirmed against the live backend; see driver_activity_model.dart.
+  static const String driverBookingListStatus = 'driver-booking-list?status=';
   static const String addBankDetails = 'add-bank-details';
   static const String bankVerify = 'verify-bank';
   static const String bankStatus = 'bank-status';
@@ -123,6 +132,12 @@ class ApiConstants {
   static const String profileid = 'id';
   static const String name = 'FirstName';
   static const String vehicleId = 'id';
+  // Cached across app restarts so the map's car/bike/auto marker reflects
+  // this driver's actual vehicle from the moment the map first loads —
+  // not just after they happen to open the Vehicles screen this session.
+  // Refreshed every time getVehicleDetailsApi() succeeds or a vehicle edit
+  // is saved (see profile_controller.dart / vehicles_screen.dart).
+  static const String driverVehicleTypeName = 'driver_vehicle_type_name';
 
   //////======================  User  Static Data ==================================
   static const String userType = 'customer';

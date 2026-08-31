@@ -153,6 +153,7 @@ class CustomDrawer extends StatelessWidget {
 
           /// Menu Items
           _drawerItem("Home"),
+          _drawerItem("Activities"),
           _drawerItem("Bank Info"),
           _drawerItem("Earnings"),
           _drawerItem("Notification"),
@@ -172,6 +173,8 @@ class CustomDrawer extends StatelessWidget {
       onTap: () {
         if (title == "Home") {
           Get.back();
+        } else if (title == "Activities") {
+          Get.toNamed(RouteHelper.getDriverActivityScreen());
         } else if (title == "Bank Info") {
           Get.toNamed(RouteHelper.getaddBankDetailsScreen());
         } else if (title == "Earnings") {

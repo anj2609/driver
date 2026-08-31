@@ -46,6 +46,10 @@ class AuthRepo extends GetxService {
     return apiClient.myridepostData(ApiConstants.logOutUrl, {});
   }
 
+  Future<Response> deleteAccount() async {
+    return apiClient.getData(ApiConstants.deleteAccountUrl);
+  }
+
   Future<Response> driveraddressApi({
     String? country,
     String? division,

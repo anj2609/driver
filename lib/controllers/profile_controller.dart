@@ -10,11 +10,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
+import 'package:myridedriverapp/controllers/auth_controller.dart';
+import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:myridedriverapp/model/aboutus_model.dart';
 import 'package:myridedriverapp/model/arningactivitylist_model.dart';
 import 'package:myridedriverapp/model/bankdetals_model.dart';
 import 'package:myridedriverapp/model/coupon_model.dart';
+import 'package:myridedriverapp/model/driver_activity_model.dart';
 import 'package:myridedriverapp/model/earning_model.dart';
 import 'package:myridedriverapp/model/notification_model.dart';
 import 'package:myridedriverapp/model/privacy_model.dart';
@@ -95,6 +98,11 @@ class ProfileController extends GetxController implements GetxService {
   bool isEarningActivityLoading = false;
   bool isTripDetailsLoading = false;
   List earningActivityList = [];
+
+  // Drawer "Activities" tabs (Ongoing/Scheduled/Completed/Canceled) — see
+  // driver_activity_model.dart for the caveat on this endpoint.
+  bool isDriverActivityLoading = false;
+  List<DriverActivityItem> driverActivityList = [];
   TripDetailsModel? tripDetailsModel;
   bool isBankInfoLoading = false;
   List<BankDetailListData> bankDetails = [];
@@ -893,6 +901,8 @@ class ProfileController extends GetxController implements GetxService {
           '-- raw data: ${response.body['data']}',
         );
 
+        await _cacheVehicleTypeAndRefreshMarker();
+
         return response;
       } else {
         AnimatedTopToast.show(
@@ -922,6 +932,48 @@ class ProfileController extends GetxController implements GetxService {
       isVehicleLoading = false;
       update();
     }
+  }
+
+  /// Resolves this driver's vehicle-type name (Car/Bike/Auto/Electric
+  /// Auto/...) and persists it so HomeController's map marker (car/bike/
+  /// auto icon — see vehicle_marker_assets.dart) reflects the vehicle
+  /// actually registered instead of always showing the car icon. Called
+  /// every time getVehicleDetailsApi() succeeds, which covers both the
+  /// Vehicles screen's initial load and every save (it re-fetches on
+  /// success — see vehicles_screen.dart) — so an edited vehicle type
+  /// updates the marker immediately, in the same session, with no restart
+  /// needed.
+  Future<void> _cacheVehicleTypeAndRefreshMarker() async {
+    String? typeName = vehicleData?.vehicleTypeName;
+
+    if (typeName == null || typeName.isEmpty) {
+      final typeId = int.tryParse('${vehicleData?.vehicleTypeId}');
+      if (typeId != null) {
+        final authController = Get.find<AuthController>();
+        if (authController.vehicleTypeList.isEmpty) {
+          // Best-effort — a context is already required by this method's
+          // caller, so it's safe to reuse for this lookup too.
+          try {
+            await authController.vehicleType(context: Get.context!);
+          } catch (_) {}
+        }
+        for (final v in authController.vehicleTypeList) {
+          if (v.id == typeId) {
+            typeName = v.name;
+            break;
+          }
+        }
+      }
+    }
+
+    if (typeName == null || typeName.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(ApiConstants.driverVehicleTypeName, typeName);
+
+    try {
+      Get.find<HomeController>().loadCustomMarker();
+    } catch (_) {}
   }
 
   Future<Response> getCouponHistoryApi({required BuildContext context}) async {
@@ -1159,6 +1211,47 @@ class ProfileController extends GetxController implements GetxService {
     } finally {
       isEarningActivityLoading = false;
       update(); // VERY IMPORTANT
+    }
+  }
+
+  /// Drawer "Activities" tabs. `statusSlug` is one of ongoing/scheduled/
+  /// completed/cancelled, mirroring the rider app's Activity screen. The
+  /// endpoint itself is an educated guess (see driver_activity_model.dart) —
+  /// the debugPrint below is deliberately left in so the raw response is
+  /// visible on the very first real-device test, the same way every other
+  /// unconfirmed endpoint in this app got nailed down this session.
+  Future<void> getDriverActivityData({
+    required String statusSlug,
+    required BuildContext context,
+  }) async {
+    isDriverActivityLoading = true;
+    update();
+
+    try {
+      final response = await profileRepo.getDriverBookingList(
+        statusSlug: statusSlug,
+      );
+
+      debugPrint(
+        '[DriverActivity] status=$statusSlug code=${response.statusCode} '
+        'body=${response.body}',
+      );
+
+      driverActivityList = [];
+      if (response.statusCode == 200 &&
+          response.body is Map &&
+          response.body['code']?.toString() == '200') {
+        final model = DriverActivityModel.fromJson(
+          Map<String, dynamic>.from(response.body),
+        );
+        driverActivityList = model.data?.data ?? [];
+      }
+    } catch (e) {
+      debugPrint('[DriverActivity] error: $e');
+      driverActivityList = [];
+    } finally {
+      isDriverActivityLoading = false;
+      update();
     }
   }
 

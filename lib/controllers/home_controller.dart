@@ -16,6 +16,7 @@ import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
 import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/config/utils/dimensions.dart';
+import 'package:myridedriverapp/config/utils/vehicle_marker_assets.dart';
 import 'package:myridedriverapp/config/utils/style.dart';
 import 'package:myridedriverapp/services/road_route.dart';
 import 'package:myridedriverapp/controllers/auth_controller.dart';
@@ -164,7 +165,12 @@ class HomeController extends GetxController {
     _isInitialized = true;
 
     startLocationUpdates();
-    startAutoUpdate();
+    // NOT started unconditionally here anymore — the 5s location heartbeat
+    // (driverUpdateLocation) must only run while the driver is actually
+    // online, otherwise the backend keeps receiving fresh location pings
+    // for an "offline" driver and can keep matching/allotting rides to
+    // them. loadOnlineStatus() below starts it if the restored saved state
+    // is online; toggleOnline() starts/stops it on every explicit toggle.
     _startStalenessWatchdog();
     loadCustomMarker();
     loadUserMarker();
@@ -249,6 +255,7 @@ class HomeController extends GetxController {
     // already know the backend copy is stale would itself be misleading.
     isOnline = false;
     stopListeningBookings();
+    stopAutoUpdate();
     _ringedTripIds.clear();
     await saveOnlineStatus(false);
     update();
@@ -303,6 +310,7 @@ class HomeController extends GetxController {
       locationHealth.reset();
       _autoOfflineTriggered = false;
       startListeningBookings();
+      startAutoUpdate();
     }
     update();
     debugPrint('sttsuaaaa:::$isOnline');
@@ -361,6 +369,22 @@ class HomeController extends GetxController {
         debugPrint('[LocationPipeline] heartbeat update failed: $e');
       }
     });
+  }
+
+  // Was missing entirely: startAutoUpdate() was fired once in onInit() and
+  // never cancelled except in onClose(), so the 5s location heartbeat kept
+  // pinging the backend with this driver's live lat/lng for the driver's
+  // *entire app session* — including while toggled offline. The toggle's
+  // own toast already claims "You're Offline — location sharing stopped."
+  // but nothing actually stopped it. Many backends key ride-matching off
+  // "has a recent location ping" rather than (or in addition to) the
+  // explicit online/offline flag, so a driver who went offline kept looking
+  // available and kept getting rides allotted. Call this wherever the
+  // driver is taken offline, paired with stopListeningBookings().
+  void stopAutoUpdate() {
+    _autoUpdateTimer?.cancel();
+    _autoUpdateTimer = null;
+    debugPrint('[LocationPipeline] heartbeat stopped (driver offline)');
   }
 
   bool isOnline = false;
@@ -503,6 +527,7 @@ class HomeController extends GetxController {
         // even though the toggle itself already succeeded.
         if (isOnline) {
           startListeningBookings();
+          startAutoUpdate();
           if (Get.context != null) {
             AnimatedTopToast.show(
               context: Get.context!,
@@ -514,6 +539,12 @@ class HomeController extends GetxController {
           }
         } else {
           stopListeningBookings();
+          // Was missing here: the location heartbeat kept firing every 5s
+          // and kept updating the backend's copy of this driver's location
+          // even after going offline — see stopAutoUpdate()'s doc comment.
+          // This is the actual fix for rides still being allotted while
+          // offline.
+          stopAutoUpdate();
           // A new shift (next time they go online) should start with a
           // clean slate rather than carrying forward ids rung/declined
           // during this now-ended one.
@@ -2401,12 +2432,26 @@ class HomeController extends GetxController {
 
   ////////// ================ map   =============================////////////
   Future<void> loadCustomMarker() async {
-    // Was 45 — noticeably larger than the same ridecar.png asset renders
-    // at in the rider app (targetWidth: 20, in findingdriver_screen.dart's
-    // getCustomMarker()), which is what made the driver app's own car icon
-    // read as oversized on the map. Matched to that same width so the same
-    // asset reads the same size in both apps.
-    carIcon = await resizeMarker('assets/images/ridecar.png', 20);
+    // Was ridecar.png at 45 — noticeably larger than the rider app's own
+    // rendering of the same asset (targetWidth: 20), which made this
+    // app's car icon read as oversized. car_nride_marker.png replaces the
+    // asset itself (same one now used in the rider app, white background
+    // removed) at the width already matched between the two apps.
+    //
+    // Was hardcoded to this one asset regardless of what the driver
+    // actually drives — every driver's own position showed as a car even
+    // when they'd registered a bike, auto or electric auto. The asset
+    // path now comes from this driver's own vehicle type, cached by
+    // ProfileController._cacheVehicleTypeAndRefreshMarker() whenever
+    // vehicle details are fetched or edited (falls back to the car marker
+    // — the previous unconditional behaviour — if nothing's cached yet,
+    // e.g. a driver who hasn't opened the Vehicles screen this session).
+    final prefs = await SharedPreferences.getInstance();
+    final vehicleTypeName = prefs.getString(ApiConstants.driverVehicleTypeName);
+    carIcon = await resizeMarker(
+      vehicleMarkerAssetForName(vehicleTypeName),
+      vehicleMarkerWidthForName(vehicleTypeName),
+    );
     // Without this the map keeps whatever it drew before the icon finished
     // decoding — the plain red default pin — until something else happens
     // to call update(). The car is the point; show it as soon as it exists.
@@ -2458,7 +2503,10 @@ class HomeController extends GetxController {
   }
 
   Future<void> loadUserMarker() async {
-    userIcon = await resizeMarker('assets/images/locationpickup.png', 100);
+    // Was locationpickup.png — a full pin-style icon. Replaced with the
+    // same plain black dot used everywhere else a pickup/destination
+    // point needs marking now, rather than a distinct icon of its own.
+    userIcon = await resizeMarker('assets/images/black_dot_marker.png', 32);
     update();
   }
 
@@ -2496,6 +2544,7 @@ class HomeController extends GetxController {
         markerId: const MarkerId("pickup"),
         position: LatLng(endLat, endLng),
         icon: userIcon ?? BitmapDescriptor.defaultMarker,
+        anchor: const Offset(0.5, 0.5),
         infoWindow: const InfoWindow(title: "Pickup"),
       ),
     );
@@ -2580,7 +2629,7 @@ class HomeController extends GetxController {
           polylineId: const PolylineId("route"),
           points: routePoints,
           width: 6,
-          color: ColorResources.appColor,
+          color: Colors.black,
           startCap: Cap.roundCap,
           endCap: Cap.roundCap,
           jointType: JointType.round,

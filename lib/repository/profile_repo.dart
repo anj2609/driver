@@ -262,6 +262,14 @@ class ProfiileRepo extends GetxService {
     return apiClient.getData(ApiConstants.driverEarningActivityDetails);
   }
 
+  /// Activity tabs (Ongoing/Scheduled/Completed/Canceled) — see
+  /// driver_activity_model.dart for the caveat on this endpoint.
+  Future<Response> getDriverBookingList({required String statusSlug}) async {
+    return apiClient.getData(
+      '${ApiConstants.driverBookingListStatus}$statusSlug',
+    );
+  }
+
 
    Future<Response> tripDetailsRideApi({required String bookingId}) async {
     log(' booking $bookingId');
