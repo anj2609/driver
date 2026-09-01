@@ -1,8 +1,6 @@
 import 'dart:io';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:myridedriverapp/config/utils/apis/image_compress.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
@@ -88,25 +86,27 @@ class _DetailsScreenState extends State<DetailsScreen> {
   final ImagePicker picker = ImagePicker();
 
   /// ---------------- IMAGE PICK FUNCTION ----------------
+  ///
+  /// Was compressTo50KB() below — a 50KB target is unreasonably small for a
+  /// real photo (a normal selfie/ID photo is easily several hundred KB to a
+  /// few MB straight off a phone camera), so on a lot of real images the
+  /// loop's 8 attempts (quality down to 20, dimensions down to ~168px) never
+  /// actually got under it, or the native flutter_image_compress plugin
+  /// call itself returned null partway through (a known failure mode of
+  /// that plugin for some source formats/OEM camera output) — either way
+  /// this screen's own picker showed "Image compression failed" or "Unable
+  /// to compress under 50KB" for images that are completely normal by any
+  /// other standard. compressImageUnder2MB is the same target every other
+  /// image upload in this app already uses successfully (vehicle photos,
+  /// documents — see postdrivervehicale/postMultipartUpdate in
+  /// api_client.dart), and it's a pure-Dart resize (no native plugin call
+  /// that can throw/return null for an unsupported format) that always
+  /// returns a usable file rather than failing outright.
   Future<void> pickImage(bool isProfile) async {
     final File? picked = await pickImageFromSource(context);
 
     if (picked != null) {
-      File file = picked;
-
-      File? compressedFile = await compressTo50KB(file);
-
-      if (compressedFile == null) {
-        Get.snackbar("Error", "Image compression failed");
-        return;
-      }
-
-      final size = await compressedFile.length();
-
-      if (size > 50 * 1024) {
-        Get.snackbar("Error", "Unable to compress under 50KB");
-        return;
-      }
+      final File compressedFile = await compressImageUnder2MB(picked);
 
       setState(() {
         if (isProfile) {
@@ -116,47 +116,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
         }
       });
     }
-  }
-
-  Future<File?> compressTo50KB(File file) async {
-    final dir = await getTemporaryDirectory();
-
-    final targetPath = p.join(
-      dir.path,
-      "compressed_${DateTime.now().millisecondsSinceEpoch}.jpg",
-    );
-
-    int quality = 90;
-    int minWidth = 800;
-    int minHeight = 800;
-
-    File? result;
-
-    for (int i = 0; i < 8; i++) {
-      final XFile? compressed = await FlutterImageCompress.compressAndGetFile(
-        file.path,
-        targetPath,
-        quality: quality,
-        minWidth: minWidth,
-        minHeight: minHeight,
-      );
-
-      if (compressed == null) return null;
-
-      result = File(compressed.path);
-
-      final size = await result.length();
-
-      if (size <= 50 * 1024) {
-        return result;
-      }
-
-      quality -= 10;
-      minWidth = (minWidth * 0.8).toInt();
-      minHeight = (minHeight * 0.8).toInt();
-    }
-
-    return result;
   }
   // ---------------- BRAND & MODEL ----------------
 
