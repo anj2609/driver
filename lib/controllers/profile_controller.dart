@@ -676,9 +676,7 @@ class ProfileController extends GetxController implements GetxService {
         notificationModel = NotificationModel.fromJson(response.body);
 
         notificationList = notificationModel?.data ?? [];
-
-        deleteAllNotifications(context: context);
-        notificationList.clear();
+        notificationList = notificationModel?.data ?? [];
       } else {
         Get.snackbar(
           '',
