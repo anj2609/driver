@@ -1,5 +1,7 @@
 package online.nride.driver
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -108,23 +110,73 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                     return@setMethodCallHandler
                 }
-                val launchIntent =
-                    appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
-                if (launchIntent == null) {
-                    result.success(false)
-                    return@setMethodCallHandler
-                }
-                // NEW_TASK because this starts from a Service context with no
-                // Activity of its own; REORDER_TO_FRONT so the driver lands
-                // back on the ride screen they left, with its state intact,
-                // rather than on a fresh second copy of the app stacked on it.
-                launchIntent.addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
-                )
-                appContext.startActivity(launchIntent)
-                result.success(true)
+                result.success(bringAppToFront(appContext))
             }
 
         cache.put(OVERLAY_ENGINE_ID, engine)
+    }
+
+    /**
+     * Brings this app's existing task back to the foreground from the bubble,
+     * whatever app is currently in front.
+     *
+     * This used to be a single `startActivity(launchIntent)` with
+     * `FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_REORDER_TO_FRONT`, which worked
+     * over some navigation apps and silently did nothing over others. Two
+     * reasons, both of which this avoids:
+     *
+     *  - REORDER_TO_FRONT reorders an activity *within* its task. It is not a
+     *    "bring my task to the front" flag, and from a Service context with no
+     *    Activity of its own there is frequently no such reordering to
+     *    perform — so the call succeeded and nothing visibly happened.
+     *  - MainActivity declares `android:taskAffinity=""` in the manifest. Task
+     *    matching for FLAG_ACTIVITY_NEW_TASK is done by affinity, so with an
+     *    empty one, whether the launch found the app's existing task or was
+     *    treated as an unrelated new launch varied by OEM and by which app
+     *    happened to own the foreground task at the time. That variance is
+     *    exactly the "works in one maps app, not another" symptom.
+     *
+     * [ActivityManager.AppTask.moveToFront] is the API built for this precise
+     * job: it targets the app's own task directly, so it depends on neither
+     * affinity matching nor on who is in front. The launcher-style intent is
+     * kept only as a fallback for the case where no task exists any more (the
+     * app was fully swiped away while the driver was in Maps), where a fresh
+     * launch genuinely is the right behaviour — using the same flag pair a
+     * launcher itself uses rather than REORDER_TO_FRONT.
+     *
+     * Both paths are background activity starts, which Android 10+ restricts —
+     * but an app holding SYSTEM_ALERT_WINDOW is explicitly exempt, and the
+     * bubble only exists at all when that permission was granted.
+     */
+    private fun bringAppToFront(appContext: Context): Boolean {
+        try {
+            val activityManager =
+                appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val ownTask = activityManager?.appTasks?.firstOrNull { task ->
+                task.taskInfo?.baseIntent?.component?.packageName == appContext.packageName
+            }
+            if (ownTask != null) {
+                ownTask.moveToFront()
+                return true
+            }
+        } catch (e: Exception) {
+            // Falls through to the relaunch below — a bubble that can't reach
+            // the task must still try the one other route it has.
+        }
+
+        val launchIntent =
+            appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
+                ?: return false
+
+        launchIntent.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+        )
+
+        return try {
+            appContext.startActivity(launchIntent)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }

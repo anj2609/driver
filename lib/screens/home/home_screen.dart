@@ -136,7 +136,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(ApiConstants.overlayPermissionAsked) ?? false) return;
-    await prefs.setBool(ApiConstants.overlayPermissionAsked, true);
 
     if (!mounted) return;
     final wantsIt = await showDialog<bool>(
@@ -153,8 +152,8 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
           ),
           content: const Text(
             "Allow Nride driver to display over other apps, so you get a "
-            "floating button to jump straight back here while navigating "
-            "in Google Maps.",
+            "floating button to jump straight back here while you're "
+            "navigating — both on your way to the rider and during the trip.",
             textAlign: TextAlign.center,
           ),
           actions: [
@@ -176,7 +175,25 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     // Settings trip is the only way to grant it.
     if (wantsIt == true) {
       await NavOverlayService.requestOverlayPermission();
+      // Deliberately NOT latching overlayPermissionAsked here. The flag used
+      // to be set before this dialog even appeared, so a driver who tapped
+      // Allow, landed on the system Settings page and then backed out of it
+      // without finding the toggle — easily done, it's buried under a list of
+      // every installed app — was recorded as "asked" and never offered it
+      // again. The bubble then silently never worked for the life of that
+      // install, which is exactly the "it doesn't show up" report. Leaving it
+      // unset means only that specific driver gets one more prompt next
+      // launch; anyone who did grant it is caught by the
+      // hasOverlayPermission() early-return at the top and never sees this
+      // again either way.
+      return;
     }
+
+    // Declined outright — that's a real answer, and it's the one worth
+    // remembering. This is a convenience (rides and navigation work
+    // identically without it), so "no" must not become a prompt on every
+    // single launch.
+    await prefs.setBool(ApiConstants.overlayPermissionAsked, true);
   }
 
   /// Waits for HomeController's own location pipeline to report a first fix

@@ -676,10 +676,20 @@ class HomeController extends GetxController {
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
         intervalDuration: const Duration(seconds: 5),
+        // The text says "tap to open" because this notification genuinely
+        // is a way back into the app and nothing told the driver so.
+        // geolocator attaches a bring-to-front PendingIntent to it
+        // (BackgroundNotification.buildBringToFrontIntent, using
+        // FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+        // and — unlike the floating bubble — it needs no overlay
+        // permission, no vendor floating-window allowance, and is present
+        // for the entire time the driver is online. On the phones where the
+        // bubble never appears (Vivo/Funtouch, MIUI, Oppo, Realme all gate
+        // overlays behind extra vendor permissions), this is the route home
+        // that was already there and simply unadvertised.
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: 'Nride driver — Online',
-          notificationText:
-              'Sharing your location so nearby riders can find you',
+          notificationText: 'Sharing your location · Tap to open the app',
           notificationChannelName: 'Driver location sharing',
           setOngoing: true,
         ),

@@ -899,11 +899,15 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     positionStream?.cancel();
     _timer?.cancel();
     // Whatever route this screen is left by — ride completed, cancelled by
-    // the rider, or the driver backing out — the floating return bubble
-    // (see _startGoogleMapsNavigation) has nothing left to return to once
-    // this screen is gone, so it shouldn't outlive it. Safe to call even
-    // when navigation to Google Maps was never actually started.
+    // the rider, or the driver backing out — the floating return bubble and
+    // its notification counterpart (see _startGoogleMapsNavigation) have
+    // nothing left to return to once this screen is gone, so neither should
+    // outlive it. An ongoing notification especially: it isn't
+    // swipe-dismissible, so leaving it behind would pin a dead "Ride in
+    // progress" to the driver's status bar indefinitely. Both are safe to
+    // call even when navigation was never actually started.
     NavOverlayService.hideReturnBubble();
+    NavOverlayService.hideReturnNotification();
     super.dispose();
   }
 
@@ -1081,8 +1085,14 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
       return;
     }
 
-    // Silent no-op when the permission isn't granted — never prompts.
+    // Two ways back into the app, deliberately. The bubble is the nicer one
+    // but cannot be relied on — plenty of devices (Vivo, Xiaomi, Oppo,
+    // Realme) refuse overlays even with "display over other apps" granted,
+    // and it silently no-ops when the permission isn't there at all. The
+    // notification has no such constraints and is what guarantees the driver
+    // is never stranded in the maps app with no route home.
     await NavOverlayService.showReturnBubbleIfPermitted();
+    await NavOverlayService.showReturnNotification();
   }
 
   /// Drop-off resolved from [AcceptRideData.dropaddress] via Google Geocoding,
@@ -1095,6 +1105,71 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   /// same lookup repeatedly from build).
   int? _geocodedDropBooking;
   bool _geocodingInFlight = false;
+
+  /// Whether the "tap to return" notification is already up for this ride.
+  bool _returnNotificationPosted = false;
+
+  /// Posts the return-to-app notification for the whole time this ride
+  /// screen is alive, rather than only when *this app* launches the maps
+  /// handoff.
+  ///
+  /// Tying it to the handoff was too narrow: a driver who leaves for Google
+  /// Maps (or Waze, or anything else) on their own — switching apps from
+  /// recents, or from a maps notification — never triggered our launch path,
+  /// so they got no bubble and no notification, and had no obvious way back.
+  /// The notification's only real precondition is "a ride is in progress",
+  /// which is exactly the lifetime of this screen, so that's what it's tied
+  /// to now. Cancelled in dispose() with the bubble.
+  void _ensureReturnNotification() {
+    if (_returnNotificationPosted) return;
+    _returnNotificationPosted = true;
+    unawaited(NavOverlayService.showReturnNotification());
+  }
+
+  /// The booking whose *pickup* leg has already been handed off to Google
+  /// Maps, so it happens exactly once per ride.
+  ///
+  /// This screen rebuilds every few seconds off the track-ride poll, and the
+  /// driver can come back from Maps at any time via the return bubble —
+  /// without a per-booking guard, either one would relaunch Maps on top of
+  /// the driver over and over, which is unusable (and would make the bubble
+  /// pointless, since returning would just bounce them straight back out).
+  int? _pickupNavLaunchedForBooking;
+
+  /// Hands the pickup leg off to Google Maps the same way the ride leg is
+  /// handed off the moment the OTP is verified (see the call after
+  /// verifyPickUpOtps) — the driver gets real turn-by-turn to the rider,
+  /// not just the in-app overview map, for the half of the trip they're
+  /// actually driving blind on.
+  ///
+  /// Safe to call from build: every path out is a no-op unless this exact
+  /// booking's pickup leg has genuinely not been launched yet.
+  void _maybeStartPickupNavigation(AcceptRideData? ride) {
+    if (ride == null) return;
+
+    final int? bookingId = ride.bookingId;
+    if (bookingId == null) return;
+
+    // The drop leg has its own handoff at OTP-verify time; once the rider is
+    // aboard, _navTarget points at the destination and this would be
+    // relaunching navigation for a leg already under way.
+    final String phase = ride.status?.toLowerCase() ?? '';
+    if (isOtpVerified || phase == 'ongoing') return;
+
+    // Already outside the rider's door — sending the driver into turn-by-turn
+    // for a place they've arrived at is noise, not help.
+    if (phase == 'arrived') return;
+
+    if (_pickupNavLaunchedForBooking == bookingId) return;
+
+    final target = _navTarget(ride);
+    if (target == null) return;
+
+    // Latched *before* awaiting anything, so the rebuild that lands while
+    // the launch is still in flight can't fire a second one.
+    _pickupNavLaunchedForBooking = bookingId;
+    unawaited(_startGoogleMapsNavigation(target));
+  }
 
   /// If this booking is missing its drop coordinates but has a drop address,
   /// geocode the address once and cache the result. Safe to call from build:
@@ -1291,6 +1366,21 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
           // after this frame so it never calls setState mid-build.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _ensureDropCoordinates(rideData);
+          });
+
+          // Same Uber/Rapido-style handoff the ride leg gets on OTP verify,
+          // now for the pickup leg too — the driver lands here straight off
+          // accepting (see HomeController.acceptTrip) and is immediately
+          // driving to the rider, so this is the moment turn-by-turn is
+          // actually needed. Guarded internally to fire once per booking;
+          // scheduled after this frame so a launch can never happen
+          // mid-build.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            // Up for the whole ride, regardless of whether the driver was
+            // handed off to maps by us or walked over to it themselves.
+            _ensureReturnNotification();
+            _maybeStartPickupNavigation(rideData);
           });
 
           if (!isInitialized) {
