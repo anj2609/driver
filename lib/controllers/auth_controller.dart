@@ -48,6 +48,13 @@ class AuthController extends GetxController implements GetxService {
   bool isCouponValidated = false;
   bool isCouponLoading = false;
 
+  // The referral code itself, kept alongside validatedCoupon so it can be
+  // carried forward and sent as basic-info's "code" param once the driver
+  // reaches that step — there's no separate redeem call any more (see
+  // validateCouponApi's own note); validating IS the only coupon step now,
+  // and the backend applies it when basic-info is submitted with this code.
+  String? validatedCouponCode;
+
   int? selectedVehicleTypeId;
   String? updateStroeId;
   bool isLoading = false;
@@ -773,6 +780,13 @@ class AuthController extends GetxController implements GetxService {
     return prefs.getString(ApiConstants.profileid) ?? '';
   }
 
+  // Validating is now the only coupon step a driver takes during signup —
+  // there used to be a second "Redeem" tap that hit /redeem-coupon
+  // separately (see auth_repo.dart's now-removed redeemCoupon). That
+  // endpoint is gone; redemption happens server-side when basic-info is
+  // submitted carrying this same code (see fillPersonalInfoApi below,
+  // which reads validatedCouponCode), so a valid response here just needs
+  // to remember the code for that later call.
   Future<Response> validateCouponApi({
     required BuildContext context,
     required String code,
@@ -795,41 +809,11 @@ class AuthController extends GetxController implements GetxService {
             ? CouponData.fromJson(body['data'])
             : null;
         isCouponValidated = true;
+        validatedCouponCode = code;
       } else {
         isCouponValidated = false;
         validatedCoupon = null;
-      }
-
-      return response;
-    } catch (e) {
-      rethrow;
-    } finally {
-      isCouponLoading = false;
-      update();
-    }
-  }
-
-  Future<Response> redeemCouponApi({
-    required BuildContext context,
-    required String code,
-  }) async {
-    isCouponLoading = true;
-    update();
-
-    try {
-      final userId = await _currentUserId();
-      Response response = await authRepo.redeemCoupon(
-        userId: userId,
-        code: code,
-      );
-
-      final body = response.body;
-      final resCode = body?['code']?.toString();
-
-      if (resCode == '200') {
-        if (body?['data'] != null) {
-          validatedCoupon = CouponData.fromJson(body['data']);
-        }
+        validatedCouponCode = null;
       }
 
       return response;
@@ -1316,9 +1300,16 @@ else {
         dob: dob!.trim(),
         profile_image: profileimage,
         phoneOverride: phone?.trim(),
+        // Only set once validateCouponApi has actually confirmed a code —
+        // a driver who never entered one, or a later profile-edit call to
+        // this same method, sends nothing here.
+        referralCode: validatedCouponCode,
       );
 
       if (response.body["code"]?.toString() == "200") {
+        // Consumed — this signup's referral code has now been sent with
+        // basic-info; don't let a retry of a later step resubmit it.
+        validatedCouponCode = null;
         // A new driver reaches basic-info carrying only a signup_token; the
         // real session token is issued here, on completion — mirrors the
         // rider's fillPersonalInfoApi. Without this, a brand-new driver would

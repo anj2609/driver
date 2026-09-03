@@ -110,17 +110,6 @@ class AuthRepo extends GetxService {
     });
   }
 
-  Future<Response> redeemCoupon({
-    required String userId,
-    required String code,
-  }) async {
-    return apiClient.postData(ApiConstants.redeemCoupon, {
-      'user_id': userId,
-      'code': code,
-      'user_type': ApiConstants.driverLogin,
-    });
-  }
-
   Future<Response> driverdocument() async {
     return apiClient.getApi(
       ApiConstants.driverDocument + ApiConstants.driverLogin,
@@ -190,6 +179,12 @@ class AuthRepo extends GetxService {
     // rather than replacing it outright, so the existing phone-OTP call
     // sites (which never pass this) keep working exactly as before.
     String? phoneOverride,
+    // The referral code, once validate-coupon has confirmed it (see
+    // AuthController.validatedCouponCode) — there's no separate redeem
+    // call any more, so this is the only place a validated code is ever
+    // sent to the backend; passing null/empty here just omits the field,
+    // matching a driver who never entered a code.
+    String? referralCode,
   }) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     dynamic userId = prefs.getString(ApiConstants.profileid);
@@ -222,6 +217,9 @@ class AuthRepo extends GetxService {
     };
     if (resolvedUserId.isNotEmpty) {
       body["user_id"] = resolvedUserId;
+    }
+    if (referralCode != null && referralCode.isNotEmpty) {
+      body["code"] = referralCode;
     }
 
     // Same identity gap already found and fixed on driver-address: a

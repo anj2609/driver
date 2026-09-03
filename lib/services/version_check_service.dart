@@ -85,19 +85,56 @@ class VersionCheckService {
   static Future<AppVersionCheckResult?> check() async {
     try {
       final packageInfo = await PackageInfo.fromPlatform();
+      // The backend requires both of these and previously got neither:
+      // app_type (confirmed via the live endpoint — "The app type field is
+      // required", then "The selected app type is invalid" for anything
+      // but "rider"/"driver") and build (confirmed the same way — "The
+      // build field is required"). It also turns out to be the field the
+      // backend's actual force/allow decision runs on: `version` is
+      // echoed back but the block/unblock comparison is minimum_build vs
+      // this build number, not minimum_version vs the version string.
+      // Without it every request here has been failing with a body-level
+      // 401 no matter what minimum_version/force_update were set to.
       final response = await Get.find<ApiClient>()
           .getApi(
             '${ApiConstants.appVersionCheck}'
-            '?platform=android&version=${packageInfo.version}',
+            '?platform=android'
+            '&app_type=driver'
+            '&version=${packageInfo.version}'
+            '&build=${packageInfo.buildNumber}',
           )
           .timeout(const Duration(seconds: 8));
 
-      final body = response.body;
-      if (body is! Map || body['data'] is! Map) return null;
+      // TEMP: a shape mismatch here (wrong field names, `data` missing or
+      // not a Map, etc.) returns null on the very next line with nothing
+      // printed — indistinguishable from "no update needed" even though
+      // the server was reached and answered 200. This is what actually
+      // separates the two: the raw body, always, and why a bad shape
+      // returned null specifically, so it isn't just inferred from the
+      // dialog's absence.
+      debugPrint(
+        '[VersionCheck] raw response (${response.statusCode}): ${response.body}',
+      );
 
-      return AppVersionCheckResult.fromJson(
+      final body = response.body;
+      if (body is! Map || body['data'] is! Map) {
+        debugPrint(
+          '[VersionCheck] unexpected shape — body is Map: ${body is Map}'
+          '${body is Map ? ", data is Map: ${body['data'] is Map}, data=${body['data']}" : ''}',
+        );
+        return null;
+      }
+
+      final result = AppVersionCheckResult.fromJson(
         Map<String, dynamic>.from(body['data'] as Map),
       );
+      debugPrint(
+        '[VersionCheck] parsed: current=${result.currentVersion} '
+        'latest=${result.latestVersion} minimum=${result.minimumVersion} '
+        'updateAvailable=${result.updateAvailable} '
+        'forceUpdate=${result.forceUpdate} mustBlock=${result.mustBlock}',
+      );
+      return result;
     } catch (e) {
       debugPrint('[VersionCheck] failed: $e');
       return null;

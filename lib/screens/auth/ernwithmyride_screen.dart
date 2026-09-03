@@ -23,7 +23,6 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
   String? selectedCityName;
   final referralController = TextEditingController();
   bool _isCouponValidated = false;
-  bool _isCouponRedeemed = false;
   bool _isCouponProcessing = false;
 
   // Only Tripura Division
@@ -217,6 +216,13 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                     const SizedBox(width: 10),
                     SizedBox(
                       height: 52,
+                      // Validating is now the only coupon step here — there's
+                      // no more separate "Redeem" tap against /redeem-coupon.
+                      // Once validate-coupon comes back valid, this code is
+                      // held (AuthController.validatedCouponCode) and sent as
+                      // basic-info's "code" param further down the signup
+                      // flow, where the backend actually applies it. So the
+                      // button has just two states: validate, then done.
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF123EBC),
@@ -225,7 +231,7 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                           ),
                           padding: const EdgeInsets.symmetric(horizontal: 18),
                         ),
-                        onPressed: (_isCouponProcessing || _isCouponRedeemed)
+                        onPressed: (_isCouponProcessing || _isCouponValidated)
                             ? null
                             : () async {
                                 final code = referralController.text.trim();
@@ -244,27 +250,15 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                                     Get.find<AuthController>();
 
                                 try {
-                                  if (!_isCouponValidated) {
-                                    await authController.validateCouponApi(
-                                      context: context,
-                                      code: code,
-                                    );
-                                    if (mounted) {
-                                      setState(() {
-                                        _isCouponValidated =
-                                            authController.isCouponValidated;
-                                      });
-                                    }
-                                  } else {
-                                    await authController.redeemCouponApi(
-                                      context: context,
-                                      code: code,
-                                    );
-                                    if (mounted) {
-                                      setState(() {
-                                        _isCouponRedeemed = true;
-                                      });
-                                    }
+                                  await authController.validateCouponApi(
+                                    context: context,
+                                    code: code,
+                                  );
+                                  if (mounted) {
+                                    setState(() {
+                                      _isCouponValidated =
+                                          authController.isCouponValidated;
+                                    });
                                   }
                                 } finally {
                                   if (mounted) {
@@ -282,11 +276,7 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                                 ),
                               )
                             : Text(
-                                _isCouponRedeemed
-                                    ? "Redeemed"
-                                    : (_isCouponValidated
-                                        ? "Redeem"
-                                        : "Validate"),
+                                _isCouponValidated ? "Validated" : "Validate",
                                 style: const TextStyle(color: Colors.white),
                               ),
                       ),
@@ -303,9 +293,7 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                             Get.find<AuthController>().validatedCoupon;
                         if (coupon == null) return const SizedBox.shrink();
                         return Text(
-                          _isCouponRedeemed
-                              ? "${coupon.couponName ?? 'Coupon'} redeemed — wallet balance: ₹${coupon.walletBalance ?? '-'}"
-                              : "${coupon.couponName ?? 'Coupon'} — reward ₹${coupon.rewardAmount ?? '-'}",
+                          "${coupon.couponName ?? 'Coupon'} — reward ₹${coupon.rewardAmount ?? '-'} will be applied when you complete signup",
                           style: const TextStyle(
                             color: Colors.green,
                             fontWeight: FontWeight.w500,

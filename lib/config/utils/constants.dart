@@ -120,7 +120,6 @@ class ApiConstants {
   ///// get-bank-info
 
   static const String validateCoupon = 'validate-coupon';
-  static const String redeemCoupon = 'redeem-coupon';
   static const String couponHistory = 'coupon-history';
 
   ///////========= local store data ====================================//////////

@@ -186,7 +186,17 @@ class _SplashScreenState extends State<SplashScreen> {
     // version-check outage must never be able to take the app down with it.
     if (Platform.isAndroid) {
       final versionResult = await VersionCheckService.check();
-      if (versionResult != null && versionResult.updateAvailable && mounted) {
+      // Was `versionResult.updateAvailable && mounted` — which meant
+      // mustBlock (force_update, OR the local safety net that catches a
+      // minimum_version bump the backend forgot to pair with force_update)
+      // was never even consulted unless update_available was ALSO true.
+      // update_available is a separate backend flag from minimum_version;
+      // raising minimum_version alone, without it, left this whole block
+      // skipped and no dialog ever shown — exactly the mustBlock safety
+      // net's own doc comment says must not be possible.
+      if (versionResult != null &&
+          mounted &&
+          (versionResult.updateAvailable || versionResult.mustBlock)) {
         // Not awaited for an optional update — the dialog and the rest of
         // this function proceed independently, so a driver who taps
         // "Later" (or just leaves it open) still lands wherever they were
