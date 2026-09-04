@@ -173,6 +173,13 @@ class HomeController extends GetxController {
     // is online; toggleOnline() starts/stops it on every explicit toggle.
     _startStalenessWatchdog();
     loadCustomMarker();
+    // loadCustomMarker() above can only draw what's already cached, and on a
+    // fresh install nothing is — so it falls back to the car for every
+    // driver regardless of what they drive. This resolves the real vehicle
+    // type in the background and calls loadCustomMarker() again when it
+    // lands, so the correct icon appears without the driver having to visit
+    // the Vehicles screen first.
+    _refreshVehicleTypeFromServer();
     loadUserMarker();
     // Online status is restored from SharedPreferences via loadSavedStatus() below
     loadSavedStatus();
@@ -241,6 +248,37 @@ class HomeController extends GetxController {
   /// driver deliberately goes online again.
   Future<void> _handleLocationStale() async {
     if (_autoOfflineTriggered) return;
+
+    // NEVER auto-offline a driver who is already on a ride.
+    //
+    // This whole mechanism exists to stop *ride matching* against a stale
+    // location — and a driver mid-ride is not a matching candidate, so the
+    // reason doesn't apply, while the cost is severe: stopAutoUpdate() below
+    // kills the 5s location heartbeat, and nothing restarts it except app
+    // startup or the driver manually re-toggling online. Ninety seconds of
+    // a tunnel, a dead spot, or a GPS glitch would therefore freeze this
+    // driver's position for the *entire remainder of the ride*, and the
+    // rider — polling track-ride every 3s — would sit watching a car marker
+    // that never moves again, with no error anywhere to explain it.
+    //
+    // Worse, it failed silently by design: the toast below is deliberately
+    // suppressed on the ride screen, which is exactly the case where the
+    // consequence is worst, so the driver got no signal that their location
+    // sharing had just stopped.
+    //
+    // Staying online here is also simply correct: the driver *is* working.
+    // The heartbeat keeps retrying and recovers on its own the moment
+    // signal returns.
+    if (hasActiveRide ||
+        Get.currentRoute == RouteHelper.goingForPickupScreen) {
+      debugPrint(
+        '[LocationPipeline] location stale, but a ride is active — staying '
+        'online and leaving the heartbeat running so it can recover. '
+        'Auto-offline is for idle matching only.',
+      );
+      return;
+    }
+
     _autoOfflineTriggered = true;
 
     final staleFor = locationHealth.timeSinceLastSuccess();
@@ -260,12 +298,13 @@ class HomeController extends GetxController {
     await saveOnlineStatus(false);
     update();
 
-    // Don't surface this on the active-ride screen — the driver is mid-way
-    // to (or with) a rider and this toast reads as alarming/irrelevant noise
-    // there; it's still meaningful (and shown) everywhere else, e.g. the
-    // home screen, where "online" is the thing the driver is looking at.
-    final onRideScreen = Get.currentRoute == RouteHelper.goingForPickupScreen;
-    if (Get.context != null && !onRideScreen) {
+    // Always shown now: an active ride returns above before reaching this
+    // point, so by definition the driver is idle here and "you are offline"
+    // is exactly what they need to know. (This used to be suppressed on the
+    // ride screen — that suppression was hiding a real failure rather than
+    // avoiding noise, which is why the ride case is now handled properly at
+    // the top instead of being silenced here.)
+    if (Get.context != null) {
       AnimatedTopToast.show(
         context: Get.context!,
         message:
@@ -2439,6 +2478,22 @@ class HomeController extends GetxController {
   }
 
   ////// addBankDetails
+
+  /// Kicks off the startup vehicle-type refresh that feeds
+  /// [loadCustomMarker].
+  ///
+  /// Deliberately fire-and-forget and fully guarded: this runs during
+  /// controller init, and neither a missing ProfileController registration
+  /// nor a failed request may be allowed to take app startup down with it.
+  /// The worst case is the marker staying on the car fallback, which is
+  /// what it did unconditionally before this existed.
+  void _refreshVehicleTypeFromServer() {
+    try {
+      Get.find<ProfileController>().ensureVehicleTypeCached();
+    } catch (e) {
+      debugPrint('[HomeController] vehicle type refresh skipped: $e');
+    }
+  }
 
   ////////// ================ map   =============================////////////
   Future<void> loadCustomMarker() async {

@@ -49,16 +49,92 @@ class NavOverlayService {
     }
   }
 
+  /// True for a coordinate Google Maps can actually route to.
+  ///
+  /// (0, 0) is the one that matters in practice: it is a real place (open
+  /// ocean off West Africa), so nothing downstream rejects it — Maps opens,
+  /// tries to route into the Gulf of Guinea, and reports "something went
+  /// wrong" with no clue that the coordinates were the problem. It arrives
+  /// here whenever a booking is missing drop_lat/drop_lng and the model
+  /// defaults them to zero rather than null.
+  static bool isNavigableCoordinate(double? lat, double? lng) {
+    if (lat == null || lng == null) return false;
+    if (lat.isNaN || lng.isNaN || lat.isInfinite || lng.isInfinite) {
+      return false;
+    }
+    if (lat.abs() > 90 || lng.abs() > 180) return false;
+    // Null Island — never a real pickup or drop.
+    if (lat == 0 && lng == 0) return false;
+    return true;
+  }
+
   /// Opens real Google Maps turn-by-turn navigation to [lat]/[lng].
+  ///
+  /// [originLat]/[originLng] are the driver's own position. Supplying them
+  /// matters more than it looks: the `google.navigation:` intent carries a
+  /// destination only, and Google Maps resolves the *origin* itself from its
+  /// own location. Google Maps is a separate app with its own permissions,
+  /// so on a device where Maps has no location access (or location services
+  /// are off, or it simply has no fix yet) it cannot work out where the
+  /// route starts and shows "something went wrong" — with this app's own
+  /// location permission being entirely irrelevant to that.
+  ///
+  /// The Maps URLs form below takes an explicit `origin`, which removes that
+  /// dependency, and `dir_action=navigate` asks for turn-by-turn rather than
+  /// a route preview. It is tried first whenever an origin is known.
+  ///
   /// Returns false only if nothing at all could be opened.
   static Future<bool> launchGoogleMapsNavigation({
     required double lat,
     required double lng,
+    double? originLat,
+    double? originLng,
   }) async {
+    // Checked before launching rather than after: handing Maps a garbage
+    // destination doesn't fail, it "succeeds" into an error screen, which
+    // then looks like a maps problem instead of a missing-coordinates one.
+    if (!isNavigableCoordinate(lat, lng)) {
+      debugPrint(
+        '[NavOverlay] refusing to launch navigation — ($lat, $lng) is not a '
+        'navigable coordinate. The booking is most likely missing its '
+        'drop_lat/drop_lng.',
+      );
+      return false;
+    }
+
+    // Preferred whenever the driver's own position is known, because it
+    // states the origin outright instead of leaving Maps to find one. See
+    // the doc comment: an unresolvable origin is the failure that shows up
+    // as "something went wrong" on an otherwise perfectly valid route.
+    if (isNavigableCoordinate(originLat, originLng)) {
+      final originUri = Uri.parse(
+        'https://www.google.com/maps/dir/?api=1'
+        '&origin=$originLat,$originLng'
+        '&destination=$lat,$lng'
+        '&travelmode=driving'
+        '&dir_action=navigate',
+      );
+      debugPrint('[NavOverlay] launching navigation (explicit origin): $originUri');
+      try {
+        if (await launchUrl(originUri, mode: LaunchMode.externalApplication)) {
+          return true;
+        }
+      } catch (e) {
+        debugPrint('[NavOverlay] explicit-origin navigation failed: $e');
+      }
+    } else {
+      debugPrint(
+        '[NavOverlay] no usable driver origin ($originLat, $originLng) — '
+        'falling back to google.navigation:, which makes Google Maps resolve '
+        'the origin itself.',
+      );
+    }
+
     // google.navigation:q=<lat>,<lng>&mode=d drops straight into driving
     // turn-by-turn guidance rather than just showing a pin, which is what a
     // plain maps.google.com link would do.
     final navUri = Uri.parse('google.navigation:q=$lat,$lng&mode=d');
+    debugPrint('[NavOverlay] launching navigation: $navUri');
     // Wrapped in try/catch, not just checked for a false return:
     // launchUrl throws a PlatformException when no activity can handle the
     // URI (Google Maps not installed, or the intent not resolvable), it
@@ -180,9 +256,37 @@ class NavOverlayService {
   /// `onlyAlertOnce` is what keeps that from becoming obnoxious: it alerts on
   /// the first post and then stays quiet for every subsequent update of the
   /// same notification, so a driver mid-navigation isn't re-interrupted.
-  static Future<void> showReturnNotification() async {
+  /// Which leg the currently-posted notification describes, so a genuinely
+  /// new handoff can be told apart from a repeat post of the same one.
+  static String? _postedLeg;
+
+  /// [leg] identifies the journey this handoff is for ('pickup', 'drop').
+  /// Posting a *different* leg cancels first and re-posts, which is what
+  /// makes it alert again.
+  ///
+  /// Without that, the second handoff was invisible. This notification uses
+  /// a fixed id with `onlyAlertOnce: true`, so re-posting it while it is
+  /// already showing is a silent in-place update — and because the text was
+  /// identical for both legs, nothing about it changed either. The driver
+  /// got the banner once, on the way to the rider, and then nothing at all
+  /// when they were handed off again for the ride itself. `onlyAlertOnce`
+  /// is still right *within* a leg (the 15s poll can re-post freely); it
+  /// just must not span two different ones.
+  static Future<void> showReturnNotification({
+    String leg = 'pickup',
+    String title = 'Ride in progress',
+    String body = 'Tap to return to Nride driver',
+  }) async {
     try {
-      const androidDetails = fln.AndroidNotificationDetails(
+      final bool isNewLeg = _postedLeg != null && _postedLeg != leg;
+      if (isNewLeg) {
+        // A fresh post alerts; an update to an existing one does not.
+        await fln.FlutterLocalNotificationsPlugin()
+            .cancel(id: _returnNotificationId);
+      }
+      _postedLeg = leg;
+
+      final androidDetails = fln.AndroidNotificationDetails(
         _returnChannelId,
         'Return to ride',
         channelDescription:
@@ -201,7 +305,7 @@ class NavOverlayService {
         showWhen: false,
         // Explicitly kept out of any auto-grouped summary, so it can't be
         // folded away into a collapsed bundle with other app notifications.
-        ticker: 'Tap to return to Nride driver',
+        ticker: body,
       );
 
       final plugin = fln.FlutterLocalNotificationsPlugin();
@@ -251,13 +355,13 @@ class NavOverlayService {
 
       await plugin.show(
         id: _returnNotificationId,
-        title: 'Ride in progress',
-        body: 'Tap to return to Nride driver',
-        notificationDetails: const fln.NotificationDetails(
+        title: title,
+        body: body,
+        notificationDetails: fln.NotificationDetails(
           android: androidDetails,
         ),
       );
-      debugPrint('[NavOverlay] return notification posted');
+      debugPrint('[NavOverlay] return notification posted (leg=$leg)');
     } catch (e) {
       // Same rule as the bubble: a missing way-back-in is bad, but it must
       // never take the ride itself down with it.
@@ -267,6 +371,10 @@ class NavOverlayService {
 
   /// Clears the notification above. Safe to call when none is showing.
   static Future<void> hideReturnNotification() async {
+    // Cleared with it, so the next ride's first handoff counts as a new leg
+    // and alerts properly instead of being treated as a repeat of the last
+    // ride's.
+    _postedLeg = null;
     try {
       await fln.FlutterLocalNotificationsPlugin().cancel(
         id: _returnNotificationId,

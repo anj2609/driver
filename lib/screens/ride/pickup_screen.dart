@@ -1066,13 +1066,44 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   /// below is fatal either — a failure just leaves the driver on this screen
   /// with its own working in-app map.
   Future<void> _startGoogleMapsNavigation(
-    ({double lat, double lng})? target,
-  ) async {
-    if (target == null) return;
+    ({double lat, double lng})? target, {
+    // Which half of the journey this handoff is for. Drives the return
+    // notification's wording, and is what lets the second handoff re-alert
+    // instead of silently updating the first one — see
+    // NavOverlayService.showReturnNotification.
+    String leg = 'pickup',
+  }) async {
+    // A booking with no usable coordinates used to reach Maps anyway and
+    // land on its "something went wrong" screen, which reads as a maps
+    // fault rather than missing ride data. Caught here so the driver is
+    // told something true and is left on the in-app map instead.
+    if (target == null ||
+        !NavOverlayService.isNavigableCoordinate(target.lat, target.lng)) {
+      debugPrint(
+        '[Pickup] no navigable $leg target '
+        '(${target?.lat}, ${target?.lng}) — skipping Maps handoff',
+      );
+      if (mounted) {
+        AnimatedTopToast.show(
+          context: context,
+          message: leg == 'drop'
+              ? "This booking has no drop-off location to navigate to. Use the in-app map."
+              : "This booking has no pickup location to navigate to. Use the in-app map.",
+          backgroundColor: ColorResources.redbuttoncolor,
+          icon: Icons.error_rounded,
+        );
+      }
+      return;
+    }
 
     final launched = await NavOverlayService.launchGoogleMapsNavigation(
       lat: target.lat,
       lng: target.lng,
+      // This screen already tracks the driver's live position for its own
+      // map, so hand it over as the route's origin rather than making
+      // Google Maps go and find one — see launchGoogleMapsNavigation.
+      originLat: driverLatitude,
+      originLng: driverLongitude,
     );
 
     if (!launched && mounted) {
@@ -1092,7 +1123,14 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // notification has no such constraints and is what guarantees the driver
     // is never stranded in the maps app with no route home.
     await NavOverlayService.showReturnBubbleIfPermitted();
-    await NavOverlayService.showReturnNotification();
+    // Different titles per leg, so the notification also tells the driver
+    // which half of the journey they are on rather than reading the same
+    // for both.
+    await NavOverlayService.showReturnNotification(
+      leg: leg,
+      title: leg == 'drop' ? 'Ride in progress' : 'Heading to pickup',
+      body: 'Tap to return to Nride driver',
+    );
   }
 
   /// Drop-off resolved from [AcceptRideData.dropaddress] via Google Geocoding,
@@ -1120,11 +1158,39 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   /// The notification's only real precondition is "a ride is in progress",
   /// which is exactly the lifetime of this screen, so that's what it's tied
   /// to now. Cancelled in dispose() with the bubble.
+  /// Tracks which leg this ambient notification last described, so the
+  /// pickup->drop transition re-posts (and re-alerts) here too, not only on
+  /// the paths that launch Maps themselves.
+  String? _ambientNotificationLeg;
+
   void _ensureReturnNotification() {
-    if (_returnNotificationPosted) return;
+    // "Underway" matches _navTarget's own definition — the rider is aboard.
+    final String leg =
+        (isOtpVerified || _currentPhase() == 'ongoing') ? 'drop' : 'pickup';
+
+    // Was a one-shot `if (_returnNotificationPosted) return;`. That fired on
+    // the way to the pickup and then never again, so the notification kept
+    // the pickup leg's wording for the rest of the ride, and a driver who
+    // left for Maps by hand during the actual ride got no fresh alert.
+    // Re-posting on a leg change is the point; within a leg this still
+    // no-ops, so the 15s poll that calls it can't spam anything.
+    if (_returnNotificationPosted && _ambientNotificationLeg == leg) return;
     _returnNotificationPosted = true;
-    unawaited(NavOverlayService.showReturnNotification());
+    _ambientNotificationLeg = leg;
+
+    unawaited(
+      NavOverlayService.showReturnNotification(
+        leg: leg,
+        title: leg == 'drop' ? 'Ride in progress' : 'Heading to pickup',
+        body: 'Tap to return to Nride driver',
+      ),
+    );
   }
+
+  /// The backend's current status string for the ride on screen, lowercased.
+  String _currentPhase() =>
+      Get.find<HomeController>().trackRideModel?.data?.status?.toLowerCase() ??
+      '';
 
   /// The booking whose *pickup* leg has already been handed off to Google
   /// Maps, so it happens exactly once per ride.
@@ -2120,6 +2186,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                   unawaited(
                                     _startGoogleMapsNavigation(
                                       _navTarget(rideData),
+                                      leg: 'drop',
                                     ),
                                   );
                                 } else {

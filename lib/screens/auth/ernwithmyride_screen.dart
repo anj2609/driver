@@ -210,19 +210,47 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide.none,
                           ),
+                          // The suffixIcon stays interactive even while the
+                          // field itself is disabled (post-validation) — that
+                          // `enabled: false` above only blocks typing, not
+                          // this — so a driver can back out of a validated
+                          // code and enter a different one instead of being
+                          // stuck with it for the rest of signup.
+                          suffixIcon: referralController.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.close, size: 20),
+                                  onPressed: _isCouponProcessing
+                                      ? null
+                                      : () {
+                                          final authController =
+                                              Get.find<AuthController>();
+                                          authController.isCouponValidated =
+                                              false;
+                                          authController.validatedCoupon =
+                                              null;
+                                          setState(() {
+                                            referralController.clear();
+                                            _isCouponValidated = false;
+                                          });
+                                        },
+                                ),
                         ),
+                        // suffixIcon's shown/hidden state above only updates
+                        // on rebuild — this is what makes typing/clearing
+                        // actually trigger one.
+                        onChanged: (_) => setState(() {}),
                       ),
                     ),
                     const SizedBox(width: 10),
                     SizedBox(
                       height: 52,
-                      // Validating is now the only coupon step here — there's
-                      // no more separate "Redeem" tap against /redeem-coupon.
-                      // Once validate-coupon comes back valid, this code is
-                      // held (AuthController.validatedCouponCode) and sent as
-                      // basic-info's "code" param further down the signup
-                      // flow, where the backend actually applies it. So the
-                      // button has just two states: validate, then done.
+                      // Validating is the only coupon step here, same as
+                      // before /redeem-coupon existed — the code is sent to
+                      // validate-coupon and nowhere else; it is not
+                      // forwarded into basic-info later (that was tried and
+                      // reverted). So the button has just two states:
+                      // validate, then done.
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF123EBC),
@@ -293,7 +321,7 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                             Get.find<AuthController>().validatedCoupon;
                         if (coupon == null) return const SizedBox.shrink();
                         return Text(
-                          "${coupon.couponName ?? 'Coupon'} — reward ₹${coupon.rewardAmount ?? '-'} will be applied when you complete signup",
+                          "${coupon.couponName ?? 'Coupon'} applied",
                           style: const TextStyle(
                             color: Colors.green,
                             fontWeight: FontWeight.w500,
@@ -331,11 +359,19 @@ class _EarnWithMyRideScreenState extends State<EarnWithMyRideScreen> {
                           builder: (_) => PremiumBlurLoader(),
                         );
 
-                        await Get.find<AuthController>().driveraddAddress(
+                        final authController = Get.find<AuthController>();
+                        await authController.driveraddAddress(
                           context: context,
                           country: selectedCountry,
                           devision: selectedDivision,
                           city: selectedCityName.toString(),
+                          // Only when validate-coupon actually confirmed it
+                          // on this screen — a driver who never entered a
+                          // code, or cleared it via the field's ✕, sends
+                          // nothing here.
+                          referralCode: authController.isCouponValidated
+                              ? referralController.text.trim()
+                              : null,
                         );
                         if (Get.isDialogOpen ?? false) {
                           Get.back();

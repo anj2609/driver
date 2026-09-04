@@ -48,13 +48,6 @@ class AuthController extends GetxController implements GetxService {
   bool isCouponValidated = false;
   bool isCouponLoading = false;
 
-  // The referral code itself, kept alongside validatedCoupon so it can be
-  // carried forward and sent as basic-info's "code" param once the driver
-  // reaches that step — there's no separate redeem call any more (see
-  // validateCouponApi's own note); validating IS the only coupon step now,
-  // and the backend applies it when basic-info is submitted with this code.
-  String? validatedCouponCode;
-
   int? selectedVehicleTypeId;
   String? updateStroeId;
   bool isLoading = false;
@@ -730,6 +723,9 @@ class AuthController extends GetxController implements GetxService {
     required String country,
     required String devision,
     required String city,
+    // Set only when validateCouponApi has actually confirmed a code on
+    // this same screen — see ernwithmyride_screen.dart's call site.
+    String? referralCode,
   }) async {
     update();
 
@@ -737,6 +733,7 @@ class AuthController extends GetxController implements GetxService {
       country: country,
       division: devision,
       city: city,
+      referralCode: referralCode,
     );
 
     if (response.body['code']?.toString() == '200') {
@@ -780,13 +777,11 @@ class AuthController extends GetxController implements GetxService {
     return prefs.getString(ApiConstants.profileid) ?? '';
   }
 
-  // Validating is now the only coupon step a driver takes during signup —
-  // there used to be a second "Redeem" tap that hit /redeem-coupon
-  // separately (see auth_repo.dart's now-removed redeemCoupon). That
-  // endpoint is gone; redemption happens server-side when basic-info is
-  // submitted carrying this same code (see fillPersonalInfoApi below,
-  // which reads validatedCouponCode), so a valid response here just needs
-  // to remember the code for that later call.
+  // Validating is the only coupon step a driver takes, same as before
+  // /redeem-coupon was removed — the code is sent here, at the
+  // address/referral screen, and nowhere else. It is NOT forwarded into
+  // basic-info's "code" param (that was tried and reverted); the backend
+  // applies the coupon from this call alone.
   Future<Response> validateCouponApi({
     required BuildContext context,
     required String code,
@@ -809,11 +804,9 @@ class AuthController extends GetxController implements GetxService {
             ? CouponData.fromJson(body['data'])
             : null;
         isCouponValidated = true;
-        validatedCouponCode = code;
       } else {
         isCouponValidated = false;
         validatedCoupon = null;
-        validatedCouponCode = null;
       }
 
       return response;
@@ -1300,16 +1293,9 @@ else {
         dob: dob!.trim(),
         profile_image: profileimage,
         phoneOverride: phone?.trim(),
-        // Only set once validateCouponApi has actually confirmed a code —
-        // a driver who never entered one, or a later profile-edit call to
-        // this same method, sends nothing here.
-        referralCode: validatedCouponCode,
       );
 
       if (response.body["code"]?.toString() == "200") {
-        // Consumed — this signup's referral code has now been sent with
-        // basic-info; don't let a retry of a later step resubmit it.
-        validatedCouponCode = null;
         // A new driver reaches basic-info carrying only a signup_token; the
         // real session token is issued here, on completion — mirrors the
         // rider's fillPersonalInfoApi. Without this, a brand-new driver would

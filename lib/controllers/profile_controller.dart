@@ -932,6 +932,57 @@ class ProfileController extends GetxController implements GetxService {
     }
   }
 
+  /// Fetches this driver's vehicle type at startup and caches it, with no
+  /// UI of any kind.
+  ///
+  /// [getVehicleDetailsApi] can't be reused for this. It requires a
+  /// BuildContext, it drives the Vehicles screen's spinner through
+  /// isVehicleLoading, and it toasts on failure — all wrong for something
+  /// that runs on every app launch behind whatever screen happens to be
+  /// showing. A flaky connection would pop "Unable to load vehicle
+  /// details" over the home map.
+  ///
+  /// Why this is needed at all: the map marker is drawn from a
+  /// SharedPreferences value whose only writer was
+  /// [_cacheVehicleTypeAndRefreshMarker], which only ran from
+  /// getVehicleDetailsApi() — i.e. only when the driver opened the
+  /// Vehicles screen. Until they did, nothing was cached and every driver
+  /// showed as a car regardless of what they actually drive. Re-fetching
+  /// on each launch also means a vehicle type changed server-side is
+  /// picked up, instead of the stale cached icon persisting forever.
+  ///
+  /// Silent on every failure path: the marker just keeps whatever was
+  /// cached before (or the car fallback), exactly as it behaved before
+  /// this existed.
+  Future<void> ensureVehicleTypeCached() async {
+    try {
+      final Response response = await profileRepo.getVehicleDetails();
+
+      if (response.statusCode != 200 ||
+          response.body is! Map ||
+          response.body['code'].toString() != '200') {
+        debugPrint(
+          '[VehicleType] startup refresh skipped — '
+          'status=${response.statusCode} code=${response.body is Map ? response.body['code'] : null}',
+        );
+        return;
+      }
+
+      vehicleModel = VehicleModel.fromJson(response.body);
+      vehicleData = vehicleModel?.data;
+
+      await _cacheVehicleTypeAndRefreshMarker();
+      debugPrint(
+        '[VehicleType] startup refresh cached '
+        '"${vehicleData?.vehicleTypeName ?? vehicleData?.vehicleTypeId}"',
+      );
+    } catch (e) {
+      // Never surfaced: a driver opening the app has nothing to do about
+      // this, and the marker degrades to the car exactly as before.
+      debugPrint('[VehicleType] startup refresh failed: $e');
+    }
+  }
+
   /// Resolves this driver's vehicle-type name (Car/Bike/Auto/Electric
   /// Auto/...) and persists it so HomeController's map marker (car/bike/
   /// auto icon — see vehicle_marker_assets.dart) reflects the vehicle
@@ -940,7 +991,8 @@ class ProfileController extends GetxController implements GetxService {
   /// Vehicles screen's initial load and every save (it re-fetches on
   /// success — see vehicles_screen.dart) — so an edited vehicle type
   /// updates the marker immediately, in the same session, with no restart
-  /// needed.
+  /// needed. Also called at startup by [ensureVehicleTypeCached], so the
+  /// marker no longer depends on the driver having visited that screen.
   Future<void> _cacheVehicleTypeAndRefreshMarker() async {
     String? typeName = vehicleData?.vehicleTypeName;
 

@@ -54,6 +54,10 @@ class AuthRepo extends GetxService {
     String? country,
     String? division,
     String? city,
+    // The referral code, once validate-coupon has confirmed it — sent here,
+    // alongside the address, as the "code" param. Null/empty just omits the
+    // field, matching a driver who never entered one.
+    String? referralCode,
   }) async {
     // ernwithmyride_screen (where this is called from) is reached by two
     // genuinely different identities, not one:
@@ -87,6 +91,9 @@ class AuthRepo extends GetxService {
     }
     if (ApiConstants.userIdSocial.isNotEmpty) {
       body["id"] = ApiConstants.userIdSocial;
+    }
+    if (referralCode != null && referralCode.isNotEmpty) {
+      body["code"] = referralCode;
     }
 
     return apiClient.myridepostData(ApiConstants.driveraddress, body);
@@ -179,12 +186,6 @@ class AuthRepo extends GetxService {
     // rather than replacing it outright, so the existing phone-OTP call
     // sites (which never pass this) keep working exactly as before.
     String? phoneOverride,
-    // The referral code, once validate-coupon has confirmed it (see
-    // AuthController.validatedCouponCode) — there's no separate redeem
-    // call any more, so this is the only place a validated code is ever
-    // sent to the backend; passing null/empty here just omits the field,
-    // matching a driver who never entered a code.
-    String? referralCode,
   }) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     dynamic userId = prefs.getString(ApiConstants.profileid);
@@ -217,9 +218,6 @@ class AuthRepo extends GetxService {
     };
     if (resolvedUserId.isNotEmpty) {
       body["user_id"] = resolvedUserId;
-    }
-    if (referralCode != null && referralCode.isNotEmpty) {
-      body["code"] = referralCode;
     }
 
     // Same identity gap already found and fixed on driver-address: a
