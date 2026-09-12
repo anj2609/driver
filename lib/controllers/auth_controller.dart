@@ -117,6 +117,46 @@ class AuthController extends GetxController implements GetxService {
     debugPrint("Saved Device Type: $deviceType");
   }
 
+  /// The FCM token to send to the backend, resolved from the freshest source
+  /// available and persisted so every later call reuses the same one.
+  ///
+  /// This exists because the token used to be read straight off the
+  /// [deviceToken] field, which is only populated by initDeviceData() at
+  /// startup. Any path that ran before that finished — or after a logout
+  /// cleared the field — sent an EMPTY device_token to the backend, and a
+  /// driver registered with an empty token can never be pushed a ride
+  /// request. Falling back through prefs and then FCM itself means the send
+  /// otp call can never register a blank token again.
+  Future<String> resolveDeviceToken() async {
+    if (deviceToken != null && deviceToken!.isNotEmpty) {
+      return deviceToken!;
+    }
+
+    await loadSavedDeviceData();
+    if (deviceToken != null && deviceToken!.isNotEmpty) {
+      debugPrint("[DeviceToken] reused saved token: " + deviceToken!);
+      return deviceToken!;
+    }
+
+    try {
+      deviceToken = await FirebaseMessaging.instance.getToken().timeout(
+        const Duration(seconds: 10),
+      );
+    } catch (e) {
+      debugPrint("[DeviceToken] getToken failed: " + e.toString());
+    }
+
+    if (deviceToken != null && deviceToken!.isNotEmpty) {
+      await saveDeviceData();
+      debugPrint("[DeviceToken] fetched fresh token: " + deviceToken!);
+      return deviceToken!;
+    }
+
+    debugPrint("[DeviceToken] WARNING: no FCM token available — this driver "
+        "will not receive ride-request pushes");
+    return "";
+  }
+
   Future<void> saveDeviceData() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString("device_token", deviceToken ?? "");
@@ -128,6 +168,7 @@ class AuthController extends GetxController implements GetxService {
 
     deviceToken = prefs.getString("device_token");
     deviceType = prefs.getString("device_type");
+    debugPrint("[DeviceToken] loaded from prefs: " + (deviceToken ?? "(none)"));
   }
 
   Future<void> pickDriverImage(int index) async {
@@ -313,7 +354,11 @@ class AuthController extends GetxController implements GetxService {
       deviceToken = newToken;
       await saveDeviceData();
 
-      debugPrint("Updated Token: $newToken");
+      // Stored so the next authenticated call picks it up. NOTE: with no
+      // dedicated update-token endpoint, a rotation mid-session does not
+      // reach the backend until the driver logs in again — see the note in
+      // resolveDeviceToken above.
+      debugPrint("[DeviceToken] ROTATED by FCM, saved locally: " + newToken);
     });
   }
 
@@ -604,10 +649,13 @@ class AuthController extends GetxController implements GetxService {
   }) async {
     update();
 
+    final String resolvedToken = await resolveDeviceToken();
+    debugPrint("[DeviceToken] send-otp registering token: " + resolvedToken);
+
     Response response = await authRepo.sendOtpApi(
       phone: mobileNumber,
       type: type,
-      devicetoken: deviceToken,
+      devicetoken: resolvedToken,
       devicetype: deviceType,
     );
 
@@ -647,10 +695,13 @@ class AuthController extends GetxController implements GetxService {
     required String mobileNumber,
     required String deviceToken,
   }) async {
+    final String resolvedToken = await resolveDeviceToken();
+    debugPrint("[DeviceToken] send-otp registering token: " + resolvedToken);
+
     final registerResponse = await authRepo.sendOtpApi(
       phone: mobileNumber,
       type: ApiConstants.UserRegister,
-      devicetoken: deviceToken,
+      devicetoken: resolvedToken,
       devicetype: deviceType,
     );
 
@@ -694,7 +745,7 @@ class AuthController extends GetxController implements GetxService {
     final loginResponse = await authRepo.sendOtpApi(
       phone: mobileNumber,
       type: ApiConstants.UserLogin,
-      devicetoken: deviceToken,
+      devicetoken: resolvedToken,
       devicetype: deviceType,
     );
 
@@ -1357,7 +1408,7 @@ else {
             final loginOtpResponse = await authRepo.sendOtpApi(
               phone: phone,
               type: ApiConstants.UserLogin,
-              devicetoken: deviceToken,
+              devicetoken: await resolveDeviceToken(),
               devicetype: deviceType,
             );
 
@@ -2059,10 +2110,18 @@ else {
     // EasyLoading.show();
     update();
 
+    // Falls back to the resolver: this is the call that finalises login, so
+    // a blank token here is what leaves a driver unreachable by push.
+    final String verifyToken =
+        (devicetoken == null || devicetoken.isEmpty)
+            ? await resolveDeviceToken()
+            : devicetoken;
+    debugPrint("[DeviceToken] verify-otp registering token: " + verifyToken);
+
     Response response = await authRepo.secoundotpverifyapi(
       useridd: userid,
       otp: otp,
-      devicetoken: devicetoken,
+      devicetoken: verifyToken,
     );
 
     if (response.statusCode == 200) {

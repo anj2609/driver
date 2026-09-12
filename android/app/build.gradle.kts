@@ -75,6 +75,26 @@ flutter {
     source = "../.."
 }
 
+// The Navigation SDK ships its OWN copy of the Google Maps SDK inside
+// navigation-*.aar — the same com.google.android.gms.maps.* classes that
+// play-services-maps provides. google_maps_flutter_android pulls the latter
+// transitively, so with both on the classpath every one of those classes is
+// defined twice and the build fails at mergeDexDebug with several hundred
+// "Duplicate class" errors.
+//
+// Excluding play-services-maps is Google's own documented resolution, not a
+// workaround: the Navigation SDK is meant to be the single source of the Maps
+// classes when it is present. google_maps_flutter keeps working unchanged —
+// the in-app maps on the home and ride screens still resolve the identical
+// classes, just out of the navigation AAR instead.
+//
+// Scoped with configurations.all rather than to `implementation` alone so it
+// also covers the runtime and test classpaths, which resolve separately and
+// would otherwise reintroduce the duplicate at packaging time.
+configurations.all {
+    exclude(group = "com.google.android.gms", module = "play-services-maps")
+}
+
 dependencies {
 
     // ✅ Firebase BOM
@@ -97,8 +117,14 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.0.1")
 
     // ✅ Desugaring Required
+    // The _nio variant, not the plain one. The Google Navigation SDK uses
+    // java.nio.file APIs that only the nio flavour of desugar_jdk_libs
+    // backports; with the plain artifact the build fails to resolve them on
+    // any minSdk below 34. It is a superset of the standard artifact, so
+    // flutter_local_notifications (the original reason desugaring is on here)
+    // is unaffected by the swap.
     coreLibraryDesugaring(
-        "com.android.tools:desugar_jdk_libs:2.1.4"
+        "com.android.tools:desugar_jdk_libs_nio:2.1.4"
     )
 }
 

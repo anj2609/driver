@@ -2,7 +2,7 @@ name: myridedriverapp
 description: "NRide Driver - Accept rides, navigate to passengers, and manage your earnings."
 publish_to: 'none'
 
-version: 1.0.28+29
+version: 1.0.34+35
 
 environment:
   sdk: ^3.9.0
@@ -51,6 +51,23 @@ dependencies:
   # Floating "return to app" bubble shown over Google Maps during a live ride
   # — the SYSTEM_ALERT_WINDOW overlay itself (Uber/Rapido-style).
   flutter_overlay_window: ^0.5.0
+  # Google's own Navigation SDK for Flutter — full turn-by-turn guidance
+  # rendered INSIDE this app, so the driver never leaves it for the Google
+  # Maps app at all. This is the structural fix for the return-to-app problem
+  # the bubble and the notification above only ever mitigated: a driver who
+  # never leaves cannot be stranded outside.
+  #
+  # Requires "Navigation SDK for Android" to be enabled on the Google Cloud
+  # project behind ANDROID_MAPS_API_KEY, and billing on that project. Since
+  # Q3 2024 this is self-serve — a Mobility/ODRD agreement is no longer
+  # required — but it is NOT free beyond the monthly free tier. See
+  # InAppNavigationService, which falls back to the external-Maps handoff
+  # whenever the SDK reports the key isn't authorised, so an unprovisioned
+  # build still ships working navigation.
+  # Range rather than a caret: 0.11.x requires Flutter >=3.44 and this app is
+  # on 3.35.1. Pub picks the newest release that this SDK actually supports.
+  # Revisit the ceiling when the Flutter version moves.
+  google_navigation_flutter: ">=0.7.0 <0.12.0"
   # Backs OTP SMS autofill via Android's SMS User Consent API — the API
   # Pinput's own `smsRetriever` hook is designed around. Replaces
   # sms_autofill, which used the SMS Retriever API and so required the
@@ -59,6 +76,18 @@ dependencies:
   # Reads the app's own installed version number for the Play Store
   # version-check on launch (see VersionCheckService).
   package_info_plus: ^9.0.1
+
+# Vendored so two upstream bugs could be fixed at source rather than worked
+# around: showOverlay() started its (already foreground) service with
+# startService(), which Android forbids from the background and so broke the
+# ride-request overlay in exactly the app-closed case it exists for; and
+# closeOverlay() never completed its MethodChannel result when no overlay was
+# showing, hanging the caller forever. Both are marked NRIDE PATCH in
+# packages/flutter_overlay_window. Upstream is 0.5.0 and unchanged since
+# Apr 2025 — re-check those two patches if this is ever bumped.
+dependency_overrides:
+  flutter_overlay_window:
+    path: packages/flutter_overlay_window
 
 dev_dependencies:
   flutter_test:

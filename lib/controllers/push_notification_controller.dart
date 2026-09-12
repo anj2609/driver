@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:get/get.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:myridedriverapp/config/utils/fcm_debug_log.dart';
 
 class NotificationController extends GetxController {
 
@@ -60,6 +61,7 @@ class NotificationController extends GetxController {
   /// 📩 Foreground Message Listener
   void listenForegroundMessages() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      logFcmMessage('FOREGROUND (PushNotificationController)', message);
       print("Title: ${message.notification?.title}");
       print("Body: ${message.notification?.body}");
     });

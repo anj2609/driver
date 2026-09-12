@@ -513,10 +513,9 @@ packages:
   flutter_overlay_window:
     dependency: "direct main"
     description:
-      name: flutter_overlay_window
-      sha256: "17988420249da68e421d1b44b511e6113d3de7a9e52c3fbd6d99730508af4580"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/flutter_overlay_window"
+      relative: true
+    source: path
     version: "0.5.0"
   flutter_plugin_android_lifecycle:
     dependency: transitive
@@ -680,6 +679,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.5.14+3"
+  google_navigation_flutter:
+    dependency: "direct main"
+    description:
+      name: google_navigation_flutter
+      sha256: fdf79ddeda8bbba9d8b9218c41551b918447032004cbe72ea7365287c9d9bf80
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.0"
   google_places_flutter:
     dependency: "direct main"
     description:

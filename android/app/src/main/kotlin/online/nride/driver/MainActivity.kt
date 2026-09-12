@@ -1,10 +1,9 @@
 package online.nride.driver
 
-import android.app.ActivityManager
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
@@ -12,7 +11,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.FlutterEngineGroup
 import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.plugin.common.MethodChannel
+import flutter.overlay.window.flutter_overlay_window.OverlayService
 
 class MainActivity : FlutterActivity() {
 
@@ -24,7 +23,8 @@ class MainActivity : FlutterActivity() {
         private const val OVERLAY_ENTRYPOINT = "overlayMain"
 
         /** Channel the floating bubble uses to ask for the app to be reopened. */
-        private const val OVERLAY_RETURN_CHANNEL = "online.nride.driver/overlay_return"
+        // The overlay's return channel now lives with the rest of the overlay
+        // engine's setup, in OverlayEngineSupport.
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,13 +58,55 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /// Takes the ride-request overlay down the instant this app is on screen.
+    ///
+    /// The Dart side does this too (HomeController's resume handler calls
+    /// NavOverlayService.dismissOverlay), but not instantly enough on the case
+    /// that matters most: the overlay exists precisely when the app is NOT
+    /// running, so opening it from the card is a cold start — several seconds
+    /// of splash and Flutter boot before any Dart lifecycle callback can fire,
+    /// all of it with the card still sitting over the launching app.
+    ///
+    /// onResume needs none of that. Stopping OverlayService is exactly what the
+    /// plugin's own closeOverlay does, so this is the same teardown, just
+    /// reached without waiting for an engine. The Dart path still runs after
+    /// and is what silences the ringtone, since only the overlay engine can
+    /// dispose the card's State.
+    override fun onResume() {
+        super.onResume()
+        try {
+            stopService(Intent(this, OverlayService::class.java))
+        } catch (e: Exception) {
+            Log.w("MainActivity", "could not stop the overlay on resume", e)
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        // Before super, which is what triggers plugin registration — and with
-        // it flutter_overlay_window's onAttachedToActivity, the thing that
-        // would otherwise create the overlay engine itself. Seeding the cache
-        // first means it finds ours already there and leaves it alone.
+        // Before super, and it has to be. By the time this method is
+        // called the engine is ALREADY attached to this Activity —
+        // FlutterActivityAndFragmentDelegate.onAttach() calls
+        // attachToActivity() first and configureFlutterEngine() after — so
+        // super's GeneratedPluginRegistrant.registerWith() call registers
+        // flutter_overlay_window onto an activity-attached engine, which
+        // fires its onAttachedToActivity immediately, which builds and
+        // caches an overlay engine of its own. Running after super was
+        // tried and measured: ensureOverlayEngine() then found the cache
+        // already populated and returned without doing anything, so the
+        // openApp channel below was never wired to the engine that
+        // actually got used.
         ensureOverlayEngine()
         super.configureFlutterEngine(flutterEngine)
+
+        // Wired onto the MAIN engine, not the overlay one: its callers are the
+        // home screen's permission onboarding and NavOverlayService, both of
+        // which run in the app's own isolate. The Activity is passed as a
+        // provider rather than captured so that a Settings screen opened
+        // minutes later still launches from a live Activity if there is one —
+        // see OverlaySupport.start.
+        OverlaySupport.register(
+            flutterEngine.dartExecutor.binaryMessenger,
+            applicationContext,
+        ) { if (isFinishing || isDestroyed) null else this }
     }
 
     /**
@@ -104,79 +146,19 @@ class MainActivity : FlutterActivity() {
             ),
         )
 
-        MethodChannel(engine.dartExecutor.binaryMessenger, OVERLAY_RETURN_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                if (call.method != "openApp") {
-                    result.notImplemented()
-                    return@setMethodCallHandler
-                }
-                result.success(bringAppToFront(appContext))
-            }
+        // One shared configuration, deliberately — see OverlayEngineSupport.
+        //
+        // This used to be spelled out inline here, which meant it applied only
+        // to an engine THIS class built. OverlayService builds one too whenever
+        // the cache holds no live engine, and that is the app-was-killed path —
+        // exactly when the ride card matters — so the overlay ran there with no
+        // plugins and, worse, no `openApp` channel: Accept closed the card and
+        // did nothing else.
+        OverlayEngineSupport.configure(engine, appContext)
 
         cache.put(OVERLAY_ENGINE_ID, engine)
     }
 
-    /**
-     * Brings this app's existing task back to the foreground from the bubble,
-     * whatever app is currently in front.
-     *
-     * This used to be a single `startActivity(launchIntent)` with
-     * `FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_REORDER_TO_FRONT`, which worked
-     * over some navigation apps and silently did nothing over others. Two
-     * reasons, both of which this avoids:
-     *
-     *  - REORDER_TO_FRONT reorders an activity *within* its task. It is not a
-     *    "bring my task to the front" flag, and from a Service context with no
-     *    Activity of its own there is frequently no such reordering to
-     *    perform — so the call succeeded and nothing visibly happened.
-     *  - MainActivity declares `android:taskAffinity=""` in the manifest. Task
-     *    matching for FLAG_ACTIVITY_NEW_TASK is done by affinity, so with an
-     *    empty one, whether the launch found the app's existing task or was
-     *    treated as an unrelated new launch varied by OEM and by which app
-     *    happened to own the foreground task at the time. That variance is
-     *    exactly the "works in one maps app, not another" symptom.
-     *
-     * [ActivityManager.AppTask.moveToFront] is the API built for this precise
-     * job: it targets the app's own task directly, so it depends on neither
-     * affinity matching nor on who is in front. The launcher-style intent is
-     * kept only as a fallback for the case where no task exists any more (the
-     * app was fully swiped away while the driver was in Maps), where a fresh
-     * launch genuinely is the right behaviour — using the same flag pair a
-     * launcher itself uses rather than REORDER_TO_FRONT.
-     *
-     * Both paths are background activity starts, which Android 10+ restricts —
-     * but an app holding SYSTEM_ALERT_WINDOW is explicitly exempt, and the
-     * bubble only exists at all when that permission was granted.
-     */
-    private fun bringAppToFront(appContext: Context): Boolean {
-        try {
-            val activityManager =
-                appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            val ownTask = activityManager?.appTasks?.firstOrNull { task ->
-                task.taskInfo?.baseIntent?.component?.packageName == appContext.packageName
-            }
-            if (ownTask != null) {
-                ownTask.moveToFront()
-                return true
-            }
-        } catch (e: Exception) {
-            // Falls through to the relaunch below — a bubble that can't reach
-            // the task must still try the one other route it has.
-        }
-
-        val launchIntent =
-            appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
-                ?: return false
-
-        launchIntent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
-        )
-
-        return try {
-            appContext.startActivity(launchIntent)
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
+    // bringAppToFront moved to OverlayEngineSupport, so the overlay behaves the
+    // same whichever class built the engine it is running in.
 }

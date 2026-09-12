@@ -11,6 +11,7 @@ import 'package:flutter_easyloading/flutter_easyloading.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:myridedriverapp/config/route.dart';
 import 'package:myridedriverapp/config/utils/colors.dart';
@@ -33,6 +34,8 @@ import 'package:myridedriverapp/repository/home_repo.dart';
 
 import 'package:myridedriverapp/services/geo_utils.dart';
 import 'package:myridedriverapp/services/location_health_tracker.dart';
+import 'package:myridedriverapp/services/nav_overlay_service.dart';
+import 'package:myridedriverapp/services/ride_alert_memory.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
 import 'package:myridedriverapp/widgets/custom_popup.dart';
 import 'package:http/http.dart' as http;
@@ -40,7 +43,22 @@ import 'package:myridedriverapp/widgets/toaster_animation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-class HomeController extends GetxController {
+/// Note on the overlay hand-off: this controller CANNOT rely on
+/// FlutterOverlayWindow.overlayListener to hear what the driver tapped.
+///
+/// flutter_overlay_window routes overlay->app messages through a single
+/// static (WindowSetup.messenger) that every Flutter engine overwrites when
+/// the plugin registers on it. firebase_messaging spins up its own engine to
+/// run the background push handler, and that registration hijacks the static
+/// — so from the first ride push onward, messages sent from the overlay are
+/// delivered into FCM's background isolate, where nothing is listening.
+/// Measured on device: Accept produced no reaction in this controller at all.
+///
+/// The durable path is used instead: the overlay writes the tap to prefs and
+/// this reads it back on start AND on resume. The listener below is kept as
+/// a best-effort fast path for the runs where the static still happens to
+/// point here.
+class HomeController extends GetxController with WidgetsBindingObserver {
   final HomeRepo homeRepo;
   HomeController({required this.homeRepo});
 
@@ -186,6 +204,285 @@ class HomeController extends GetxController {
     stopLiveTracking();
     loadOnlineStatus();
     cancleRideReason();
+    WidgetsBinding.instance.addObserver(this);
+    _listenForOverlayActions();
+    _consumePendingOverlayAccept();
+  }
+
+  /// Subscription for Accept/Decline tapped on the incoming-ride overlay
+  /// (see IncomingRideOverlay) while this app happens to already be alive —
+  /// backgrounded, not killed. Best-effort only: if the app was fully
+  /// killed, there is no controller instance around to receive this at all,
+  /// and the overlay's Accept button already covers that case on its own by
+  /// opening the app, which lands the driver on the home screen where the
+  /// existing 3s poll re-shows the same request within moments for a manual
+  /// tap — not silently lost, just one extra tap in that specific case.
+  StreamSubscription<dynamic>? _overlayActionSubscription;
+
+  /// Bookings already accepted (or being accepted) from the overlay this
+  /// session, so the live message and the resume-time record cannot both act
+  /// on the same tap. See [_autoAcceptFromOverlay].
+  ///
+  /// Never pruned: a driver takes tens of rides in a session, and re-accepting
+  /// a booking is not a thing that legitimately happens.
+  final Set<int> _overlayAcceptsHandled = <int>{};
+
+  /// Re-checks for an Accept every time the app comes back to the front.
+  ///
+  /// Tapping Accept on the overlay is precisely what brings this app forward,
+  /// so resume is the one moment the record is guaranteed to be waiting. The
+  /// onInit check alone only covers a cold start; when the app was merely
+  /// backgrounded, onInit ran long ago and the tap would never be noticed.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      _consumePendingOverlayAccept();
+      // Nothing an overlay does is useful once this app is the thing on
+      // screen — the ride card and the return-to-app bubble both exist purely
+      // to reach a driver who is looking at another app. Left up, the card
+      // hangs over the ride screen with its countdown still running and its
+      // ringtone still playing, and the driver has to answer the same request
+      // twice.
+      unawaited(NavOverlayService.dismissOverlay());
+    }
+  }
+
+  void _listenForOverlayActions() {
+    // NOTE: this used to begin with WidgetsBinding.instance.removeObserver(this),
+    // which undid the addObserver() call made one line earlier in onInit — so
+    // didChangeAppLifecycleState never fired and the resume-time
+    // _consumePendingOverlayAccept() above never ran. The defensive
+    // "drop whatever was registered before" idiom belongs to the stream
+    // subscription on the next line; it was pattern-matched onto the observer
+    // by mistake, and it disabled the half of the Accept handoff that covers a
+    // backgrounded app — the case the overlay exists for.
+    _overlayActionSubscription?.cancel();
+    _overlayActionSubscription =
+        FlutterOverlayWindow.overlayListener.listen((message) {
+      if (_isClosed) return;
+      if (message is! Map) return;
+      if (message['type'] != 'ride_request_action') return;
+
+      final int? bookingId = int.tryParse('${message['booking_id']}');
+      if (bookingId == null) return;
+
+      if (message['action'] == 'decline') {
+        // The overlay has already recorded this in RideDeclineMemory (it has
+        // to — the app is usually not running when a card is declined). This
+        // is only the live half, for an app that happens to be alive and is
+        // showing the same request in its own list.
+        _declinedCache = {..._declinedCache, bookingId.toString()};
+        incomingTrips.removeWhere((t) => t.id == bookingId);
+        if (incomingTrips.isEmpty) {
+          _ringedTripIds.clear();
+          stopRingtone();
+        }
+        update();
+        return;
+      }
+
+      // The overlay found out for itself that the booking is no longer on
+      // offer (see IncomingRideOverlay._startOfferWatch) and closed. If this
+      // app is alive, drop it from the in-app list at the same moment rather
+      // than letting the driver look at a card the overlay has already
+      // decided is dead.
+      if (message['action'] == 'unavailable') {
+        dropIncomingRequest(bookingId.toString());
+        return;
+      }
+
+      if (message['action'] == 'accept') {
+        // The card sends the booking along with the tap, so an app that is
+        // merely backgrounded does not have to rediscover it either.
+        NewBookingNearByModel? handedOver;
+        final dynamic ride = message['ride'];
+        if (ride is Map) {
+          try {
+            handedOver =
+                NewBookingNearByModel.fromJson(Map<String, dynamic>.from(ride));
+          } catch (e) {
+            debugPrint('[OverlayAction] could not read the ride in the tap: $e');
+          }
+        }
+        unawaited(_autoAcceptFromOverlay(bookingId, handedOver: handedOver));
+      }
+    });
+  }
+
+  /// Finishes an Accept tapped on the overlay by driving the exact same,
+  /// already-correct [acceptRidesTrip] this controller uses for an in-app
+  /// tap — deliberately not a second, duplicated accept implementation.
+  ///
+  /// The overlay's Accept button already triggers bringing this app to the
+  /// foreground; this just waits for that to actually land (a real
+  /// BuildContext) and for this specific booking to be present in
+  /// [incomingTrips] (it may arrive via the ordinary 3s poll a moment after
+  /// this message does, since both are racing to the same effect from
+  /// different triggers) before calling accept. Gives up after a few
+  /// seconds rather than waiting indefinitely — at that point the request
+  /// card is visible in-app regardless, and a manual tap works fine.
+  /// Picks up an Accept the driver tapped on the overlay before this app was
+  /// running, and carries on with the ride.
+  ///
+  /// The live shareData message only reaches a controller that already
+  /// exists. When the app was killed — the case the overlay is built for —
+  /// the message is broadcast to nobody and the driver lands on the dashboard
+  /// having tapped Accept, which looks exactly like the app ignoring them.
+  /// The overlay therefore also writes the booking id down (see
+  /// IncomingRideOverlay._rememberAcceptForApp) and this reads it back.
+  Future<void> _consumePendingOverlayAccept() async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      // reload() is required, not optional: the value was written by a
+      // DIFFERENT isolate, and this one is holding an in-memory snapshot
+      // taken before that write existed.
+      await prefs.reload();
+
+      final String? raw = prefs.getString(ApiConstants.pendingOverlayAccept);
+      if (raw == null || raw.isEmpty) return;
+      await prefs.remove(ApiConstants.pendingOverlayAccept);
+
+      // The booking the overlay was showing when Accept was tapped, if it
+      // managed to hand it over. Read and cleared together with the id above,
+      // so a stale one can never outlive the accept it belongs to.
+      NewBookingNearByModel? handedOver;
+      final String? rideRaw =
+          prefs.getString(ApiConstants.pendingOverlayAcceptRide);
+      await prefs.remove(ApiConstants.pendingOverlayAcceptRide);
+      if (rideRaw != null && rideRaw.isNotEmpty) {
+        try {
+          final dynamic decoded = jsonDecode(rideRaw);
+          if (decoded is Map) {
+            handedOver =
+                NewBookingNearByModel.fromJson(Map<String, dynamic>.from(decoded));
+          }
+        } catch (e) {
+          debugPrint('[OverlayAction] could not read the handed-over ride: $e');
+        }
+      }
+
+      final List<String> parts = raw.split('|');
+      final int? bookingId = int.tryParse(parts.first);
+      final int writtenAt =
+          parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+      if (bookingId == null) return;
+
+      // Ignored if stale. A record left over from hours ago is a ride long
+      // since gone to someone else, and silently accepting it on the next
+      // launch would be worse than dropping it.
+      final int ageMs = DateTime.now().millisecondsSinceEpoch - writtenAt;
+      if (writtenAt == 0 || ageMs > 90000) {
+        debugPrint(
+          '[OverlayAction] ignoring stale pending accept for booking '
+          '$bookingId (${ageMs ~/ 1000}s old)',
+        );
+        return;
+      }
+
+      debugPrint(
+        '[OverlayAction] resuming Accept for booking $bookingId '
+        'tapped on the overlay ${ageMs ~/ 1000}s ago',
+      );
+      await _autoAcceptFromOverlay(bookingId, handedOver: handedOver);
+    } catch (e) {
+      debugPrint('[OverlayAction] pending-accept check failed: $e');
+    }
+  }
+
+  /// Finishes an Accept by driving the same [acceptRidesTrip] an in-app tap
+  /// uses, once the booking and a BuildContext are both available.
+  ///
+  /// Waits up to ~20s and drives the poll itself rather than waiting on its
+  /// 3s tick. The old version gave up after 4s and only looked at whatever
+  /// [incomingTrips] already held, which on a cold start is nothing at all —
+  /// so Accept reliably expired before the first booking list had even
+  /// arrived, leaving the driver on the dashboard.
+  /// [handedOver] is the booking as the overlay card had it, when the overlay
+  /// was able to pass it along. Used only once the live list has had a fair
+  /// chance to produce the same booking itself — see the loop below.
+  Future<void> _autoAcceptFromOverlay(
+    int bookingId, {
+    NewBookingNearByModel? handedOver,
+  }) async {
+    // One accept per booking, no matter how many ways the tap reaches here.
+    //
+    // There are deliberately two: the live shareData message (for an app that
+    // is merely backgrounded) and the SharedPreferences record read on resume
+    // and at startup (for an app that was killed). They are not alternatives —
+    // a backgrounded app hits BOTH, since tapping Accept is itself what
+    // resumes it — so without this the same booking is accepted twice, ~20s of
+    // retry loop each, racing the same endpoint.
+    //
+    // Only latent until now because the resume half was dead: onInit's
+    // addObserver was being undone immediately by _listenForOverlayActions.
+    if (!_overlayAcceptsHandled.add(bookingId)) {
+      debugPrint(
+        '[OverlayAction] booking $bookingId is already being accepted from '
+        'the overlay — ignoring the duplicate trigger.',
+      );
+      return;
+    }
+
+    for (int attempt = 0; attempt < 40; attempt++) {
+      if (_isClosed) return;
+
+      NewBookingNearByModel? trip;
+      for (final NewBookingNearByModel t in incomingTrips) {
+        if (t.id == bookingId) {
+          trip = t;
+          break;
+        }
+      }
+
+      // The overlay's own copy, used only after the live list has had ~3s to
+      // produce the booking itself.
+      //
+      // Deliberately not used immediately, even though it is available from
+      // the first attempt. The live list is the better source — it is the
+      // backend's current view, so a booking that has quietly gone away is
+      // simply absent from it — and on the ordinary path it arrives well
+      // inside this window. This is here for the path where it does not: a
+      // cold start where the driver's online state, location and first poll
+      // all have to land before the list can exist at all. Before it, that
+      // race ended with the driver having tapped Accept and being left on the
+      // dashboard with nothing to show for it.
+      if (trip == null && handedOver != null && attempt >= 6) {
+        debugPrint(
+          '[OverlayAction] the booking list has not produced $bookingId in '
+          '${attempt * 500}ms — accepting with the copy the overlay handed '
+          'over instead.',
+        );
+        trip = handedOver;
+      }
+
+      final BuildContext? context = Get.context;
+      if (trip != null && context != null && context.mounted) {
+        debugPrint(
+          '[OverlayAction] accepting booking $bookingId after '
+          '${attempt * 500}ms',
+        );
+        await acceptRidesTrip(
+          context: context,
+          bookingId: bookingId.toString(),
+          trips: trip,
+        );
+        return;
+      }
+
+      // Asked for directly every second attempt instead of waiting on the
+      // ordinary tick — the booking has to be in the list before this can do
+      // anything, and on a cold start nothing has fetched it yet.
+      if (attempt % 2 == 0) {
+        unawaited(_pollNearbyBookings());
+      }
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+
+    debugPrint(
+      '[OverlayAction] could not auto-accept booking $bookingId within '
+      '20s — it stays visible in-app for a manual tap instead.',
+    );
   }
 
   // True once onClose() has run. GetX never reuses a closed instance — with
@@ -211,6 +508,13 @@ class HomeController extends GetxController {
     _locationRetryTimer?.cancel();
     _stalenessWatchdog?.cancel();
     _dummyTimer?.cancel();
+    _overlayActionSubscription?.cancel();
+    // Paired with the addObserver() in onInit. This is where the stray
+    // removeObserver() that used to sit at the top of
+    // _listenForOverlayActions() actually belonged — there it cancelled the
+    // registration one line after it was made; here it stops a closed
+    // controller from still being handed resume callbacks.
+    WidgetsBinding.instance.removeObserver(this);
     _ringtoneTimer?.cancel();
     positionStreams?.cancel();
     isRingtonePlaying = false;
@@ -781,12 +1085,61 @@ class HomeController extends GetxController {
   /// what caused trouble before: a card removed but the ringtone left playing,
   /// or ids left in [_ringedTripIds] so a genuinely new request arriving
   /// afterwards was treated as already-rung and never rang at all.
+  /// The declined-booking set, cached so the 3s poll is not doing a disk read
+  /// every tick.
+  ///
+  /// Refreshed on a short interval rather than read each time because the
+  /// writer that this cache can miss — a decline made in the overlay's isolate
+  /// — only happens while this app is backgrounded or dead. Dead is covered by
+  /// the first read after startup; backgrounded is covered by the live decline
+  /// message (see _listenForOverlayActions), which removes the card straight
+  /// away, with this catching up behind it.
+  Set<String> _declinedCache = <String>{};
+  DateTime _declinedCacheAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  Future<Set<String>> _declinedBookings() async {
+    final DateTime now = DateTime.now();
+    if (now.difference(_declinedCacheAt) < const Duration(seconds: 10)) {
+      return _declinedCache;
+    }
+    _declinedCache = await RideDeclineMemory.declined();
+    _declinedCacheAt = now;
+    return _declinedCache;
+  }
+
   void _clearIncomingRequests() {
     if (incomingTrips.isEmpty && _ringedTripIds.isEmpty) return;
     incomingTrips = [];
     _ringedTripIds.clear();
     stopRingtone();
+    // The overlay and the ride-request notification are two more places the
+    // same offer can be showing, neither of which the in-app list knows about.
+    // Clearing only this one is what left a driver looking at a dead request
+    // in the notification shade after the in-app card had correctly gone.
+    unawaited(NavOverlayService.hideIncomingRideNotification());
     update();
+  }
+
+  /// Removes one specific request that is no longer on offer — taken by
+  /// another driver, cancelled by the rider, or expired.
+  ///
+  /// [bookingId] null means "whatever is showing", which is what a signal that
+  /// does not name a booking can honestly ask for.
+  ///
+  /// Distinct from [rejectTrip], deliberately: that is the driver's own
+  /// decision and leaves the request eligible to come back on the next poll.
+  /// This one is the offer ceasing to exist.
+  void dropIncomingRequest(String? bookingId) {
+    final int? id = bookingId == null ? null : int.tryParse(bookingId.trim());
+    if (id == null) {
+      _clearIncomingRequests();
+      return;
+    }
+    final int before = incomingTrips.length;
+    incomingTrips.removeWhere((t) => t.id == id);
+    _ringedTripIds.remove(id);
+    if (incomingTrips.isEmpty) stopRingtone();
+    if (incomingTrips.length != before) update();
   }
 
   Future<void> _pollNearbyBookings() async {
@@ -850,13 +1203,33 @@ class HomeController extends GetxController {
           // new-booking-list is the authority on what this driver may be
           // offered.
           //
-          // That makes two server-side behaviours directly visible, by design:
-          // a declined trip returns on the next poll until there is a decline
-          // endpoint to tell the server about it, and a completed booking
-          // returns for as long as complete-ride leaves it open.
+          // That still holds for a completed booking, which returns for as
+          // long as complete-ride leaves it open.
+          //
+          // It no longer holds for a DECLINED one, and that is a deliberate,
+          // narrower reversal of the second filter described above. The old one
+          // was session-long and unbounded, which is what made it wrong: a
+          // local opinion that could hide a ride from the driver indefinitely.
+          // This one lasts five minutes, is stored where a decline made from
+          // the overlay's own isolate can reach it, and exists because without
+          // it a decline simply does not hold — the driver dismisses a card and
+          // the very next poll tick hands it straight back. Until there is a
+          // decline endpoint, honouring the driver's own answer for a few
+          // minutes is closer to the server's intent than ignoring it.
+          final Set<String> declined = await _declinedBookings();
+          if (_isClosed) return;
+
           List<NewBookingNearByModel> apiTrips = data
               .map((trip) => NewBookingNearByModel.fromJson(trip))
+              .where((t) => !declined.contains(t.id?.toString()))
               .toList();
+
+          if (apiTrips.length != data.length) {
+            debugPrint(
+              '[LocationPipeline] hiding ${data.length - apiTrips.length} '
+              'booking(s) this driver has already declined',
+            );
+          }
 
           debugPrint(
             '[LocationPipeline] match query returned ${apiTrips.length} '
@@ -885,7 +1258,16 @@ class HomeController extends GetxController {
                 .toSet();
             if (newTripIds.isNotEmpty) {
               _ringedTripIds.addAll(newTripIds);
-              playRingtone();
+              // Never announce a ride the overlay card has already announced.
+              //
+              // These are two separate players in two separate isolates with
+              // no shared state, and the overlap is a real sequence, not a
+              // corner case: a request arrives while the app is closed, the
+              // overlay sounds for it, the driver opens the app to answer it —
+              // and this poll, seeing that id for the first time in its own
+              // set, sounded for it a second time. From the driver's seat that
+              // is one ride ringing twice.
+              unawaited(playRingtoneForTrips(newTripIds));
             }
           } else {
             _ringedTripIds.clear();
@@ -1129,6 +1511,29 @@ class HomeController extends GetxController {
         lower.contains('not active');
   }
 
+  /// Announces [tripIds], unless every one of them has already been announced
+  /// — by an earlier tick here, or by the overlay card in its own isolate.
+  ///
+  /// See RideAlertMemory for why the second half matters: the overlay and this
+  /// controller are two separate players that cannot see each other, and the
+  /// ordinary "offer arrives while the app is closed, driver opens the app to
+  /// answer it" sequence runs through both.
+  Future<void> playRingtoneForTrips(Set<int> tripIds) async {
+    if (_isClosed) return;
+    if (tripIds.isEmpty) return;
+    final Set<String> granted = await RideAlertMemory.claimAll(
+      tripIds.map((int id) => id.toString()).toSet(),
+    );
+    if (granted.isEmpty) {
+      debugPrint(
+        '[HomeController] ${tripIds.length} new request(s) already announced '
+        'by the overlay — not ringing again.',
+      );
+      return;
+    }
+    await playRingtone();
+  }
+
   Future<void> playRingtone() async {
     // An orphaned instance must never be audible — see _isClosed.
     if (_isClosed) return;
@@ -1158,9 +1563,12 @@ class HomeController extends GetxController {
       }
     }
 
-    // Auto-stop after 3 seconds
+    // Two seconds, matching the overlay card's own tone exactly. The same
+    // ride announced from two different places should not be recognisably two
+    // different alerts, and two seconds is long enough to notice without being
+    // an alarm the driver has to wait out.
     _ringtoneTimer?.cancel();
-    _ringtoneTimer = Timer(const Duration(seconds: 3), () {
+    _ringtoneTimer = Timer(const Duration(seconds: 2), () {
       stopRingtone();
     });
   }
@@ -1217,9 +1625,17 @@ class HomeController extends GetxController {
   }
 
   void rejectTrip(NewBookingNearByModel trip) {
-    // Removed from view only. With no decline endpoint to tell the server
-    // about it, this trip comes straight back on the next poll — which is the
-    // missing endpoint showing through, not a bug in this method.
+    // Remembered, not just removed. There is still no decline endpoint, so the
+    // server keeps offering this booking — what changed is that the poll now
+    // filters out what the driver has already turned down (see
+    // RideDeclineMemory), instead of handing it straight back on the next tick.
+    final String? declinedId = trip.id?.toString();
+    unawaited(RideDeclineMemory.remember(declinedId));
+    // Added to the cache by hand as well, so the next poll tick honours this
+    // immediately instead of waiting out the cache's own refresh interval —
+    // which is several ticks, i.e. long enough for the card to visibly come
+    // back before the decline takes effect.
+    if (declinedId != null) _declinedCache = {..._declinedCache, declinedId};
     incomingTrips.remove(trip);
 
     if (incomingTrips.isEmpty) {
@@ -1384,6 +1800,17 @@ class HomeController extends GetxController {
     }
     _isAcceptingTrip = true;
 
+    // The single funnel every Accept passes through — in-app tap and overlay
+    // Accept alike (see _autoAcceptFromOverlay) — so it's the one place that
+    // reliably clears the incoming-ride notification. That notification is
+    // the fallback shown when no overlay can be raised (see
+    // NavOverlayService.showIncomingRideNotification); left up after an
+    // Accept it would sit there advertising a ride the driver is already
+    // driving, and tapping it would do nothing useful. Fire-and-forget: it
+    // must not delay the accept call below, and a notification that fails to
+    // clear is not a reason to fail the Accept.
+    unawaited(NavOverlayService.hideIncomingRideNotification());
+
     final prefs = await SharedPreferences.getInstance();
 
     // EasyLoading.show(status: "Please wait...");
@@ -1499,6 +1926,19 @@ class HomeController extends GetxController {
         debugPrint(
           'acceptRidesTrip rejected: status=${response.statusCode} body=${response.body}',
         );
+
+        // This driver lost the race. The request they just tapped is gone, so
+        // take it off the screen instead of leaving a card whose Accept button
+        // can now only ever produce the same rejection again — which is what
+        // made "already taken" read as the app being broken rather than as
+        // somebody else having been quicker.
+        if (_looksAlreadyHandled(backendMessage ?? '')) {
+          dropIncomingRequest(bookingId);
+          unawaited(
+            NavOverlayService.closeRideRequest(bookingId: bookingId),
+          );
+        }
+
         if (context.mounted) {
           AnimatedTopToast.show(
             context: context,

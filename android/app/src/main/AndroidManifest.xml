@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 <uses-permission android:name="android.permission.INTERNET"/>
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
 <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
@@ -16,6 +17,25 @@
      removed it to avoid (see git history). -->
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+<!-- Stripped back out of the merged manifest, not merely "not requested".
+     The Google Navigation SDK declares ACCESS_BACKGROUND_LOCATION in its own
+     manifest, so adding the SDK silently reintroduced it into this app —
+     undoing the deliberate removal documented above, and with it the Play
+     Store background-location declaration and video review that removal was
+     done to escape.
+
+     Safe to remove because the SDK does not need it for what this app asks
+     of it. ACCESS_BACKGROUND_LOCATION governs location access with NO
+     foreground service or activity running; the Navigation SDK runs its own
+     foreground service (NavigationService, foregroundServiceType="location")
+     for the entire duration of guidance, which is covered by
+     ACCESS_FINE_LOCATION plus FOREGROUND_SERVICE_LOCATION above.
+
+     If guidance is ever required to keep running with no foreground service
+     at all, this override is the first thing to revisit — and the Play
+     declaration comes back with it. -->
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
+    tools:node="remove"/>
 <!-- The "return to app" floating bubble shown over Google Maps once a ride
      starts. SYSTEM_ALERT_WINDOW is a special permission — Android won't let
      the app request it with a normal runtime dialog; the driver has to be
@@ -27,6 +47,55 @@
      entire point of a bubble that persists over another app). -->
 <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+<!-- The incoming-ride-request notification's fallback path, for every device
+     where the overlay above cannot be shown (see OverlaySupport.probeOverlay
+     — MIUI/ColorOS/Funtouch all gate overlays behind a vendor permission that
+     "Display over other apps" does not cover, and drivers on those phones
+     were previously left with in-app polling only, i.e. they simply missed
+     rides that arrived while they were in Google Maps).
+
+     Note this is NOT unconditionally granted: as of Android 14 (API 34) it is
+     pre-granted only to apps whose core function is calling or alarms, and
+     revoked by default for everything else. That is deliberately fine here —
+     without it the notification still posts, still rings, and still opens the
+     app when tapped; it just doesn't cover the screen. The full-screen
+     takeover is the upgrade, not the mechanism. NotificationManager
+     .canUseFullScreenIntent() is what reports which of the two the driver
+     will get, and Android 14+ can be asked for the upgrade via
+     ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT. -->
+<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+<!-- Lets the app ask (via the system's one-tap dialog rather than a Settings
+     hunt) to be exempted from Doze and App Standby.
+
+     This is here because of the overlay's foreground service. OEM battery
+     managers — the same Xiaomi/Oppo/Vivo skins that gate the overlay
+     permission itself — will kill that service once this app is backgrounded,
+     which is *always*, since backgrounding it by launching Google Maps is the
+     entire premise of the bubble. When that happens the bubble vanishes from
+     a screen it was already showing on, which the driver cannot tell apart
+     from the permission never having worked.
+
+     Play Console requires this permission's use to be justified on
+     submission. The acceptable case it is being claimed under is continuous
+     location tracking and driver reachability for the duration of an active
+     ride — not general background execution. -->
+<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+<!-- Without these overrides, Android infers hardware requirements from the
+     permissions above and marks them mandatory for installation: requesting
+     ACCESS_FINE_LOCATION implies a real GPS chip is required, and
+     requesting CALL_PHONE implies a telephony radio is required. Neither is
+     actually essential to running this app — a device with only
+     network-based location, or no SIM/radio at all (a tablet, an emulator),
+     can still run every feature that matters here — but left undeclared,
+     Play Console silently excludes any device lacking that exact hardware
+     from ever seeing the app in search or install eligibility. This is what
+     "Doesn't support required feature" in the Play Console release review
+     was flagging for a bare x86_64 emulator profile with no virtual GPS/
+     telephony configured; it is a pre-existing manifest gap, not something
+     introduced by any of this session's changes. -->
+<uses-feature android:name="android.hardware.location.gps" android:required="false"/>
+<uses-feature android:name="android.hardware.location" android:required="false"/>
+<uses-feature android:name="android.hardware.telephony" android:required="false"/>
 <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <application
@@ -88,6 +157,36 @@
     android:name="com.facebook.sdk.ApplicationId"
     android:value="2107195303185625"/>
     <meta-data android:name="com.facebook.sdk.ClientToken" android:value="f74329131ab047355602b8d24213e293"/>
+
+        <!-- Stops android-maps-utils' usage-attribution initializer from
+             running at app launch.
+
+             This is a crash fix, not an optimisation. android-maps-utils
+             (pulled in transitively by google_maps_flutter) registers
+             AttributionIdInitializer as an androidx.startup Initializer, so
+             InitializationProvider runs it during app startup, before any
+             Flutter code. Its create() calls
+             com.google.android.gms.maps.MapsApiSettings — a class that lives
+             in play-services-maps, which this build excludes so the Google
+             Navigation SDK can supply the Maps classes instead (see
+             app/build.gradle.kts). The Navigation SDK's bundled copy has 222
+             of the com.google.android.gms.maps.* classes but NOT that one, so
+             the initializer would hit NoClassDefFoundError, androidx.startup
+             would rethrow it as a StartupException, and the app would die on
+             launch — every launch, before showing a single frame.
+
+             Safe to remove: it reports which Maps library the app uses back
+             to Google for attribution. Nothing in this app reads it and no
+             map functionality depends on it. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="com.google.maps.android.utils.attribution.AttributionIdInitializer"
+                tools:node="remove"/>
+        </provider>
 
         <!-- flutter_overlay_window's own service — hosts the bubble's
              separate Flutter engine as a foreground service so Android

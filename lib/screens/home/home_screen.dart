@@ -4,18 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:myridedriverapp/config/utils/constants.dart';
 import 'package:myridedriverapp/controllers/driver_controller.dart';
 import 'package:myridedriverapp/controllers/home_controller.dart';
 
 import 'package:myridedriverapp/model/trip_model.dart';
 import 'package:myridedriverapp/screens/ride/trip_request_screen.dart';
+import 'package:myridedriverapp/services/in_app_navigation_service.dart';
 import 'package:myridedriverapp/services/nav_overlay_service.dart';
+import 'package:myridedriverapp/services/oem_overlay_support.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:myridedriverapp/widgets/custom_loader.dart';
 
 import 'package:myridedriverapp/widgets/custum_header.dart';
 import 'package:myridedriverapp/widgets/onlineoffline_custombutton.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeMapScreen extends StatefulWidget {
   const HomeMapScreen({super.key});
@@ -59,6 +60,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   bool isLoading = false;
   Timer? activeRideTimer;
 
+
   @override
   void initState() {
     super.initState();
@@ -91,6 +93,27 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     // Removing the duplicate here doesn't lose anything the app depends on;
     // it removes the only thing that could race it.
     _awaitLocationThenAskOverlayPermission();
+
+    // Pre-warm the Navigation SDK here rather than only at the tail of
+    // _maybeAskOverlayPermission(), which is where it used to live exclusively.
+    //
+    // That placement is what made in-app navigation look like it had been
+    // reverted: the SDK's terms dialog is mandatory before any session can
+    // start, ride-time callers deliberately refuse to show it (see
+    // InAppNavigationService.ensureSession), and the *only* thing that ever
+    // showed it sat behind a ten-second location wait, an overlay-permission
+    // dialog, an optional trip out to system Settings and a battery-
+    // optimisation dialog — each with its own `if (!mounted) return`. A driver
+    // who took a ride during that window, or backed out of any of those
+    // screens, never accepted the terms; and with terms unaccepted every
+    // single ride falls through to the external Google Maps handoff, on every
+    // launch, forever. That is the reported "it goes to Google Maps again".
+    //
+    // Called unconditionally and first instead. It is a no-op once the driver
+    // has accepted (acceptance persists in the SDK), and it cannot block the
+    // permission chain above because it does not await it.
+    unawaited(InAppNavigationService.prepareAheadOfFirstRide());
+
     activeRideTimer = Timer(const Duration(seconds: 10), () async {
       if (!mounted) return;
 
@@ -118,24 +141,57 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   // to the same data on a slower clock, and one that kept running even while
   // offline, when nothing needed it at all.)
 
-  /// Asks — once, and only ever from here — for "display over other apps",
-  /// which is what lets the floating return-to-app bubble sit over Google
-  /// Maps during a ride.
+  /// Asks, on every app start, for "display over other apps" — until it is
+  /// actually granted.
+  ///
+  /// This used to be a "once per install" ask: decline it a single time and
+  /// it was never offered again, on the reasoning that it only gated the
+  /// floating return-to-app bubble — a convenience, not something rides or
+  /// navigation depended on. That reasoning no longer holds: this same
+  /// permission is now what the incoming-ride-request overlay needs to show
+  /// a new ride at all while this app is not the one in the foreground (see
+  /// NavOverlayService.showIncomingRideRequest). A driver who declined it
+  /// once, back when it only meant "no floating button," would otherwise
+  /// have silently opted out of ever seeing a new ride pop up outside the
+  /// app too — with nothing telling them that is what "Not Now" actually
+  /// cost them. Re-asking every launch until it is granted is deliberate:
+  /// this is close enough to a real requirement now that it deserves to
+  /// keep coming back, not fade into a permanently-declined flag no one
+  /// remembers setting.
   ///
   /// Presented as a normal explain-then-ask dialog, like the location one
   /// below it. It used to be requested from the pickup screen at the moment
   /// the driver pressed Start Ride, which dropped an unexplained system
   /// Settings screen on them mid-OTP — the worst possible moment, while
   /// they're reading a code off the rider's phone.
-  ///
-  /// Asked at most once per install: this is a convenience, not a
-  /// requirement (rides and Google Maps navigation work identically without
-  /// it), so a driver who says no should not be asked again on every launch.
+  /// Gated on the *probe*, not on Android's app-op. On MIUI/ColorOS/Funtouch
+  /// the app-op reads as granted while the vendor's own gate still refuses
+  /// the window, so the old `hasOverlayPermission()` check here meant a
+  /// driver who had granted the AOSP toggle and nothing else was never asked
+  /// again — and never told that the toggle they'd flipped wasn't the one
+  /// blocking them. See NavOverlayService.canActuallyShowOverlay.
   Future<void> _maybeAskOverlayPermission() async {
-    if (await NavOverlayService.hasOverlayPermission()) return;
+    if (await NavOverlayService.canActuallyShowOverlay()) {
+      // Overlay is genuinely working. Still worth asking about battery
+      // optimisation — an OEM battery manager that kills the overlay's
+      // foreground service takes the bubble down mid-ride.
+      await _maybeAskBatteryOptimisation();
+      // Reached on the happy path too, so a driver whose overlay works still
+      // gets the navigation terms out of the way before their first ride
+      // rather than during it.
+      if (mounted) {
+        unawaited(InAppNavigationService.prepareAheadOfFirstRide());
+      }
+      return;
+    }
 
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(ApiConstants.overlayPermissionAsked) ?? false) return;
+    await OemOverlaySupport.logOverlayDiagnosis();
+    final guidance = await OemOverlaySupport.guidance_();
+    // True in the case worth calling out explicitly: Android says granted,
+    // the window was still refused. Telling this driver to "allow display
+    // over other apps" would be telling them to do what they already did.
+    final vendorGateIsTheBlocker =
+        await NavOverlayService.hasOverlayPermission();
 
     if (!mounted) return;
     final wantsIt = await showDialog<bool>(
@@ -145,16 +201,61 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
-          title: const Text(
-            "Show Floating Return Button",
+          title: Text(
+            vendorGateIsTheBlocker
+                ? "One More Setting Needed"
+                : "Show Ride Requests Over Other Apps",
             textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.bold),
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          content: const Text(
-            "Allow Nride driver to display over other apps, so you get a "
-            "floating button to jump straight back here while you're "
-            "navigating — both on your way to the rider and during the trip.",
-            textAlign: TextAlign.center,
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  vendorGateIsTheBlocker
+                      ? "Your ${guidance.brandLabel} phone needs a second "
+                            "permission that \"Display over other apps\" "
+                            "doesn't cover. Without it we can't show a new "
+                            "ride while you're in another app, and the "
+                            "floating return button won't appear."
+                      : "Allow Nride driver to display over other apps. This "
+                            "is what shows you a new ride request even while "
+                            "you're using another app, and gives you a "
+                            "floating button to jump straight back here "
+                            "while navigating.",
+                  textAlign: TextAlign.left,
+                ),
+                // Written out as well as deep-linked. The deep link lands on
+                // the right screen on the skins whose component names are
+                // known, but those names change between skin versions — and
+                // a driver who arrives on an unexpected screen with no idea
+                // what they were looking for is stuck. The steps cost
+                // nothing and are the difference between "buried" and
+                // "impossible".
+                if (guidance.hasExtraSteps) ...[
+                  const SizedBox(height: 14),
+                  Text(
+                    "On ${guidance.brandLabel}:",
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  ...guidance.steps.map(
+                    (step) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text("•  $step"),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                const Text(
+                  "You'll still get a notification for every ride either "
+                  "way — this only adds the on-screen popup.",
+                  style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -163,7 +264,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text("Allow"),
+              child: const Text("Open Settings"),
             ),
           ],
         );
@@ -175,25 +276,142 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     // Settings trip is the only way to grant it.
     if (wantsIt == true) {
       await NavOverlayService.requestOverlayPermission();
-      // Deliberately NOT latching overlayPermissionAsked here. The flag used
-      // to be set before this dialog even appeared, so a driver who tapped
-      // Allow, landed on the system Settings page and then backed out of it
-      // without finding the toggle — easily done, it's buried under a list of
-      // every installed app — was recorded as "asked" and never offered it
-      // again. The bubble then silently never worked for the life of that
-      // install, which is exactly the "it doesn't show up" report. Leaving it
-      // unset means only that specific driver gets one more prompt next
-      // launch; anyone who did grant it is caught by the
-      // hasOverlayPermission() early-return at the top and never sees this
-      // again either way.
-      return;
+
+      // Autostart is a second, separate trip, and only on skins that have
+      // such a screen. Not bundled into the one above because two Settings
+      // screens opened back to back means the second replaces the first
+      // before the driver has touched anything — so this waits for them to
+      // come back to the app, which is what mounted-after-await detects.
+      if (guidance.needsAutoStart && mounted) {
+        await _maybeOpenAutoStartSettings(guidance);
+      }
     }
 
-    // Declined outright — that's a real answer, and it's the one worth
-    // remembering. This is a convenience (rides and navigation work
-    // identically without it), so "no" must not become a prompt on every
-    // single launch.
-    await prefs.setBool(ApiConstants.overlayPermissionAsked, true);
+    if (mounted) await _maybeAskBatteryOptimisation();
+
+    // Last, and off the ride path on purpose. The Navigation SDK's terms
+    // dialog is mandatory before any guidance can start, and collecting it
+    // here is what stops it being collected mid-ride — where it blocked
+    // navigation from appearing for five minutes on a reported trip. See
+    // InAppNavigationService.prepareAheadOfFirstRide.
+    if (mounted) unawaited(InAppNavigationService.prepareAheadOfFirstRide());
+
+    // No flag latched on decline, on either branch above — see this
+    // method's own doc comment on why this is now asked every launch until
+    // actually granted, rather than remembered as a permanent "no". A
+    // driver who taps Allow, lands on the system Settings page (buried
+    // under every installed app) and backs out without finding the toggle
+    // is not meaningfully different from a driver who tapped "Not Now" —
+    // both still lack the permission, and both get asked again next time,
+    // which self-corrects the "granted it but the toggle didn't stick"
+    // case for free.
+  }
+
+  /// Offers the skin's autostart / background-launch manager, which is what
+  /// keeps the overlay's foreground service alive once this app is
+  /// backgrounded — which it always is while the bubble matters, since
+  /// launching Google Maps is what backgrounds it.
+  Future<void> _maybeOpenAutoStartSettings(
+    OemOverlayGuidance guidance,
+  ) async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: const Text(
+          "Allow Nride To Run In Background",
+          textAlign: TextAlign.center,
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          "${guidance.brandLabel} phones stop apps from running once you "
+          "switch away. Enable Nride driver in the autostart list so ride "
+          "requests still reach you while you're navigating.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text("Skip"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text("Open"),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true) return;
+
+    final opened = await OemOverlaySupport.openAutoStartSettings();
+    if (opened == null) {
+      debugPrint(
+        '[HomeScreen] no autostart screen on this device — nothing to open',
+      );
+    }
+  }
+
+  /// Asks to be exempted from battery optimisation, via the system's own
+  /// one-tap dialog.
+  ///
+  /// Separate from the overlay ask and reached from both of its branches,
+  /// because this matters even where the overlay works perfectly: the bubble
+  /// is hosted by a foreground service, and a battery manager that kills
+  /// that service removes a bubble the driver was already looking at. It also
+  /// protects the location pipeline for the same reason.
+  ///
+  /// No dialog of our own in front of it — ACTION_REQUEST_IGNORE_BATTERY_
+  /// OPTIMIZATIONS *is* a system dialog with its own explanation and its own
+  /// Deny button, so wrapping it in a second confirmation just adds a tap.
+  /// SharedPreferences flag recording that this driver has been shown the
+  /// battery-optimisation dialog once. Version-suffixed so a future change of
+  /// mind about the policy can re-ask everyone deliberately.
+  static const String _batteryAskedKey = 'batteryOptimisationAskedKey_v1';
+
+  Future<void> _maybeAskBatteryOptimisation() async {
+    // Already exempt — nothing to ask for. Checked before the latch so a
+    // driver who grants it never burns the one ask.
+    if (await OemOverlaySupport.isIgnoringBatteryOptimizations()) return;
+
+    // Asked at most ONCE per install, and this latch is the whole point.
+    //
+    // The obvious implementation — re-ask whenever the app isn't exempt, the
+    // way the overlay permission above deliberately does — turned into a
+    // dialog on every single launch that drivers could not get rid of, and
+    // that is what it was reported as. Two independent reasons, and both are
+    // permanent states rather than transient ones:
+    //
+    //  - On the OEM skins this matters most for, the driver granting
+    //    "allow background activity" in the vendor's own battery settings
+    //    does NOT set the AOSP whitelist that
+    //    PowerManager.isIgnoringBatteryOptimizations reads. So a driver who
+    //    has genuinely done what we asked still reads as un-exempt forever,
+    //    and got re-asked forever, with no action available that would
+    //    silence it. Measured on the Vivo test device.
+    //  - A driver who taps Deny has made a decision. The system dialog
+    //    itself tells them they can change it later in Settings, so nagging
+    //    adds nothing they weren't already told.
+    //
+    // The exemption is an optimisation, not a requirement: the foreground
+    // service and the notification fallback both work without it. That is
+    // what makes one ask the right trade — unlike the overlay permission,
+    // where re-asking buys a feature that is otherwise entirely absent.
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_batteryAskedKey) ?? false) {
+      debugPrint(
+        '[HomeScreen] battery-optimisation exemption still not granted, but '
+        'the driver has already been asked once — not re-prompting.',
+      );
+      return;
+    }
+    // Latched BEFORE showing it, not after. The dialog hands control to the
+    // system and this method does not survive to see the outcome reliably —
+    // latching afterwards left a window where a driver who backgrounded the
+    // app from the dialog was never recorded as asked, and got it again.
+    await prefs.setBool(_batteryAskedKey, true);
+
+    await OemOverlaySupport.requestIgnoreBatteryOptimizations();
   }
 
   /// Waits for HomeController's own location pipeline to report a first fix
@@ -491,7 +709,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               return SizedBox();
             },
           ),
-          //  PremiumBlurLoader()
         ],
       ),
     );

@@ -72,7 +72,15 @@ class NewBookingNearByModel {
       this.time});
 
   NewBookingNearByModel.fromJson(Map<String, dynamic> json) {
-    id = json['id'];
+    // Parsed, not cast. The booking-list API sends this as a JSON number,
+    // but a ride-request FCM push arrives as Map<String, String> — every
+    // value a String — and a bare assignment threw a TypeError there, which
+    // took the whole card down with it (the overlay router caught it and
+    // fell back to the return bubble, so a real push showed the wrong
+    // overlay entirely). tryParse handles both shapes.
+    id = json['id'] is int
+        ? json['id'] as int
+        : int.tryParse('${json['id']}');
     pickupLat = json['pickup_lat'] != null ? double.tryParse(json['pickup_lat'].toString()) : null;
     pickupLng = json['pickup_lng'] != null ? double.tryParse(json['pickup_lng'].toString()) : null;
     pickupAddress = json['pickup_address'];

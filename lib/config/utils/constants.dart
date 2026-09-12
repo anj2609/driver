@@ -1,4 +1,29 @@
 class ApiConstants {
+  /// Where the overlay records an Accept the driver tapped, so the app can
+  /// act on it after it starts.
+  ///
+  /// A prefs key rather than a live message because the overlay runs in its
+  /// own isolate and the app it is handing off to is usually not running yet:
+  /// the shareData broadcast has no listener at that moment and is simply
+  /// lost, which is why Accept used to open the app and then just sit on the
+  /// dashboard. A written record survives the process starting.
+  static const String pendingOverlayAccept = 'pending_overlay_accept';
+
+  /// The full booking the overlay's Accept was tapped on, as JSON.
+  ///
+  /// Written alongside [pendingOverlayAccept] because the id alone is not
+  /// enough to accept with: acceptRidesTrip needs the booking itself, and the
+  /// app was finding it by waiting for the nearby-bookings poll to return it.
+  /// That works when the poll works — but it only runs once the driver is
+  /// online and the home screen is up, so on the cold start that follows an
+  /// Accept from a killed app it is a race the driver loses often enough to
+  /// notice, and losing it means tapping Accept and landing on the dashboard.
+  ///
+  /// The overlay already holds the whole booking (it is rendering it), so it
+  /// simply passes it on. Used only as a fallback, after the live poll has had
+  /// its chance — see HomeController._autoAcceptFromOverlay.
+  static const String pendingOverlayAcceptRide = 'pending_overlay_accept_ride';
+
   //==== base url =====
 
   static const String baseUrl = 'https://app.nride.in/api/';

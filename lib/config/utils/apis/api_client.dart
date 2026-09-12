@@ -200,7 +200,11 @@ class ApiClient extends GetxService {
     if (await ApiChecker.isVpnActive()) {
       return Response(statusCode: -1, statusText: 'You are using VPN');
     }
-    debugPrint('complete ||| $body');
+    // Logged as one labelled block per call so it is obvious from the console
+    // which endpoint ran, what went out, and what came back.
+    debugPrint('==> API POST   : ' + ApiConstants.baseUrl + uri);
+    debugPrint('==> API BODY   : ' + body.toString());
+    debugPrint('==> API HEADERS: ' + _mainHeadersMain.toString());
     try {
       http.Response httpResponse = await http.post(
         Uri.parse(ApiConstants.baseUrl + uri),
@@ -209,10 +213,8 @@ class ApiClient extends GetxService {
         ///jsonEncode(body),
         headers: _mainHeadersMain,
       ).timeout(Duration(seconds: timeoutInSeconds));
-      debugPrint("body: $_mainHeadersMain");
-      debugPrint("STATUS: ${httpResponse.statusCode}");
-      debugPrint("BODY: ${httpResponse.body}");
-      debugPrint('testing |||| $_mainHeadersMain');
+      debugPrint('<== API STATUS : ' + httpResponse.statusCode.toString() + '  (' + uri + ')');
+      debugPrint('<== API RESULT : ' + httpResponse.body);
 
       return handleResponse(httpResponse, uri);
     } catch (e, s) {

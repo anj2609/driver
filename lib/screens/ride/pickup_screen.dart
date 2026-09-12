@@ -642,6 +642,8 @@ import 'package:myridedriverapp/controllers/home_controller.dart';
 import 'package:myridedriverapp/controllers/profile_controller.dart';
 import 'package:myridedriverapp/model/acceptride_details_model.dart';
 import 'package:myridedriverapp/screens/home/ridedetails_screen.dart' show bookingIdStore;
+import 'package:myridedriverapp/screens/ride/in_app_navigation_screen.dart';
+import 'package:myridedriverapp/services/in_app_navigation_service.dart';
 import 'package:myridedriverapp/services/nav_overlay_service.dart';
 import 'package:myridedriverapp/widgets/canclerideconfirmations.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
@@ -728,6 +730,24 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     _seedPhaseFromTrackedRide();
     _initLocation();
     startTimer();
+
+    // Build the Navigation SDK session now, while the driver is still reading
+    // the pickup details, rather than at the moment they press Start Ride.
+    //
+    // The home screen already pre-warms this on launch and on resume, and
+    // that covers the ordinary path — but not the one that matters most here:
+    // a driver whose app was killed mid-ride is restored straight onto this
+    // screen by driverBookingActives(), with the home screen never mounted, so
+    // the first thing to ask for a session is the drop leg, at the worst
+    // possible moment. Session creation is the single largest slice of the
+    // delay between a ride going ongoing and turn-by-turn appearing.
+    //
+    // ensureSession(), NOT prepareAheadOfFirstRide(): the latter is allowed to
+    // put up the SDK's mandatory terms dialog, and a modal appearing over a
+    // live ride screen is exactly the five-minute stall that service's own doc
+    // comment describes. This one declines to prompt and simply returns false
+    // if terms are outstanding.
+    unawaited(InAppNavigationService.ensureSession());
   }
 
   /// Restores which stage of the ride this screen should show, from the
@@ -898,6 +918,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   void dispose() {
     positionStream?.cancel();
     _timer?.cancel();
+    _navProgressDelay?.cancel();
     // Whatever route this screen is left by — ride completed, cancelled by
     // the rider, or the driver backing out — the floating return bubble and
     // its notification counterpart (see _startGoogleMapsNavigation) have
@@ -908,6 +929,14 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // call even when navigation was never actually started.
     NavOverlayService.hideReturnBubble();
     NavOverlayService.hideReturnNotification();
+    // Same reasoning, and more urgent: the Navigation SDK runs its own
+    // foreground service, and guidance deliberately survives leaving the
+    // navigation screen (see InAppNavigationScreen.dispose — the driver
+    // stepping back for the OTP is not the trip ending). This screen going
+    // away IS the trip ending, and it is the only place that knows it. Left
+    // running, the SDK would keep guiding to a finished ride's destination
+    // with a persistent notification the driver cannot dismiss.
+    unawaited(InAppNavigationService.stopNavigation());
     super.dispose();
   }
 
@@ -1065,7 +1094,38 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   /// and it must never be able to block the thing it's decorating. Nothing
   /// below is fatal either — a failure just leaves the driver on this screen
   /// with its own working in-app map.
-  Future<void> _startGoogleMapsNavigation(
+  /// Whether [leg] is still the half of the journey the driver is actually on.
+  ///
+  /// Asked repeatedly while a navigation start is in flight, because that
+  /// start is not instant and this screen outlives neither of the things it
+  /// depends on. Two ways a leg stops being current:
+  ///
+  ///  - the screen is gone, which is how this app learns a trip ended (see
+  ///    dispose) — so an unmounted screen means there is no leg at all; and
+  ///  - the rider boarded, which turns 'pickup' into 'drop'. A pickup-leg
+  ///    start that completes after the OTP would otherwise route the driver
+  ///    back to a pickup they have already made.
+  ///
+  /// This is what stops turn-by-turn appearing once the ride is over: the
+  /// pickup handoff is fired unawaited on this screen's first frame and can sit
+  /// behind session creation for minutes, long enough for the entire trip to
+  /// finish underneath it.
+  bool _legIsStillCurrent(String leg) {
+    if (!mounted) return false;
+    final bool underway = isOtpVerified || _currentPhase() == 'ongoing';
+    return leg == 'drop' ? underway : !underway;
+  }
+
+  /// Returns whether this leg is *settled* — i.e. whether the caller should
+  /// stop trying.
+  ///
+  /// False means nothing was started and the attempt is worth repeating: the
+  /// Navigation SDK was not ready *yet* (session still being created, terms
+  /// accepted a moment from now, no SDK location fix). It does not mean
+  /// failure. Callers that latch "already handled" state must key it on this,
+  /// or one slow first frame silently costs the leg its only attempt — see
+  /// [_maybeStartPickupNavigation].
+  Future<bool> _startNavigation(
     ({double lat, double lng})? target, {
     // Which half of the journey this handoff is for. Drives the return
     // notification's wording, and is what lets the second handoff re-alert
@@ -1093,44 +1153,162 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
           icon: Icons.error_rounded,
         );
       }
-      return;
+      // Settled: the booking's coordinates are what they are. Retrying would
+      // re-toast the same message every poll tick.
+      return true;
     }
 
-    final launched = await NavOverlayService.launchGoogleMapsNavigation(
-      lat: target.lat,
-      lng: target.lng,
-      // This screen already tracks the driver's live position for its own
-      // map, so hand it over as the route's origin rather than making
-      // Google Maps go and find one — see launchGoogleMapsNavigation.
-      originLat: driverLatitude,
-      originLng: driverLongitude,
-    );
+    // Already there — navigate nowhere.
+    //
+    // Turn-by-turn to a point the driver is standing on is not just useless,
+    // it is actively destructive: the SDK reports arrival within a second or
+    // two of guidance starting, which used to tear the navigation screen down
+    // before its platform view had finished attaching and left the plugin
+    // unable to attach the NEXT one (see the arrival guard in
+    // InAppNavigationScreen). The pickup leg hit this constantly, because a
+    // driver can accept a ride from the rider's doorstep — and this is
+    // exactly what "no navigation shown for the pickup" was.
+    //
+    // 100 m is chosen to be past GPS scatter (a stationary phone drifts tens
+    // of metres) while still well inside "you can see it from here". The
+    // backend's own `arrived` status is checked separately by
+    // _maybeStartPickupNavigation; this catches the case where the driver is
+    // there but the backend has not caught up, which is most of them.
+    if (driverLatitude != null && driverLongitude != null) {
+      final double metresAway = Geolocator.distanceBetween(
+        driverLatitude!,
+        driverLongitude!,
+        target.lat,
+        target.lng,
+      );
+      if (metresAway < 100) {
+        debugPrint(
+          '[Pickup] skipping $leg navigation — the driver is already '
+          '${metresAway.round()}m from the target. Nothing to navigate to.',
+        );
+        // Said out loud, not just logged. Silently doing nothing is
+        // indistinguishable from the feature being broken — it was reported
+        // as "the map was not opened during the pickup", when in fact the
+        // driver was standing on the pickup point and skipping was correct.
+        if (mounted) {
+          AnimatedTopToast.show(
+            context: context,
+            message: leg == 'drop'
+                ? "You're already at the drop-off point."
+                : "You're already at the pickup point — no navigation needed.",
+            backgroundColor: ColorResources.greencolor,
+            icon: Icons.check_circle_rounded,
+          );
+        }
+        // Settled: arriving is what ends this leg, not something to retry.
+        return true;
+      }
+    }
 
-    if (!launched && mounted) {
+    // In-app navigation is the ONLY navigation this screen starts.
+    //
+    // The Google Maps app handoff that used to live at the bottom of this
+    // method is gone deliberately, not by oversight. Turn-by-turn belongs
+    // inside this app because the driver's OTP, the rider's number and End
+    // Ride all live here: handing them to another app strands them from the
+    // controls the ride actually needs, and every mechanism that existed to
+    // rescue them from that — the floating return bubble, the return
+    // notification, the OEM overlay permission chase behind both — is machinery
+    // whose only job was undoing the handoff. On top of that it misbehaved in
+    // practice: a stale or repeated handoff ejected the driver from this app
+    // mid-ride, which is what 25 consecutive Maps launches in one booking
+    // looked like from the driver's seat.
+    //
+    // When the SDK genuinely cannot navigate, the driver stays here on this
+    // screen's own live map and is told why. That is a worse map than
+    // turn-by-turn, but it is still this app, and it is honest.
+    if (!InAppNavigationService.isPermanentlyUnavailable) {
+      // Said out loud for the whole time this takes, because it takes a
+      // genuinely noticeable while and used to take it in complete silence.
+      //
+      // Nothing here is instant: the Navigation SDK session may still be
+      // building, the SDK runs its own location engine and reports
+      // `locationUnavailable` until it has a fix of its own (retried on a
+      // ~4s budget), the route has to be fetched, and the plugin's platform
+      // view can take several seconds more to attach after that. Between the
+      // ride going ongoing and turn-by-turn appearing, the driver was looking
+      // at an unchanged screen with no indication anything was happening —
+      // which reads as the app having frozen, and is what makes a driver tap
+      // Start Ride again (and again).
+      //
+      // Shown rather than the alternative of trying to make the SDK faster
+      // than it is: the slow parts are inside Google's SDK, behind awaits this
+      // code does not control.
+      _setNavProgress(
+        leg == 'drop' ? 'Finding the best route…' : 'Opening navigation…',
+      );
+      try {
+        if (await InAppNavigationService.isAvailable() && mounted) {
+          final ride = Get.find<HomeController>().trackRideModel?.data;
+          final navigatedInApp = await startInAppNavigation(
+            context: context,
+            lat: target.lat,
+            lng: target.lng,
+            destinationLabel: leg == 'drop' ? 'Drop-off' : 'Pickup',
+            subtitle: leg == 'drop' ? ride?.dropaddress : ride?.pickupaddress,
+            stillWanted: () => _legIsStillCurrent(leg),
+            // The wait is over here, not when this Future completes — that
+            // only happens when the driver leaves the navigation screen again.
+            onGuidanceStarted: () => _setNavProgress(null),
+          );
+          if (navigatedInApp) {
+            debugPrint('[Pickup] navigated in-app for the $leg leg');
+            return true;
+          }
+          debugPrint(
+            '[Pickup] in-app navigation unavailable for this $leg leg '
+            '(${InAppNavigationService.unavailableReason ?? "see [InAppNav] logs"})',
+          );
+        }
+      } finally {
+        // In a finally, not after the happy path: every exit from the block
+        // above — success, a not-ready miss, or a throw — has to take the
+        // indicator down, or it sits on the map forever claiming to be
+        // working on something that stopped.
+        _setNavProgress(null);
+      }
+    }
+
+    // Not ready is not the same as cannot.
+    //
+    // The session is built asynchronously and the SDK runs its own location
+    // engine, so the first frame after Accept — which is exactly when the
+    // pickup leg fires — routinely arrives before either is ready. That is a
+    // timing miss, and the answer is to try again shortly, which the caller
+    // does off the existing 15s poll. There is no attempt cap any more: with
+    // the Maps handoff gone there is nothing to give up *to*, and a retry that
+    // eventually succeeds is strictly better than one that stops trying.
+    if (!InAppNavigationService.isPermanentlyUnavailable) {
+      debugPrint(
+        '[Pickup] in-app navigation not ready yet for the $leg leg — staying '
+        'on the in-app map and retrying.',
+      );
+      return false;
+    }
+
+    // Genuinely cannot navigate on this build: the API key has not had
+    // "Navigation SDK for Android" enabled, its quota is spent, or this is not
+    // Android. None of those change by retrying, and none of them are
+    // something the driver can fix from the road — so say so once, plainly,
+    // and leave them on this screen's own live map rather than silently doing
+    // nothing or pushing them into another app.
+    if (mounted) {
       AnimatedTopToast.show(
         context: context,
-        message: "Could not open Google Maps. Use the in-app map to navigate.",
+        message:
+            "Turn-by-turn navigation isn't available on this device right "
+            "now. Use the map on this screen to reach the "
+            "${leg == 'drop' ? 'drop-off' : 'pickup'}.",
         backgroundColor: ColorResources.redbuttoncolor,
         icon: Icons.error_rounded,
       );
-      return;
     }
-
-    // Two ways back into the app, deliberately. The bubble is the nicer one
-    // but cannot be relied on — plenty of devices (Vivo, Xiaomi, Oppo,
-    // Realme) refuse overlays even with "display over other apps" granted,
-    // and it silently no-ops when the permission isn't there at all. The
-    // notification has no such constraints and is what guarantees the driver
-    // is never stranded in the maps app with no route home.
-    await NavOverlayService.showReturnBubbleIfPermitted();
-    // Different titles per leg, so the notification also tells the driver
-    // which half of the journey they are on rather than reading the same
-    // for both.
-    await NavOverlayService.showReturnNotification(
-      leg: leg,
-      title: leg == 'drop' ? 'Ride in progress' : 'Heading to pickup',
-      body: 'Tap to return to Nride driver',
-    );
+    return true;
   }
 
   /// Drop-off resolved from [AcceptRideData.dropaddress] via Google Geocoding,
@@ -1143,6 +1321,95 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   /// same lookup repeatedly from build).
   int? _geocodedDropBooking;
   bool _geocodingInFlight = false;
+
+  /// What the navigation handoff is currently doing, or null when it is not
+  /// doing anything. Rendered as a small floating pill over the map — see
+  /// [_navProgressPill].
+  String? _navProgressLabel;
+
+  Timer? _navProgressDelay;
+
+  /// Held back briefly rather than shown the instant an attempt starts.
+  ///
+  /// The pickup leg re-attempts off the 15s track-ride poll for as long as
+  /// in-app navigation is not ready, and some of those attempts resolve almost
+  /// immediately — terms outstanding, for instance, is answered without a
+  /// single network call. Showing the indicator unconditionally made those
+  /// flash a spinner on the map every fifteen seconds forever, which is worse
+  /// than the silence it was added to fix. An attempt that finishes inside
+  /// this window never had a wait worth narrating.
+  static const Duration _navProgressDelayBeforeShowing =
+      Duration(milliseconds: 700);
+
+  void _setNavProgress(String? label) {
+    _navProgressDelay?.cancel();
+    _navProgressDelay = null;
+
+    if (label == null) {
+      if (!mounted || _navProgressLabel == null) return;
+      setState(() => _navProgressLabel = null);
+      return;
+    }
+
+    if (!mounted || _navProgressLabel == label) return;
+    _navProgressDelay = Timer(_navProgressDelayBeforeShowing, () {
+      if (!mounted) return;
+      setState(() => _navProgressLabel = label);
+    });
+  }
+
+  /// The "we are working on it" indicator for the gap between a ride going
+  /// ongoing and turn-by-turn actually being on screen.
+  ///
+  /// Deliberately a floating pill and not a modal dialog. The driver must keep
+  /// being able to see the map, the address and every control on this screen
+  /// while this is up: navigation starting is not a step they have to wait
+  /// for, it is something happening alongside them, and it can legitimately
+  /// fail and leave them driving on this screen's own map instead.
+  Widget _navProgressPill(String label) {
+    return Positioned(
+      top: MediaQuery.of(context).size.height * 0.27,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 10,
+                offset: Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: PoppinsSemiBold.copyWith(
+                  color: Colors.white,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   /// Whether the "tap to return" notification is already up for this ride.
   bool _returnNotificationPosted = false;
@@ -1164,6 +1431,15 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   String? _ambientNotificationLeg;
 
   void _ensureReturnNotification() {
+    // Nothing to return *from* while guidance is running inside this app.
+    // This notification's whole purpose is rescuing a driver who is in
+    // another app; firing it during in-app navigation would put a banner
+    // over live turn-by-turn telling the driver to go where they already
+    // are. Checked on every call rather than once, because a driver can drop
+    // out to the external handoff mid-ride (an expired quota, a declined
+    // terms dialog) and must get the notification back when they do.
+    if (InAppNavigationService.isNavigating) return;
+
     // "Underway" matches _navTarget's own definition — the rider is aboard.
     final String leg =
         (isOtpVerified || _currentPhase() == 'ongoing') ? 'drop' : 'pickup';
@@ -1234,8 +1510,45 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // Latched *before* awaiting anything, so the rebuild that lands while
     // the launch is still in flight can't fire a second one.
     _pickupNavLaunchedForBooking = bookingId;
-    unawaited(_startGoogleMapsNavigation(target));
+
+    // The pickup leg fires from the first frame this screen builds with ride
+    // data — milliseconds after Accept, and routinely before the Navigation
+    // SDK has finished building its session or acquired its own location fix.
+    // Both resolve within seconds on their own, so the first attempt is the
+    // worst possible moment to conclude that navigation is unavailable. A miss
+    // that is only a timing one releases the latch below and rides the
+    // existing 15s track-ride poll back in here.
+    unawaited(
+      _startNavigation(target).then((settled) {
+        if (settled || !mounted) return;
+        // Nothing started and it is worth trying again — release the latch so
+        // the next poll-driven rebuild re-enters. Without this the leg is
+        // permanently marked as handled by an attempt that did nothing, which
+        // is why a pickup could end up with no navigation at all.
+        if (_pickupNavLaunchedForBooking == bookingId) {
+          _pickupNavLaunchedForBooking = null;
+        }
+      }),
+    );
   }
+
+  /// The booking whose *drop* leg has already been handed off, so it happens
+  /// exactly once per ride — the counterpart of
+  /// [_pickupNavLaunchedForBooking], which the drop leg never had.
+  ///
+  /// Its absence was load-bearing in the worst way. The drop handoff fires
+  /// from the Start Ride button's onPressed, and that button stayed live
+  /// through the whole request, so every extra tap launched the Google Maps
+  /// app again. Measured on device: 31 verify-pickup-otp calls and 25
+  /// consecutive Maps launches from one ride — each new launch throwing the
+  /// driver back out of this app, which of course reads as "the app keeps
+  /// redirecting me to Google Maps".
+  int? _dropNavLaunchedForBooking;
+
+  /// Whether a Start Ride verification is currently in flight, so the button
+  /// can refuse the second tap rather than the backend having to.
+  bool _verifyingOtp = false;
+
 
   /// If this booking is missing its drop coordinates but has a drop address,
   /// geocode the address once and cache the result. Safe to call from build:
@@ -1717,6 +2030,11 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                 ),
               ),
 
+              // Over the map, under the bottom sheet — so it never covers a
+              // control the driver might need while it is up.
+              if (_navProgressLabel != null)
+                _navProgressPill(_navProgressLabel!),
+
               Positioned(
                 bottom: 0,
                 left: 0,
@@ -2130,6 +2448,15 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                             CustomButton(
                               text: "Start Ride",
                               onPressed: () async {
+                                // One verification at a time. Without this the
+                                // button stays live for the whole round trip
+                                // and every impatient tap fires another
+                                // verify-pickup-otp *and* another navigation
+                                // handoff — 31 calls and 25 Google Maps
+                                // launches from a single ride, measured on
+                                // device.
+                                if (_verifyingOtp) return;
+
                                 String otp = _otpController.text.trim();
 
                                 if (otp.length != 4) {
@@ -2143,52 +2470,72 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
                                 }
 
                                 if (otp == rideData.otp.toString()) {
-                                  final prefs =
-                                      await SharedPreferences.getInstance();
+                                  setState(() => _verifyingOtp = true);
+                                  try {
+                                    final prefs =
+                                        await SharedPreferences.getInstance();
 
-                                  String? bookingId = prefs.getString(
-                                    "booking_id",
-                                  );
+                                    String? bookingId = prefs.getString(
+                                      "booking_id",
+                                    );
 
-                                  final controllerprofile =
-                                      Get.find<ProfileController>();
+                                    final controllerprofile =
+                                        Get.find<ProfileController>();
 
-                                  controllerprofile.tripRideDetailsApi(
-                                    context: context,
-                                    bookingid: bookingId,
-                                  );
+                                    controllerprofile.tripRideDetailsApi(
+                                      context: context,
+                                      bookingid: bookingId,
+                                    );
 
-                                  final trips =
-                                      controllerprofile.tripDetailsModel;
+                                    final trips =
+                                        controllerprofile.tripDetailsModel;
 
-                                  await Get.find<HomeController>()
-                                      .verifyPickUpOtps(
-                                        context: context,
-                                        bookingId: rideData.bookingId
-                                            .toString(),
-                                        otpNumber: otp,
-                                        acceptData: data,
-                                        trips: trips,
+                                    await Get.find<HomeController>()
+                                        .verifyPickUpOtps(
+                                          context: context,
+                                          bookingId: rideData.bookingId
+                                              .toString(),
+                                          otpNumber: otp,
+                                          acceptData: data,
+                                          trips: trips,
+                                        );
+
+                                    // Stay on this screen, show End Ride button
+                                    if (mounted) {
+                                      setState(() {
+                                        isOtpVerified = true;
+                                      });
+                                    }
+
+                                    // Uber/Rapido-style handoff to real Google
+                                    // Maps turn-by-turn now that the ride is
+                                    // actually underway — isOtpVerified is
+                                    // true above, so _navTarget now resolves
+                                    // to the drop coordinates, not the pickup.
+                                    //
+                                    // Latched per booking, exactly like the
+                                    // pickup leg. The in-flight guard above
+                                    // stops the tap storm; this stops the
+                                    // slower repeats it cannot see — the
+                                    // driver coming back from Maps and
+                                    // pressing Start Ride again on a ride the
+                                    // backend already has as `ongoing`.
+                                    final int? bid = rideData.bookingId;
+                                    if (bid != null &&
+                                        _dropNavLaunchedForBooking != bid) {
+                                      _dropNavLaunchedForBooking = bid;
+                                      unawaited(
+                                        _startNavigation(
+                                          _navTarget(rideData),
+                                          leg: 'drop',
+                                        ),
                                       );
-
-                                  // Stay on this screen, show End Ride button
-                                  if (mounted) {
-                                    setState(() {
-                                      isOtpVerified = true;
-                                    });
+                                    }
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() => _verifyingOtp = false);
+                                    }
                                   }
-
-                                  // Uber/Rapido-style handoff to real Google
-                                  // Maps turn-by-turn now that the ride is
-                                  // actually underway — isOtpVerified is
-                                  // true above, so _navTarget now resolves
-                                  // to the drop coordinates, not the pickup.
-                                  unawaited(
-                                    _startGoogleMapsNavigation(
-                                      _navTarget(rideData),
-                                      leg: 'drop',
-                                    ),
-                                  );
                                 } else {
                                   // Was silently ignored — tapping Start Ride
                                   // with a wrong code did nothing at all, no
