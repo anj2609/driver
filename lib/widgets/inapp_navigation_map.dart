@@ -356,18 +356,83 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
     // having moved (a heading-only update, or simply a duplicate tick) —
     // restarting the animation from a value to itself would just reset its
     // clock for no visible reason.
-    if (from.latitude == target.latitude &&
-        from.longitude == target.longitude &&
-        _displayedBearing == snapshot.bearing) {
-      debugPrint(
-        '[Nav] fix ignored as unchanged — raw=${snapshot.driverPosition}, '
-        'snapped=$target, bearing=${snapshot.bearing}',
-      );
+    //
+    // Compared with a tolerance, NOT for exact equality, and that distinction
+    // is the whole reason this screen was usable. [_displayedPosition] is
+    // produced by the lerp in [_onAnimTick], and `from + (to - from) * 1.0` is
+    // not guaranteed to land exactly on `to` in floating point — it lands a
+    // few parts in 1e12 away. Exact equality therefore never held, so every
+    // single rebuild saw "the position changed", restarted the animation and,
+    // worse, refired [_fitCameraToRideBounds] — an eased Google Maps camera
+    // transition — on top of the one already running.
+    //
+    // Measured on device, parked at the pickup with the ride in `arrived`:
+    // hundreds of animation restarts per second, each one logging and each one
+    // re-fitting the camera, converging 28.687980000002227 → 28.687980000000024
+    // and never arriving. The map never settled, the UI thread never got a
+    // quiet frame, and what the driver saw was a white screen.
+    //
+    // A stationary driver is exactly the case that exposes it: with no real
+    // movement, nothing ever washes the residue out.
+    //
+    // 1e-7 degrees is ~1cm — far below anything GPS can resolve, so no real
+    // movement is ever swallowed, and far above the rounding residue.
+    const double positionEpsilon = 1e-7;
+
+    // Two degrees, not a hair's breadth.
+    //
+    // [snapshot.bearing] is the device compass whenever one is reporting (see
+    // NavigationEngine.onLocationUpdate), and a compass never returns the same
+    // number twice — it wanders by fractions of a degree continuously, even on
+    // a phone sitting still. A tolerance tight enough to call that "changed"
+    // means every rebuild restarts the position glide for a rotation nobody
+    // can see, which is what kept this animation alive indefinitely after the
+    // position target had settled.
+    //
+    // Two degrees of heading is imperceptible on a car marker; a real turn is
+    // tens of degrees and still animates normally.
+    const double bearingEpsilon = 2.0;
+
+    // Compared against the DESTINATION of the animation already running, not
+    // against where the car currently is.
+    //
+    // "Has the car arrived?" is the wrong question, and asking it is what kept
+    // this restarting forever. This method runs from inside the GetBuilder, so
+    // it fires on every HomeController.update() — several times a second —
+    // while an animation typically spans ~5s. Mid-glide the car legitimately
+    // is not at the target yet, so a position-based check always said
+    // "changed", and the restart below reset the controller to value = 0 from
+    // wherever the car had got to.
+    //
+    // That is Zeno's paradox in a widget: each restart covers a fraction of
+    // the remaining distance and is then itself cut short, so controller.value
+    // never reaches 1.0, the exact-assignment in [_onAnimTick] never fires,
+    // and the gap shrinks forever without closing. Measured on device: 28.6874398
+    // → 28.6873996 over tens of seconds, still going.
+    //
+    // The right question is whether the DESTINATION moved. If it has not, the
+    // animation already in flight is heading to the correct place and must be
+    // left alone to finish.
+    final LatLng? currentTarget = _animTo;
+    if (currentTarget != null &&
+        (currentTarget.latitude - target.latitude).abs() < positionEpsilon &&
+        (currentTarget.longitude - target.longitude).abs() < positionEpsilon &&
+        (_bearingTo - snapshot.bearing).abs() < bearingEpsilon) {
+      return;
+    }
+
+    // No animation has ever run, and the car is already where it should be.
+    if (currentTarget == null &&
+        (from.latitude - target.latitude).abs() < positionEpsilon &&
+        (from.longitude - target.longitude).abs() < positionEpsilon &&
+        (_displayedBearing - snapshot.bearing).abs() < bearingEpsilon) {
       return;
     }
 
     debugPrint(
       '[Nav] animating car: from=$from to=$target '
+      'bearing=${_displayedBearing.toStringAsFixed(1)}'
+      '->${snapshot.bearing.toStringAsFixed(1)} '
       '(raw fix was ${snapshot.driverPosition})',
     );
 
@@ -414,11 +479,22 @@ class _InAppNavigationMapState extends State<InAppNavigationMap>
     if (from == null || to == null || controller == null) return;
 
     final t = controller.value;
-    _displayedPosition = LatLng(
-      from.latitude + (to.latitude - from.latitude) * t,
-      from.longitude + (to.longitude - from.longitude) * t,
-    );
-    _displayedBearing = _lerpAngle(_bearingFrom, _bearingTo, t);
+    if (t >= 1.0) {
+      // Assigned, not interpolated, and this is the other half of the fix in
+      // _updateAnimationTarget's guard. Letting the final frame come out of
+      // the lerp leaves the displayed position a rounding error short of the
+      // target forever; the tolerance above stops that from restarting the
+      // animation, and this stops the error existing in the first place so it
+      // cannot accumulate across fixes.
+      _displayedPosition = to;
+      _displayedBearing = _bearingTo;
+    } else {
+      _displayedPosition = LatLng(
+        from.latitude + (to.latitude - from.latitude) * t,
+        from.longitude + (to.longitude - from.longitude) * t,
+      );
+      _displayedBearing = _lerpAngle(_bearingFrom, _bearingTo, t);
+    }
     // Camera framing (car + both trip ends) happens once per genuine fix in
     // _updateAnimationTarget, not every animation frame here — a bounds-fit
     // is its own eased camera transition (newLatLngBounds), and

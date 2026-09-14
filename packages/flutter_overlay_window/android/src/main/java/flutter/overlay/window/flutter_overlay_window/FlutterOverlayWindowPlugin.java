@@ -172,14 +172,25 @@ public class FlutterOverlayWindowPlugin implements
     @Override
     public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
         mActivity = binding.getActivity();
-        if (FlutterEngineCache.getInstance().get(OverlayConstants.CACHED_TAG) == null) {
-            FlutterEngineGroup enn = new FlutterEngineGroup(context);
-            DartExecutor.DartEntrypoint dEntry = new DartExecutor.DartEntrypoint(
-                    FlutterInjector.instance().flutterLoader().findAppBundlePath(),
-                    "overlayMain");
-            FlutterEngine engine = enn.createAndRunEngine(context, dEntry);
-            FlutterEngineCache.getInstance().put(OverlayConstants.CACHED_TAG, engine);
-        }
+        // NRIDE PATCH: the overlay engine is NOT built here any more.
+        //
+        // This ran while the Activity was being created, on the main thread,
+        // and createAndRunEngine() is not cheap: it loads the app bundle and
+        // spins up a second Dart isolate. Every single app launch paid for it,
+        // including the overwhelming majority that never show an overlay at
+        // all — and it was paid at the worst possible moment, before Flutter
+        // had rendered its first frame. What the driver saw was a white screen
+        // for several seconds after tapping Accept, long enough to read as the
+        // app having hung or crashed.
+        //
+        // Nothing needs the engine to exist this early. OverlayService.onCreate
+        // builds one when it finds no live engine in the cache, so a raise that
+        // arrives before anything else has warmed one still works; and
+        // MainActivity now warms it just after the first frame, off the startup
+        // critical path, so in practice one is ready long before any push.
+        //
+        // Left as the plain assignment above deliberately — mActivity is what
+        // this callback is actually for.
     }
 
     @Override

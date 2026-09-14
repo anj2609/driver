@@ -37,6 +37,8 @@ import 'package:myridedriverapp/services/location_health_tracker.dart';
 import 'package:myridedriverapp/services/nav_overlay_service.dart';
 import 'package:myridedriverapp/services/ride_alert_memory.dart';
 import 'package:myridedriverapp/widgets/custom_button.dart';
+import 'package:myridedriverapp/screens/ride/in_app_navigation_screen.dart'
+    show navigationScreenOpen;
 import 'package:myridedriverapp/widgets/custom_popup.dart';
 import 'package:http/http.dart' as http;
 import 'package:myridedriverapp/widgets/toaster_animation.dart';
@@ -1537,6 +1539,26 @@ class HomeController extends GetxController with WidgetsBindingObserver {
   Future<void> playRingtone() async {
     // An orphaned instance must never be audible — see _isClosed.
     if (_isClosed) return;
+
+    // Silent while turn-by-turn is on screen.
+    //
+    // The driver is mid-ride with a passenger aboard, looking at the
+    // navigation view, and this tone means "a new ride is available" — an
+    // offer they cannot take and cannot even see, since the card that goes
+    // with it is behind the navigation screen. All it does is talk over the
+    // voice guidance they are actually driving on.
+    //
+    // The offer itself is not suppressed: the request stays in incomingTrips
+    // and is on screen the moment they come back to the ride screen. Only the
+    // noise is dropped, and only for as long as they are in navigation.
+    if (navigationScreenOpen) {
+      debugPrint(
+        '[HomeController] not ringing for a new request — the driver is in '
+        'turn-by-turn navigation.',
+      );
+      return;
+    }
+
     if (isRingtonePlaying) return;
 
     isRingtonePlaying = true;

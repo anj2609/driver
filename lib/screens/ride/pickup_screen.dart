@@ -918,6 +918,7 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
   void dispose() {
     positionStream?.cancel();
     _timer?.cancel();
+    _navRetryTimer?.cancel();
     _navProgressDelay?.cancel();
     // Whatever route this screen is left by — ride completed, cancelled by
     // the rider, or the driver backing out — the floating return bubble and
@@ -1254,7 +1255,15 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
             stillWanted: () => _legIsStillCurrent(leg),
             // The wait is over here, not when this Future completes — that
             // only happens when the driver leaves the navigation screen again.
-            onGuidanceStarted: () => _setNavProgress(null),
+            onGuidanceStarted: () {
+              _setNavProgress(null);
+              // A fresh journey is a fresh decision: a driver who dismissed
+              // the "back to navigation" card on the pickup leg should still
+              // be offered it on the drop leg.
+              if (mounted && _navResumeDismissed) {
+                setState(() => _navResumeDismissed = false);
+              }
+            },
           );
           if (navigatedInApp) {
             debugPrint('[Pickup] navigated in-app for the $leg leg');
@@ -1358,57 +1367,228 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     });
   }
 
-  /// The "we are working on it" indicator for the gap between a ride going
-  /// ongoing and turn-by-turn actually being on screen.
+  /// The "we are working on it" popup for the gap between a ride going ongoing
+  /// and turn-by-turn actually being on screen.
   ///
-  /// Deliberately a floating pill and not a modal dialog. The driver must keep
-  /// being able to see the map, the address and every control on this screen
-  /// while this is up: navigation starting is not a step they have to wait
-  /// for, it is something happening alongside them, and it can legitimately
-  /// fail and leave them driving on this screen's own map instead.
-  Widget _navProgressPill(String label) {
+  /// A real popup card — not a modal dialog, and that distinction is
+  /// deliberate. It looks like a dialog so the driver reads it as the app
+  /// telling them something, but it takes no barrier and blocks nothing: the
+  /// map, the address and every control on this screen stay live underneath
+  /// it. Navigation starting is not a step the driver has to wait for, it is
+  /// something happening alongside them, and it can legitimately fail and
+  /// leave them driving on this screen's own map instead — so it must never be
+  /// something they have to dismiss before they can drive.
+  Widget _navProgressPopup(String label) {
     return Positioned(
-      top: MediaQuery.of(context).size.height * 0.27,
-      left: 0,
-      right: 0,
+      top: MediaQuery.of(context).size.height * 0.24,
+      left: 24,
+      right: 24,
       child: Center(
+        child: Material(
+          color: Colors.transparent,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            child: Container(
+              key: ValueKey<String>(label),
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+              decoration: BoxDecoration(
+                color: ColorResources.whiteColor,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.6,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        ColorResources.appColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label,
+                          style: PoppinsSemiBold.copyWith(
+                            color: ColorResources.blackcolor,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        // Says what the driver should do, because the honest
+                        // answer is "nothing" — without it a progress popup
+                        // reads as a blocking step, which is what makes a
+                        // driver tap Start Ride again while it is up.
+                        Text(
+                          'You can keep driving — this opens on its own.',
+                          style: PoppinsReguler.copyWith(
+                            color: ColorResources.textColorForGrey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Dismissed by the driver for the navigation session currently running.
+  ///
+  /// Reset whenever guidance starts again (see [_setNavProgress]'s caller via
+  /// onGuidanceStarted), so a driver who waves this away on the pickup leg is
+  /// still offered it on the drop leg — a different journey, and a different
+  /// decision.
+  bool _navResumeDismissed = false;
+
+  /// Offers the driver their way back into turn-by-turn when they have left it
+  /// running behind them.
+  ///
+  /// Popping the navigation screen does not stop guidance — that is on
+  /// purpose, so returning is instant and the route is not recalculated — but
+  /// it does mean the driver can end up mid-route with no visible navigation
+  /// and no obvious way back to it. That is the state this covers.
+  ///
+  /// Dismissible, and genuinely so: a driver who knows the way, or who came
+  /// back here to call the rider, should not be nagged. The cross is the
+  /// whole reason this is a card and not a toast — it has to be able to say
+  /// no.
+  /// Returns the card itself, deliberately WITHOUT a Positioned around it.
+  ///
+  /// Its placement in the Stack is the caller's job — see the call site, and
+  /// the note there on why a Positioned cannot be returned from inside a
+  /// builder.
+  Widget _resumeNavigationCard() {
+    return Material(
+        color: Colors.transparent,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.82),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: const [
+            color: ColorResources.whiteColor,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
               BoxShadow(
-                color: Colors.black26,
-                blurRadius: 10,
-                offset: Offset(0, 3),
+                color: Colors.black.withValues(alpha: 0.20),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: ColorResources.appColor.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.navigation_rounded,
+                  color: ColorResources.appColor,
+                  size: 22,
                 ),
               ),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: PoppinsSemiBold.copyWith(
-                  color: Colors.white,
-                  fontSize: 13,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Navigation is still running',
+                      style: PoppinsSemiBold.copyWith(
+                        color: ColorResources.blackcolor,
+                        fontSize: 14.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'You haven’t arrived yet.',
+                      style: PoppinsReguler.copyWith(
+                        color: ColorResources.textColorForGrey,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(9),
+                      onTap: _resumeNavigation,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          color: ColorResources.appColor,
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: Text(
+                          'Go back to navigation',
+                          style: PoppinsSemiBold.copyWith(
+                            color: ColorResources.whiteColor,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Top-aligned so it reads as "close this card" rather than as
+              // an action belonging to the button beside it.
+              Align(
+                alignment: Alignment.topRight,
+                child: IconButton(
+                  tooltip: 'Dismiss',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () {
+                    setState(() => _navResumeDismissed = true);
+                  },
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: 20,
+                    color: ColorResources.textColorForGrey,
+                  ),
                 ),
               ),
             ],
           ),
         ),
-      ),
     );
+  }
+
+  Future<void> _resumeNavigation() async {
+    final ride = Get.find<HomeController>().trackRideModel?.data;
+    await resumeInAppNavigation(
+      context: context,
+      subtitle: _legIsStillCurrent('drop')
+          ? ride?.dropaddress
+          : ride?.pickupaddress,
+    );
+    // The driver has been back in navigation and has left it again by the time
+    // this returns. Whether to offer the card once more is decided fresh from
+    // whether guidance is still running, so nothing is cleared here.
+    if (mounted) setState(() {});
   }
 
   /// Whether the "tap to return" notification is already up for this ride.
@@ -1520,7 +1700,13 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
     // existing 15s track-ride poll back in here.
     unawaited(
       _startNavigation(target).then((settled) {
-        if (settled || !mounted) return;
+        if (settled) {
+          // Settled means this leg is done with — navigation is up, or it
+          // genuinely cannot run. Either way the ramp has no more work.
+          _resetNavRetry();
+          return;
+        }
+        if (!mounted) return;
         // Nothing started and it is worth trying again — release the latch so
         // the next poll-driven rebuild re-enters. Without this the leg is
         // permanently marked as handled by an attempt that did nothing, which
@@ -1528,8 +1714,57 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
         if (_pickupNavLaunchedForBooking == bookingId) {
           _pickupNavLaunchedForBooking = null;
         }
+        _scheduleNavRetry(ride);
       }),
     );
+  }
+
+  /// Retries a navigation launch on its own short schedule instead of waiting
+  /// for the ride poll.
+  ///
+  /// Releasing the latch alone was not enough: the only thing that re-enters
+  /// [_maybeStartPickupNavigation] is a rebuild, and the thing that drives
+  /// rebuilds here is the 15-second track-ride poll. So every timing miss —
+  /// and the first attempt is nearly always one, because it fires milliseconds
+  /// after Accept while the SDK is still building its session and acquiring a
+  /// fix — cost a full fifteen seconds before anything tried again. Enough of
+  /// them in a row is the "navigation takes more than two minutes to open"
+  /// the driver sees, and almost all of that time is this screen waiting on a
+  /// timer rather than anything actually being slow.
+  ///
+  /// Backs off rather than hammering: the early attempts are where a
+  /// not-ready-yet session turns ready, and there is no point retrying a
+  /// genuinely unavailable one every second forever. Once the ramp is spent it
+  /// stops and the ordinary poll takes over again, which is the right home for
+  /// the slow, indefinite case.
+  static const List<int> _navRetryGapsMs = <int>[1500, 2500, 4000, 6000, 8000];
+
+  Timer? _navRetryTimer;
+  int _navRetryAttempt = 0;
+
+  void _scheduleNavRetry(AcceptRideData? ride) {
+    if (!mounted) return;
+    if (_navRetryAttempt >= _navRetryGapsMs.length) return;
+
+    final int gap = _navRetryGapsMs[_navRetryAttempt];
+    _navRetryAttempt++;
+    _navRetryTimer?.cancel();
+    _navRetryTimer = Timer(Duration(milliseconds: gap), () {
+      if (!mounted) return;
+      debugPrint(
+        '[Pickup] retrying in-app navigation (attempt $_navRetryAttempt of '
+        '${_navRetryGapsMs.length})',
+      );
+      _maybeStartPickupNavigation(ride);
+    });
+  }
+
+  /// Clears the retry ramp so a genuinely new leg starts with a full budget
+  /// rather than whatever the previous one had left.
+  void _resetNavRetry() {
+    _navRetryTimer?.cancel();
+    _navRetryTimer = null;
+    _navRetryAttempt = 0;
   }
 
   /// The booking whose *drop* leg has already been handed off, so it happens
@@ -2033,7 +2268,48 @@ class _GoingForPickupScreenState extends State<GoingForPickupScreen> {
               // Over the map, under the bottom sheet — so it never covers a
               // control the driver might need while it is up.
               if (_navProgressLabel != null)
-                _navProgressPill(_navProgressLabel!),
+                _navProgressPopup(_navProgressLabel!),
+
+              // Offered only when the driver genuinely has navigation running
+              // that they cannot see, and only while this screen has no
+              // progress popup of its own up — two cards stacked in the same
+              // place would be the app talking over itself.
+              //
+              // Rebuilt off the notifier so it appears the instant the
+              // navigation screen is popped rather than on this screen's next
+              // poll tick, which is up to 15 seconds later.
+              // The Positioned is HERE, as a direct child of the Stack, and
+              // the builder inside it returns a plain widget.
+              //
+              // It has to be this way round. Positioned is a ParentDataWidget:
+              // it talks to the Stack's render object, and it can only do that
+              // when the Stack is its immediate parent. Returning one from
+              // inside a builder puts a ValueListenableBuilder in between, and
+              // Flutter then throws "Incorrect use of ParentDataWidget" while
+              // laying the Stack out — which does not just drop this card, it
+              // takes the whole Stack down with it. That is what turned this
+              // entire screen — map, ride details, End Ride and all — into a
+              // blank white page.
+              if (_navProgressLabel == null && !_navResumeDismissed)
+                Positioned(
+                  top: MediaQuery.of(context).size.height * 0.22,
+                  left: 18,
+                  right: 18,
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: navigationActivity,
+                    builder: (context, _, __) {
+                      // Every condition lives in the getter — including "a
+                      // navigation screen is part-way through opening", without
+                      // which this card can offer to open a second one on top
+                      // of a start already in progress, and two navigation
+                      // views means one of them renders black.
+                      if (!navigationIsRunningUnseen) {
+                        return const SizedBox.shrink();
+                      }
+                      return _resumeNavigationCard();
+                    },
+                  ),
+                ),
 
               Positioned(
                 bottom: 0,

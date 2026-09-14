@@ -3,6 +3,8 @@ package online.nride.driver
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import io.flutter.FlutterInjector
@@ -25,6 +27,11 @@ class MainActivity : FlutterActivity() {
         /** Channel the floating bubble uses to ask for the app to be reopened. */
         // The overlay's return channel now lives with the rest of the overlay
         // engine's setup, in OverlayEngineSupport.
+
+        /// How long after the Activity is configured the overlay engine is
+        /// built. Long enough to be clear of the first frame, short enough that
+        /// the engine is warm well before any ride push realistically arrives.
+        private const val OVERLAY_ENGINE_WARMUP_DELAY_MS = 1200L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,20 +89,34 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        // Before super, and it has to be. By the time this method is
-        // called the engine is ALREADY attached to this Activity —
-        // FlutterActivityAndFragmentDelegate.onAttach() calls
-        // attachToActivity() first and configureFlutterEngine() after — so
-        // super's GeneratedPluginRegistrant.registerWith() call registers
-        // flutter_overlay_window onto an activity-attached engine, which
-        // fires its onAttachedToActivity immediately, which builds and
-        // caches an overlay engine of its own. Running after super was
-        // tried and measured: ensureOverlayEngine() then found the cache
-        // already populated and returned without doing anything, so the
-        // openApp channel below was never wired to the engine that
-        // actually got used.
-        ensureOverlayEngine()
         super.configureFlutterEngine(flutterEngine)
+
+        // Warmed AFTER the first frame, never during startup.
+        //
+        // ensureOverlayEngine() builds a second Flutter engine, and
+        // createAndRunEngine() loads the app bundle and starts a whole Dart
+        // isolate. It used to run right here, synchronously, before super and
+        // therefore before Flutter had drawn anything — so every launch blocked
+        // the main thread on it and the driver watched a white screen. On the
+        // launch that matters most, the cold start that follows tapping Accept
+        // on a ride card, that wait is long enough to read as a crash, and long
+        // enough for Android to consider posting an ANR.
+        //
+        // It used to have to run before super, because super registers
+        // flutter_overlay_window and that plugin's onAttachedToActivity built
+        // and cached an overlay engine of its own — winning the race and
+        // leaving our openApp channel wired to an engine nobody used. That
+        // eager creation is gone (see the NRIDE PATCH in
+        // FlutterOverlayWindowPlugin), so nothing competes for the cache any
+        // more and the ordering constraint is gone with it.
+        //
+        // Deferred rather than dropped: a cold overlay engine makes the first
+        // ride card slower to appear, and OverlayService would have to build
+        // one inside its own startForeground budget. A second after launch is
+        // far earlier than any realistic push, and costs the driver nothing.
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isFinishing && !isDestroyed) ensureOverlayEngine()
+        }, OVERLAY_ENGINE_WARMUP_DELAY_MS)
 
         // Wired onto the MAIN engine, not the overlay one: its callers are the
         // home screen's permission onboarding and NavOverlayService, both of

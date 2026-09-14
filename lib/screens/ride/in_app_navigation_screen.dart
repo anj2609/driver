@@ -41,6 +41,20 @@ class InAppNavigationScreen extends StatefulWidget {
 }
 
 class _InAppNavigationScreenState extends State<InAppNavigationScreen> {
+  /// How close the guidance camera sits to the road.
+  ///
+  /// The SDK's own default is around 18-19, which frames the next few metres
+  /// of tarmac and very little else. On a phone held in a windscreen cradle
+  /// that reads as being zoomed right in: the driver can see the turn they are
+  /// already making but not the one after it, and no context for which lane or
+  /// which side street is coming.
+  ///
+  /// 16.5 keeps the vehicle and the next couple of junctions on screen
+  /// together, which is roughly what the Google Maps app itself shows while
+  /// driving. Applied on the initial camera and on every recenter, so panning
+  /// away and coming back does not silently restore the SDK's default.
+  static const double _guidanceZoom = 16.5;
+
   nav.GoogleNavigationViewController? _controller;
   StreamSubscription<nav.OnArrivalEvent>? _arrivalSubscription;
 
@@ -98,6 +112,10 @@ class _InAppNavigationScreenState extends State<InAppNavigationScreen> {
         );
         return;
       }
+      // Recorded before the pop, not after: popping is what tells the ride
+      // screen to re-evaluate whether to offer "back to navigation", and it
+      // must already know the driver has arrived when it does.
+      _arrivedOnCurrentRoute = true;
       if (mounted) Navigator.of(context).maybePop(true);
     });
 
@@ -228,6 +246,32 @@ class _InAppNavigationScreenState extends State<InAppNavigationScreen> {
     // a driver actually reads — are unaffected. Re-enabling this needs a
     // Material-derived Activity theme first, and re-verification on device.
 
+    // The recenter button, which was never switched on and so was never
+    // there.
+    //
+    // The SDK documents it as enabled by default, but that default applies to
+    // a view showing the SDK's full navigation chrome — and this screen
+    // deliberately turns the footer off (see above) to make room for its own
+    // bar. The recenter button lives with that footer, so switching the footer
+    // off took the button with it, and a driver who panned the map had no way
+    // back to their own position except the small one on this app's bar.
+    //
+    // Asked for explicitly so it no longer depends on what else happens to be
+    // enabled.
+    await _apply(
+      'setRecenterButtonEnabled',
+      () => controller.setRecenterButtonEnabled(true),
+    );
+
+    // The SDK's own "report an incident" control — the other button that
+    // disappeared with the footer. It is how a driver reports the crash or
+    // closure they are looking at, and it feeds the traffic data every other
+    // driver's route depends on.
+    await _apply(
+      'setReportIncidentButtonEnabled',
+      () => controller.setReportIncidentButtonEnabled(true),
+    );
+
     await _apply(
       'setSpeedometerEnabled',
       () => controller.setSpeedometerEnabled(true),
@@ -252,7 +296,10 @@ class _InAppNavigationScreenState extends State<InAppNavigationScreen> {
     // to avoid.
     await _apply(
       'followMyLocation',
-      () => controller.followMyLocation(nav.CameraPerspective.tilted),
+      () => controller.followMyLocation(
+        nav.CameraPerspective.tilted,
+        zoomLevel: _guidanceZoom,
+      ),
     );
 
     // Last, and only on a still-mounted screen: this is what arms the arrival
@@ -393,6 +440,7 @@ class _InAppNavigationScreenState extends State<InAppNavigationScreen> {
                   tooltip: 'Recenter',
                   onPressed: () => _controller?.followMyLocation(
                     nav.CameraPerspective.tilted,
+                    zoomLevel: _guidanceZoom,
                   ),
                   icon: Icon(
                     Icons.my_location_rounded,
@@ -420,7 +468,140 @@ class _InAppNavigationScreenState extends State<InAppNavigationScreen> {
 /// Module-level rather than passed around because the thing it guards against
 /// is two *unrelated* callers pushing a screen each — see
 /// [startInAppNavigation].
-bool _navScreenOpen = false;
+///
+/// A notifier rather than a plain bool so the ride screen can react the moment
+/// the driver leaves navigation, instead of polling for it. Guidance keeps
+/// running when this screen is popped (see [_InAppNavigationScreenState.dispose]),
+/// so "guidance is running and this is false" is precisely the state where the
+/// driver has turn-by-turn going that they cannot see — which is what
+/// [navigationIsRunningUnseen] reports.
+final ValueNotifier<int> navigationActivity = ValueNotifier<int>(0);
+
+bool _navScreenOpenValue = false;
+
+/// Whether turn-by-turn is currently in front of the driver.
+///
+/// Public because it is not only this file's business: anything that makes
+/// noise or takes over the screen has to know the driver is mid-guidance —
+/// see HomeController.playRingtone.
+bool get navigationScreenOpen => _navScreenOpenValue;
+
+bool get _navScreenOpen => _navScreenOpenValue;
+set _navScreenOpen(bool value) {
+  if (_navScreenOpenValue == value) return;
+  _navScreenOpenValue = value;
+  navigationActivity.value++;
+}
+
+/// Whether a navigation screen is in the process of being opened.
+///
+/// Separate from [_navScreenOpen], and the gap between the two is the whole
+/// reason this exists. [startInAppNavigation] cannot set the open flag until
+/// it has a route: the SDK has to acquire its own location fix and fetch the
+/// route first, and both sit behind awaits that take seconds. For that entire
+/// window a navigation screen is on its way while every flag says none is
+/// open.
+///
+/// Anything else that might push a navigation screen has to treat that window
+/// as "busy", or it pushes a second one — and the plugin supports exactly ONE
+/// navigation view at a time. The second attaches while the first is still
+/// alive and the loser renders black, which is the black navigation screen
+/// this app has already been bitten by once (see the re-route path below).
+bool _navPushInFlightValue = false;
+
+bool get _navPushInFlight => _navPushInFlightValue;
+set _navPushInFlight(bool value) {
+  if (_navPushInFlightValue == value) return;
+  _navPushInFlightValue = value;
+  navigationActivity.value++;
+}
+
+/// Whether guidance is running with no navigation screen in front of it.
+///
+/// The condition the ride screen offers "back to navigation" on. Deliberately
+/// keyed on guidance still running rather than on comparing the driver's
+/// position to the destination: the SDK ends guidance itself on arrival, so
+/// "still navigating" already means "not there yet", and it means it using the
+/// SDK's own road-network view of arrival rather than a straight-line distance
+/// check that would be wrong near multi-level or set-back addresses.
+bool get navigationIsRunningUnseen =>
+    InAppNavigationService.isNavigating &&
+    !_navScreenOpen &&
+    !_navPushInFlight &&
+    !_arrivedOnCurrentRoute;
+
+/// Whether the SDK has reported arrival on the route currently loaded.
+///
+/// [InAppNavigationService.isNavigating] alone is not enough to answer "is the
+/// driver still on their way": it is set when guidance starts and cleared only
+/// when guidance is explicitly stopped, and arrival stops neither. Arriving
+/// pops the navigation screen without touching it, so without this the ride
+/// screen would greet a driver who has just pulled up at the pickup with a card
+/// insisting they have not arrived yet.
+///
+/// Cleared whenever a new destination is handed to the session, which is the
+/// only thing that makes the driver on-their-way again.
+bool _arrivedOnCurrentRoute = false;
+
+/// Puts the driver back into the navigation they already have running.
+///
+/// Not [startInAppNavigation]: that would ask the SDK for the route again,
+/// and there is nothing to ask for — guidance never stopped, only the screen
+/// showing it went away. Re-routing an already-running session also risks the
+/// double-view black map that startInAppNavigation's own re-route path exists
+/// to avoid.
+///
+/// Returns false when there was nothing to go back to, so a stale prompt
+/// cannot push an empty navigation screen.
+Future<bool> resumeInAppNavigation({
+  required BuildContext context,
+  String? destinationLabel,
+  String? subtitle,
+}) async {
+  if (!InAppNavigationService.isNavigating) {
+    debugPrint(
+      '[InAppNav] resume asked for but guidance is not running — ignoring.',
+    );
+    return false;
+  }
+  if (_navScreenOpen) return true;
+  // The other half of the mutual exclusion — see [_navPushInFlight]. A start
+  // that is part-way through its awaits has no screen open yet, and pushing
+  // here on top of it is exactly how two navigation views end up alive at once.
+  if (_navPushInFlight) {
+    debugPrint(
+      '[InAppNav] navigation is already being opened — not resuming on top '
+      'of it.',
+    );
+    return true;
+  }
+
+  final String label = destinationLabel ??
+      (_navDestinationLabel.value.isEmpty
+          ? 'Navigation'
+          : _navDestinationLabel.value);
+
+  // No in-flight claim of its own, deliberately: there is no await between the
+  // check above and this assignment, so the window that makes
+  // [_navPushInFlight] necessary for a start does not exist here. Claiming it
+  // would also have to be released the moment the screen opens, or it would
+  // block the leg-change re-route that legitimately runs while this screen is
+  // up.
+  _navScreenOpen = true;
+  try {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => InAppNavigationScreen(
+          destinationLabel: label,
+          subtitle: subtitle,
+        ),
+      ),
+    );
+  } finally {
+    _navScreenOpen = false;
+  }
+  return true;
+}
 
 /// The destination label currently being navigated to.
 ///
@@ -472,6 +653,47 @@ Future<bool> startInAppNavigation({
     return false;
   }
 
+  // Claimed before the first await, released in the finally at the bottom.
+  //
+  // Everything below — the route request, the SDK's own location fix, the
+  // push itself — happens behind awaits, and until the push lands there is no
+  // screen and no _navScreenOpen to see. Without this claim, anything else
+  // that opens navigation (resumeInAppNavigation, driven by the ride screen's
+  // "back to navigation" card) sees "nothing open", pushes its own screen, and
+  // the two views race. One of them renders black.
+  if (_navPushInFlight) {
+    debugPrint(
+      '[InAppNav] a navigation screen is already being opened — not starting '
+      'a second one for $destinationLabel.',
+    );
+    return false;
+  }
+  _navPushInFlight = true;
+  try {
+    return await _startInAppNavigation(
+      context: context,
+      lat: lat,
+      lng: lng,
+      destinationLabel: destinationLabel,
+      subtitle: subtitle,
+      wanted: wanted,
+      onGuidanceStarted: onGuidanceStarted,
+    );
+  } finally {
+    _navPushInFlight = false;
+  }
+}
+
+Future<bool> _startInAppNavigation({
+  required BuildContext context,
+  required double lat,
+  required double lng,
+  required String destinationLabel,
+  required String? subtitle,
+  required bool Function() wanted,
+  required VoidCallback? onGuidanceStarted,
+}) async {
+
   // Re-route in place rather than stacking a second screen.
   //
   // This is the fix for the black navigation view that appeared mid-ride.
@@ -506,6 +728,9 @@ Future<bool> startInAppNavigation({
     // bar must keep naming the destination the driver is actually heading to.
     if (rerouted) {
       _navDestinationLabel.value = destinationLabel;
+      // A new destination means the driver is on their way again, whatever
+      // the last route ended in.
+      _arrivedOnCurrentRoute = false;
       onGuidanceStarted?.call();
     }
     return rerouted;
@@ -538,6 +763,7 @@ Future<bool> startInAppNavigation({
   // every later leg to external Maps.
   _navScreenOpen = true;
   _navDestinationLabel.value = destinationLabel;
+  _arrivedOnCurrentRoute = false;
   onGuidanceStarted?.call();
   try {
     await Navigator.of(context).push<bool>(

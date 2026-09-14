@@ -445,9 +445,19 @@ class _OverlayRouterState extends State<_OverlayRouter> {
       //
       // Safe to repeat: [_appliedStashRaises] means a raise is only ever
       // applied once, so this cannot resurrect a card the driver has answered.
+      // Runs for as long as this engine has a window with nothing rendered in
+      // it, and never latches off — that is the whole point. implicitView
+      // staying non-null after a detach means this retry, not the attach
+      // transition above, is what actually catches every raise after the
+      // first, so anything that can permanently silence it silences the ride
+      // card with it.
+      //
+      // Bounded instead: one small prefs read every two seconds, and only
+      // while there is nothing on screen. Re-reading the same stash is free of
+      // consequence — [_appliedStashRaises] makes applying it idempotent.
       if (_content is SizedBox) {
         final DateTime now = DateTime.now();
-        if (now.difference(_lastStashRead) < const Duration(seconds: 1)) return;
+        if (now.difference(_lastStashRead) < const Duration(seconds: 2)) return;
         _lastStashRead = now;
         unawaited(_fetchStashedHint());
       }
@@ -455,6 +465,26 @@ class _OverlayRouterState extends State<_OverlayRouter> {
   }
 
   DateTime _lastStashRead = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Timestamp of a stash already rejected as too old, so it is only reported
+  /// once rather than on every retry.
+  int? _staleStashAt;
+
+  // A latch that stopped the retry once the stash came back stale or empty
+  // used to live here, to spare a pointless disk read every second. It is gone
+  // because it could not be switched back on.
+  //
+  // It was cleared only when a window attached — and the device log shows that
+  // transition fires at most ONCE in this engine's life: implicitView does not
+  // return to null when the overlay's FlutterView detaches, so after the first
+  // raise "a window attached" never happens again. The latch therefore became
+  // permanent the first time the stash aged out, and with shareData already
+  // unreliable (the reason the stash exists at all), the ride card stopped
+  // appearing from the second raise onward.
+  //
+  // The retry it was guarding is genuinely cheap — see the interval below —
+  // and the thing it was saving is a small prefs read. Losing a ride is not a
+  // trade worth making for that.
 
   /// Raises already recovered from the stash, so re-reading it is idempotent.
   /// Without this the retry above would rebuild a card the moment the driver
@@ -484,7 +514,20 @@ class _OverlayRouterState extends State<_OverlayRouter> {
       // Generous enough to cover a slow cold engine, short enough that an old
       // offer cannot reappear.
       if (DateTime.now().millisecondsSinceEpoch - stashedAt > 45000) {
-        _overlayLog('stashed hint is stale — ignoring it');
+        // Remembered, so the retry below stops asking about it.
+        //
+        // Without this the empty-window retry re-read, re-decoded and
+        // re-rejected the same dead stash once a second for the entire life of
+        // the process — visible in the device log as an endless run of this
+        // line — each one a disk-backed SharedPreferences reload in a second
+        // isolate, for an answer that cannot change.
+        // Logged once per distinct stash, not once per retry: the retry below
+        // is deliberately allowed to keep running, and without this the log
+        // filled with the same line forever.
+        if (_staleStashAt != stashedAt) {
+          _staleStashAt = stashedAt;
+          _overlayLog('stashed hint is stale — ignoring it');
+        }
         return;
       }
       final dynamic payload = decoded['payload'];
